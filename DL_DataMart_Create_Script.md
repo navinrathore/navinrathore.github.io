@@ -1,4 +1,6 @@
-# Data Mart Create Script (ELT_DL_DataMart_Create_Script_M8_v1)
+# Data Mart: Structure Script Generate	 (ELT_DL_DataMart_Create_Script_M8_v1)
+
+# Intent
 
 The purpose of this component is to generate a script for creating a table based on a given Table ID (input). All necessary details, such as table name, columns, data types, and constraints (primary and secondary), are retrieved from the `ELT_DL_Mapping_Info_Saved` table. The generated script is then stored in the `ELT_DL_Create_Info` table, keyed by the respective table name. A schematic diagram is provided in [Appendix A](#appendix-a)
 
@@ -11,9 +13,8 @@ The component or service is dependent of the following input data:
 ### Talend
 
 - Context Variables (APP DB Connection, DL_ID), For Complete List of Context Variable, refer to [Appendix B](#appendix-b)
-- The data can then be bulk loaded into the database.
 
-### Java
+### Service
 
 - App DB coonection details, DL_ID - table id for which create script to be generated
 
