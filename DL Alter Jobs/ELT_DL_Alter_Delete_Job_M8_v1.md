@@ -50,11 +50,9 @@ FROM `ELT_DL_Mapping_Info`
 where DL_Id='DL_Id'
 ```
 
-
-
 ## Map Data 1
 
-Inner Join 
+Find unique columns from lookup tables `ELT_DL_Mapping_Info_Saved` and `ELT_DL_Mapping_Info` using Inner Join 
 
 There are four fields in the output. The script field uses the field `DL_Column_Names` value.
 
@@ -63,72 +61,61 @@ There are four fields in the output. The script field uses the field `DL_Column_
 | DL_Id            | Long   | ELT_DL_Mapping_Info.DL_Id                                       | true       |
 | DL_Name          | String | ELT_DL_Mapping_Info.DL_Name                                     | true       |
 | DL_Column_Names  | String | ELT_DL_Mapping_Info.DL_Column_Names                             | true       |
-| Script           | String | "Drop Column `" + ELT_DL_Mapping_Info.DL_Column_Names + "`"     | true       |
+| Script           | String | "Drop Column `ELT_DL_Mapping_Info.DL_Column_Names`     | true       |
+
+
+## Map Data 2
+
+There are three fields in the output.
+
+
+| Name         | Type   | Expression                    | isNullable |
+|--------------|--------|-------------------------------|------------|
+| DL_Id        | Long   | DL_Id            | true       |
+| DL_Name      | String | DL_Name          | true       |
+| Alter_Script | String | DL_Alter_Script (See details beow)         | false      |
+
+ 
+The Alter script is formed to drop columns. The list of columns can be dropped in a single command or in multiple commands. Different databases support different syntax. Form the script, accordingly.
+
+```sql
+ALTER TABLE x DROP COLUMN y, DROP COLUMN z;
+OR
+ALTER TABLE x DROP COLUMN y;
+ALTER TABLE x DROP COLUMN z;
 ```
-the expression is formed to comprise all the information to create a table. Refer Details.
-
-create table clause + columns names + Primary key + Secondary key + additional parameters
-
-ENGINE=InnoDB 
-DEFAULT CHARSET=utf8 
-COLLATE=utf8_unicode_ci
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 <details>
 <summary>Additional Details</summary>
+Formation of DL_Alter_Script:
 
-In the talend job, following fields are fetched and copied
-
-```sql
-"SELECT 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Id`, 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Name`, 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Column_Names`, 
-  `ELT_DL_Mapping_Info_Saved`.`Constraints`, 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Data_Types`, 
-  `ELT_DL_Mapping_Info_Saved`.`Column_Type`, 
-  `ELT_DL_Mapping_Info_Saved`.`Added_Date`, 
-  `ELT_DL_Mapping_Info_Saved`.`Added_User`, 
-  `ELT_DL_Mapping_Info_Saved`.`Updated_Date`, 
-  `ELT_DL_Mapping_Info_Saved`.`Updated_User`
-FROM `ELT_DL_Mapping_Info_Saved`
-where DL_Id='"+context.DL_Id+"'"
-```
-Before inserting the records, all existing relevant records are purged.
-
-```sql
-     "Delete from ELT_DL_Mapping_Info  where DL_Id='"+context.DL_Id+"'"
-```
-There is direct copies of all the fields fectched from the DB in the previous Step into the table `ELT_DL_Mapping_Info`. 
-
-
-The schematic of the job is shown in the [attached diagram](#appendix-a).
+| Name             | Expression                                                                      |
+|------------------|---------------------------------------------------------------------------------|
+| Drop_column      | Result.Script|
+| Final_Drop_Column| Final_Drop_Column == null ? Drop_column + "," : Final_Drop_Column + Drop_column + "," |
+| Script           | "ALTER TABLE " + DL_Name + " " + Final_Drop_Column                          |
+| DL_Alter_Script | StringHandling.LEFT(Script, (StringHandling.LEN(Script) - 1)) + ";"                  |
 
 </details>
 
+### Aggregation of the rows
+
+The alter script field of the last record is complete with the information of all columns that need to be dropped. 
+Therefore, the rows generated in previous step have to be aggregated on `DL_ID`, `DL_NAME` columns and `Alter_Script` from the last row is selected. SQL clause Order_by alongwith LIMIT may be used.
+
+### Addtional fields
+Addtional fields are updated with appropriate values - Active_Flag (true),  Added_Date, Added_User, Updated_Date, Updated_User
+
+## Store the Generated Data
+
+The destination for the generated data is the table `ELT_DL_Alter_Script_Info` of Target DB.
+
+
 ## Appendix A
 
-Schematic diagram of the component (Talend job). Java service 
+Schematic diagram of the component (Talend job).
 
-![schematic diagram](./ELT_DL_Saved_Info_M8_v1_0.png "ELT_DL_Saved_Info_M8_v1")
+![schematic diagram](./ELT_DL_Alter_Delete_Job_M8_v1_0.1.png "ELT_DL_Alter_Delete_Job_M8_v1")
 
 
 ## Appendix B
