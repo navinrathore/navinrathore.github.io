@@ -2,9 +2,7 @@
 
 ## Intent
 
-Alter or Create Table
-
-//Purpose of this component is to copy all the records corresponding to the input `DL_ID` from the //table `ELT_DL_Mapping_Info_Saved` to the table `ELT_DL_Mapping_Info`.
+Alter Table  to delete all the columns for the given `DL_ID`.
 
 ## Input Specifications
 The component or service is dependent on the following input data:
