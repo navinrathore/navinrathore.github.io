@@ -170,6 +170,63 @@ It is very similar to Component 2, with the roles of the two tables reversed. Ad
   ```
 </details>
 
+## Component 4: Update `ELT_DL_Alter_Script_Info` with Active_flag=0
+
+  - Update the row of the table `ELT_DL_Alter_Script_Info` by setting  `Active_flag` to 0 correspomdomg to given `DL_Id`
+
+ <details>
+    <summary>Additional Details</summary>
+
+    ```sql
+    "Update  ELT_DL_Alter_Script_Info set Active_flag=0  where DL_Id='"+context.DL_Id+"'"
+    ```
+ </details>
+
+## Component 5: Check the existance of the table correspeonding to `DL_Name`
+
+- Check if table `DL_Name` exists in the target DB. If it exists, execute alter statement on the table else execute create statement.
+- If Table exists, execute ALTER statement. Else if, Table doesn't exist, Proceed with CREATE statement (Functionality missing)
+
+
+## Component 6: Statement for `DELETE/DROP COLUMN`
+
+- Executed if Alter is set true.
+- Relevant data is extracted from ELT_DL_Mapping_Info (Set A) and ELT_DL_Mapping_Info_Saved (Set B)
+    - Find unique columns from the table `ELT_DL_Mapping_Info_Saved` and `ELT_DL_Mapping_Info` (lookup) using Inner Join.
+    - columns include `DL_Id`, `DL_Name`, `DL_Column_Names`, `Constraints` and `DL_Data_Types`
+- Map the data appropriately for output fields - `DL_Id`, `DL_Name`, `DL_Column_Names`, `script`
+    - `script` field shall be set like below
+      ```code
+      Drop Column `ELT_DL_Mapping_Info.DL_Column_Names`
+      ```
+- Map further to synthesise Alert Script
+    ```code
+    Alert Table `DL_Name` script
+    ```
+- Group the data on `DL_ID`, `DL_Name`. Choose the last row as it has comprehensive details of Alert script.
+- Delete ALter Script shall be referred later.
+
+
+## Component 7: Find last Job update time
+  - find the recent updated date for the given tablename. 
+    - Select latest `updated_date` of `ELT_DL_Mapping_Info` for given `DL_Name`.
+  
+## Component 8: Alert Script statement for Delete/Add Constraints
+  - Relevant data is extracted from ELT_DL_Mapping_Info_Saved (Set A) and ELT_DL_Mapping_Info (Set B)
+    - Find unique columns from the table `ELT_DL_Mapping_Info_Saved` and `ELT_DL_Mapping_Info` (lookup) using Inner Join.
+  - An Alter script is formed where Old columns are dropped and new columns are added with updated constraint list (component 1)
+    - NOT_NULL_FINAL Statement (Component 2) is used here
+  -  Group the data on `DL_ID`, `DL_Name`. Choose the last row as it has comprehensive details of Alert script.
+  - Addtionaly, Added/Updated Date/User fieds are updated with current values.
+
+
+### Addtional fields
+Addtional fields are updated with appropriate values - Active_Flag (true),  Added_Date, Added_User, Updated_Date, Updated_User
+
+## Component 9: Store the Generated Data
+
+- The generated data is stored into table `ELT_DL_Alter_Script_Info` of App DB.
+- Close the DBs.
 
 #####################################################
 
@@ -178,15 +235,3 @@ It is very similar to Component 2, with the roles of the two tables reversed. Ad
 Schematic diagram of the component (Talend job).
 
 ![schematic diagram](./ELT_DL_Alter_Job_M8_v3_0.1.png "ELT_DL_Alter_Job_M8_v3")
-
-
-## Appendix B
-
-List of all Context Variables.
-
-
-                                                      
-
-
-
-
