@@ -2,9 +2,7 @@
 
 ## Intent
 
-The Objective of this job/service is to create an ALTER script for the table that will Change or delete columns and add columns with updated constraints. NULL or NOT NULL.
-
-This is a parent job/service. It calls the Alter_Job and Alter_Delete jobs/services.
+This is a parent job/service for Alter operations. It calls the Alter_Job and Alter_Delete jobs/services.
 
 The major tasks of the job/service are listed here.
 
@@ -12,8 +10,7 @@ The major tasks of the job/service are listed here.
 The component or service is dependent on the following input data:
 
 - App DB Connection Details
-- Target DB Connection Details (TGT_DBNAME ...)
-- DL_Name - table name
+- DL_Id - table Id
 
 ## DB Connection 
 
@@ -23,7 +20,6 @@ Once the Input parameters are read into the system, the database connection is e
  - The database connection must be properly closed at the end of the operation.
  - Additional JDBC Parameters:
     * noDatetimeStringSync=true
-    * allowMultiQueries=true
 
 ## Component 1: set `Active_flag` to 0
 
@@ -40,9 +36,10 @@ Once the Input parameters are read into the system, the database connection is e
 
 ## Component 2: Execute Alter Delete job/service
 
-- find out recent update date from the table `ELT_DL_Mapping_Info`. refer it as `Max_Update_date`
+- find out recent update date from the table `ELT_DL_Mapping_Info`. Refer it as `Max_Update_date`.
 
-- Find if the Input `DL_Id` exists or not.  Find unique list of table names ( `DL_Ids`) from `ELT_DL_Mapping_Info_Saved`. 
+- Find if details of the Input `DL_Id` exists or not.  Find unique list of table Ids ( `DL_Ids`) from `ELT_DL_Mapping_Info_Saved`. There shall be only one record.
+    - if `DL_Id` does not exist, DO ... (TBD)
 - Call service/job [Alter Delete Service/Job](ELT_DL_Alter_Delete_Job_M8_v1.md)
 
     <details>
@@ -58,7 +55,9 @@ Once the Input parameters are read into the system, the database connection is e
 
 ## Component 3: Execute Alter job/service
 
-- Find if the Input `DL_Id` exists or not.  Find unique list of table names ( `DL_Ids`) from `ELT_DL_Mapping_Info_Saved` where update date is greater than `Max_Update_date`
+- Find if details of the Input `DL_Id` exists or not.  Find unique list of table Ids ( `DL_Ids`) from `ELT_DL_Mapping_Info_Saved` where update date is greater than `Max_Update_date`. There shall be only one record.
+    -  if `DL_Id` does not exist, DO ... (TBD)
+
 - Call service/job [Alter Service/Job](./ELT_DL_Alter_Job_M8_v3.md)
 
     <details>

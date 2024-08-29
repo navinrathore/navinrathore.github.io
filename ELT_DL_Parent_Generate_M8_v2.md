@@ -6,7 +6,7 @@ The component consists of below 5 jobs. the sequence of these jobs is shown in t
 1. Job 1 [DL_Config_File](/DL_Config_File.md)
 2. Job 2 [DL_Value_File](/ELT_DL_Value_File_M8.md)
 3. Job 3 [DL_Create_Script](/ELT_DL_Create_Script_M8.md)
-4. Job 4 [DL_Alter](/Alter.md)
+4. Job 4 [DL_Alter](/DL%20Alter%20Jobs/ELT_DL_Alter_Job_Group.md)
 5. Job 5 [DL_Saved](/ELT_DL_Saved_Info_M8_v1.md)
 
 ELT_DL_Config_File_M8_v2_4
