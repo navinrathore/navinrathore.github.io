@@ -173,7 +173,7 @@ It is very similar to Component 2, with the roles of the two tables reversed. Ad
 
 ## Component 4: Update `ELT_DL_Alter_Script_Info` with Active_flag=0
 
-  - Update the row of the table `ELT_DL_Alter_Script_Info` by setting  `Active_flag` to 0 correspomdomg to given `DL_Id`
+  - Update the row in the table `ELT_DL_Alter_Script_Info` by setting the `Active_flag` to 0 for the given `DL_Id`
 
  <details>
     <summary>Additional Details</summary>
