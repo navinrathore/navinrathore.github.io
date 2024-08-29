@@ -64,14 +64,14 @@ Once the Input parameters are read into the system, the database connection is e
  
 <details>
 <summary>Additional Details</summary>
-    There are four fields in the output. The script field uses the field `DL_Column_Names` value.
+  There are four fields in the output. The script field uses the field `DL_Column_Names` value.
 
-    | Name             | Type   | Expression                                                      | isNullable |
-    |------------------|--------|-----------------------------------------------------------------|------------|
-    | DL_Id            | Long   | ELT_DL_Mapping_Info.DL_Id                                       | true       |
-    | DL_Name          | String | ELT_DL_Mapping_Info.DL_Name                                     | true       |
-    | DL_Column_Names  | String | ELT_DL_Mapping_Info.DL_Column_Names                             | true       |
-    | Script           | String | "Drop Column `ELT_DL_Mapping_Info.DL_Column_Names`     | true       |
+  | Name             | Type   | Expression                                                      | isNullable |
+  |------------------|--------|-----------------------------------------------------------------|------------|
+  | DL_Id            | Long   | ELT_DL_Mapping_Info.DL_Id                                       | true       |
+  | DL_Name          | String | ELT_DL_Mapping_Info.DL_Name                                     | true       |
+  | DL_Column_Names  | String | ELT_DL_Mapping_Info.DL_Column_Names                             | true       |
+  | Script           | String | "Drop Column `ELT_DL_Mapping_Info.DL_Column_Names`     | true       |
 
 
 Further complete Alter table script shall be formed.
@@ -115,7 +115,7 @@ Addtional fields are updated with appropriate values - Active_Flag (true),  Adde
 
 ## Store the Generated Data
 
-The destination for the generated data is the table `ELT_DL_Alter_Script_Info` of Target DB.
+The destination for the generated data is the table `ELT_DL_Alter_Script_Info` of App DB.
 
 
 ## Appendix A

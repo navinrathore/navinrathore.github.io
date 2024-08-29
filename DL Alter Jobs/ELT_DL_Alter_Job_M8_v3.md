@@ -2,7 +2,7 @@
 
 ## Intent
 
-The Objective of this job/service is to create an ALTER script for the table that will Change or delete columns and add columns with updated constraints. NULL or NOT NULL.
+The Objective of this service/job is to create an ALTER script for the table that will Change or delete columns and add columns with updated constraints. NULL or NOT NULL.
 
 The major tasks of the job/service are listed here.
 ## Input Specifications
@@ -200,11 +200,11 @@ It is very similar to Component 2, with the roles of the two tables reversed. Ad
       ```code
       Drop Column `ELT_DL_Mapping_Info.DL_Column_Names`
       ```
-- Map further to synthesise Alert Script
+- Synthesise complete Alert Script
     ```code
-    Alert Table `DL_Name` script
+    Alter Table `DL_Name` script
     ```
-- Group the data on `DL_ID`, `DL_Name`. Choose the last row as it has comprehensive details of Alert script.
+- Group the data on `DL_ID`, `DL_Name`. Aggregate Choose the last row as it has comprehensive details of Alert script.
 - Delete ALter Script shall be referred later.
 
 
@@ -212,17 +212,43 @@ It is very similar to Component 2, with the roles of the two tables reversed. Ad
   - find the recent updated date for the given tablename. 
     - Select latest `updated_date` of `ELT_DL_Mapping_Info` for given `DL_Name`.
   
-## Component 8: Alert Script statement for Delete/Add Constraints
+## Component 8: Complete Alert Script statement
+
+Form a consolidated Alter script incorporating all the intermediate partial statements formed in previous components.
+ 
   - Relevant data is extracted from ELT_DL_Mapping_Info_Saved (Set A) and ELT_DL_Mapping_Info (Set B)
     - Find unique columns from the table `ELT_DL_Mapping_Info_Saved` and `ELT_DL_Mapping_Info` (lookup) using Inner Join.
-  - An Alter script is formed where Old columns are dropped and new columns are added with updated constraint list (component 1)
-    - NOT_NULL_FINAL Statement (Component 2) is used here
-  -  Group the data on `DL_ID`, `DL_Name`. Choose the last row as it has comprehensive details of Alert script.
-  - Addtionaly, Added/Updated Date/User fieds are updated with current values.
+  - An Alter script is formed where Old columns are dropped and new columns are added with updated constraint list.
+    - `NOT_NULL_FINAL` Statement from [Component 2](#component-2-statement-for-change-column-with-not-null) is referred to here.
+    - NULL_FINAL_STATEMENT from [Component 3](#component-3-statement-for-change-column-with-null) is referred to here.
+    - `Change_Flag` and `PKColumns` from [Component 1](#component-1-statement-for-primary-key-pk-columns) is referred to here.
+    - DELETE_ALTER_SCRIPT from the job [Component 6](#component-6-statement-for-deletedrop-column) is referred to here.
+    -  Group the data on `DL_ID`, `DL_Name`. Choose the last row as it has comprehensive details of Alert script.
+  - Additionaly, Added/Updated Date/User fields are updated with current values.
 
 
 ### Addtional fields
 Addtional fields are updated with appropriate values - Active_Flag (true),  Added_Date, Added_User, Updated_Date, Updated_User
+
+<details>
+<summary> Additional Details </summary>
+
+Below table list all the intermediate expressions or references used to find the alert script.
+| Name                | Expression                                                                                                                                                                                                                                                                                                                                                                                                            |
+|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| notnull_query       | (String)(globalMap.get("notnull_final_statement"))                                                                                                                                                                                                                                                                                                                                                                     |
+| notnull_check       | (Var.notnull_query == null \|\| Var.notnull_query.isEmpty() \|\| Var.notnull_query.equals(null) \|\| Var.notnull_query.equals("NULL")) ? "" : Var.notnull_query + ","                                                                                                                                                                                                                                                |
+| null_query          | (String)(globalMap.get("final_statement"))                                                                                                                                                                                                                                                                                                                                                                             |
+| notnull_flag        | (Var.null_query == null \|\| Var.null_query.isEmpty() \|\| Var.null_query.equals(null) \|\| Var.null_query.equals("NULL")) ? Var.notnull_check : Var.notnull_check + (String)(globalMap.get("final_statement")) + ","                                                                                                                                                                                                |
+| DL_Data_Types       | StringHandling.DOWNCASE(Saved.DL_Data_Types).contains("bit") ? "tinyint(1)" : Saved.DL_Data_Types                                                                                                                                                                                                                                                                                                                      |
+| Adding_Column       | Prev_Genearted.DL_Column_Names == null ? "ADD COLUMN `" + Saved.DL_Column_Names + "` " + Var.DL_Data_Types : (Prev_Genearted.DL_Column_Names == null ? "" : ((!Saved.DL_Column_Names.equals(Prev_Genearted.DL_Column_Names) \|\| !Saved.DL_Data_Types.equals(Prev_Genearted.DL_Data_Types)) && (Saved.Constraints.equals("PK")) ? "CHANGE `" + Prev_Genearted.DL_Column_Names + "` `" + Saved.DL_Column_Names + "` " + Var.DL_Data_Types + " NOT NULL " : (!Saved.DL_Column_Names.equals(Prev_Genearted.DL_Column_Names) \|\| !Saved.DL_Data_Types.equals(Prev_Genearted.DL_Data_Types)) ? "CHANGE `" + Prev_Genearted.DL_Column_Names + "` `" + Saved.DL_Column_Names + "` " + Var.DL_Data_Types : "")) |
+| Final_Adding_Column | Var.Adding_Column == null \|\| Var.Adding_Column.equals("") \|\| Var.Adding_Column.isEmpty() ? Var.Final_Adding_Column : (Var.Final_Adding_Column == null ? Var.Adding_Column : Var.Final_Adding_Column + "," + Var.Adding_Column)                                                                                                                                                                                                                           |
+| Drop_Columns        | ((String)globalMap.get("Delete_Alter_Script")) == null \|\| ((String)globalMap.get("Delete_Alter_Script")).equals("") \|\| ((String)globalMap.get("Delete_Alter_Script")).isEmpty() ? "" : ((String)globalMap.get("Delete_Alter_Script"))                                                                                                                                                                               |
+| Drop_Flag           | (Var.Drop_Columns == null \|\| Var.Drop_Columns.equals("") \|\| Var.Drop_Columns.isEmpty()) ? "N" : "Y"                                                                                                                                                                                                                                                                                                                |
+| Scripts             | ((Var.Final_Adding_Column == null \|\| Var.Final_Adding_Column.equals("") \|\| Var.Final_Adding_Column == "" \|\| Var.Final_Adding_Column.isEmpty()) && (Var.Drop_Flag.equals("N"))) ? "" : ((Var.Final_Adding_Column == null \|\| Var.Final_Adding_Column.equals("") \|\| Var.Final_Adding_Column == "" \|\| Var.Final_Adding_Column.isEmpty()) && (Var.Drop_Flag.equals("Y"))) ? "ALTER TABLE `" + Saved.DL_Name + "` " + Var.Drop_Columns : Var.Drop_Flag.equals("N") ? "ALTER TABLE `" + Saved.DL_Name + "` \n " + Var.notnull_flag + " " + Var.Final_Adding_Column : "ALTER TABLE `" + Saved.DL_Name + "` \n " + Var.notnull_flag + " " + Var.Drop_Columns + ", " + Var.Final_Adding_Column |
+| DL_Script           | (Var.Scripts == null \|\| Var.Scripts.equals("") \|\| Var.Scripts == "") && (((String)globalMap.get("Change_Flag")).equals("N")) ? "" : (Var.Scripts == null \|\| Var.Scripts.equals("") \|\| Var.Scripts == "") && (((String)globalMap.get("Change_Flag")).equals("Y")) ? "Alter table `" + Saved.DL_Name + "`\n " + Var.notnull_flag + "\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (" + ((String)globalMap.get("PKColumns")) + ");" : ((Var.Scripts != null \|\| !Var.Scripts.equals("") \|\| Var.Scripts != "") && (((String)globalMap.get("Change_Flag")).equals("Y")) ? StringHandling.LEFT(Var.Scripts, (StringHandling.LEN(Var.Scripts))) + ",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (" + ((String)globalMap.get("PKColumns")) + ");" : StringHandling.LEFT(Var.Scripts, (StringHandling.LEN(Var.Scripts))) + ";") |
+| script            | Var.DL_Script == null \|\| Var.DL_Script.equals("NULL") \|\| Var.DL_Script.isEmpty() \|\| Var.DL_Script.equals("") ? "N" : Var.DL_Script                                                                                                                                                                                                                                                                              |
+</details>
 
 ## Component 9: Store the Generated Data
 
