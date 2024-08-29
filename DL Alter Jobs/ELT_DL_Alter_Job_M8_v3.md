@@ -2,8 +2,9 @@
 
 ## Intent
 
-Alter Table  to delete all the columns for the given `DL_ID`.
+The Objective of this job/service is to create an ALTER script for the table that will Change or delete columns and add columns with updated constraints. NULL or NOT NULL.
 
+The major tasks of the job/service are listed here.
 ## Input Specifications
 The component or service is dependent on the following input data:
 
