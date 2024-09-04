@@ -1,12 +1,8 @@
-# Data Mart: Mapping Info SAVED (ELT_DL_Saved_Info_M8_v1)
+# Data Mart: Key Value Pairs for Settings_Position `'Derived_Columns'`  (ELT_DL_ExecutesqlGroupbyFilter_Derived)
 
 ## Intent
-`executesqlfiltergroupby`  component
-`ELT_DL_FilterGroupBy_Info`
 
-Settings_Position is `'Derived_Columns'`.
-
-Purpose of this component is to copy all the records corresponding to the input `DL_ID` from the table `ELT_DL_Mapping_Info_Saved` to the table `ELT_DL_Mapping_Info`.
+Generate field `Derived_Dynamic_Groupby_Filter_Config` comprising modified `key=value` pairs that are associated with Settings_Position `'Derived_Columns'`.
 
 ## DB Connection 
 
@@ -23,6 +19,7 @@ The component or service is dependent on the following input data:
 - Default
   - job_type is `DL`
   - Component is `executesqlfiltergroupby`
+  - Settings_Position is `'Derived_Columns'`
 
 ## Output Specifications
 
