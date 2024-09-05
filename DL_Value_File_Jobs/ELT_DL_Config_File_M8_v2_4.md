@@ -3,17 +3,17 @@
 The component comprises 10 jobs, executed in the sequence shown in the [attached diagram](#appendix-a).
 
 
-1. Job 1 [Source](/DL_Config_File.md)
-2. Job 2 [lkp/join](/ELT_DL_Value_File_M8.md)
-3. Job 3 [Recoercing](/ELT_DL_Create_Script_M8.md)
-4. Job 4 [NullReplacement](/DL%20Alter%20Jobs/ELT_DL_Alter_Job_Group.md)
+1. Job 1 [Source]()
+2. Job 2 [lkp/join]()
+3. Job 3 [Recoercing]()
+4. Job 4 [NullReplacement]()
 
-1. Job 5 [GroupbyJoin](/DL_Config_File.md)
-1. Job 6 [Derived](/DL_Config_File.md)
-1. Job 7 [GroupbyDerived](/DL_Config_File.md)
-3. Job 8 [remit](/ELT_DL_Create_Script_M8.md)
-4. Job 9 [Rename](/DL%20Alter%20Jobs/ELT_DL_Alter_Job_Group.md)
-5. Job 10 [Sink](/ELT_DL_Saved_Info_M8_v1.md)
+1. SubJob [GroupbyJoin](./DL_Value_File_subjobs/ELT_DL_ExecutesqlGroupbyFilter_Join.md)
+1. Job 6 [Derived]()
+1. SubJob [GroupbyDerived](./DL_Value_File_subjobs/ELT_DL_ExecutesqlGroupbyFilter_Derived.md)
+3. Job 8 [remit]()
+4. Job 9 [Rename]()
+5. Job 10 [Sink]()
 
 ## Final Task
 After successfully completing the previous 10 sub-jobs:
