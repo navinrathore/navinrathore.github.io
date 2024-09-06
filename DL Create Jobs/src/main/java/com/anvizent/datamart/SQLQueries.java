@@ -9,7 +9,7 @@ class SQLQueries {
      */
     public static final String SELECT_DETAILS_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY =
         "SELECT " +
-        "    `ELT_DL_MAPPING_INFO_SAVED`.`DL_Id`, " +
+        "    `ELT_DL_Mapping_Info_Saved`.`DL_Id`, " +
         "    `ELT_DL_Mapping_Info_Saved`.`DL_Name`, " +
         "    `ELT_DL_Mapping_Info_Saved`.`DL_Column_Names`, " +
         "    `ELT_DL_Mapping_Info_Saved`.`Constraints`, " +
