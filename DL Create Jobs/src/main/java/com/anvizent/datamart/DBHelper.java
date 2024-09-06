@@ -1,6 +1,5 @@
 package com.anvizent.datamart;
 
- 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -8,7 +7,8 @@ import java.sql.SQLException;
 // Enum to represent different data source types
 enum DataSourceType {
     MYSQL,
-    SNOWFLAKE
+    SNOWFLAKE,
+    SQLSERVER
 }
 
 public class DBHelper {
@@ -19,8 +19,8 @@ public class DBHelper {
 
         switch (dataSourceType) {
             case MYSQL:
-                // MySQL Connection sample
-                String mysqlUrl = "jdbc:mysql://localhost:3306/your_database";
+                // MySQL Connection Dummy
+                String mysqlUrl = "jdbc:mysql://localhost:3306/databasename?noDatetimeStringSync=true";
                 String mysqlUser = "userName";
                 String mysqlPassword = "password";
                 connection = DriverManager.getConnection(mysqlUrl, mysqlUser, mysqlPassword);
@@ -28,9 +28,11 @@ public class DBHelper {
                 // Enable auto-commit
                 connection.setAutoCommit(true);
                 break;
-
+            case SNOWFLAKE:
+            case SQLSERVER:
+                throw new SQLException(dataSourceType + " is not supported yet.");
             default:
-                throw new SQLException("Unsupported DataSourceType");
+                throw new SQLException("Unsupported DataSourceType: " + dataSourceType);
         }
 
         return connection;
@@ -38,17 +40,15 @@ public class DBHelper {
 
     public static void main(String[] args) {
         try {
-            // Get MySQL connection
+            // Test MySQL connection
             Connection conn = DBHelper.getConnection(DataSourceType.MYSQL);
 
             if (conn != null) {
                 System.out.println("Connection established!");
-                // Remember to close the connection after usage
                 conn.close();
             } else {
                 System.out.println("Failed to make connection!");
             }
-
         } catch (SQLException e) {
             e.printStackTrace();
         }
