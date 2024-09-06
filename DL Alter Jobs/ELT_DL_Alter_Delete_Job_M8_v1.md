@@ -30,8 +30,14 @@ Once the Input parameters are read into the system, the database connection is e
 
   <Details>
     Sample query to check if the table exists in the DB or not!
+    There is a better way also listed.
 
   ```sql
+  SELECT COUNT(*) 
+  FROM information_schema.tables 
+  WHERE table_schema = 'TGT_DBNAME' 
+    AND table_name = 'DL_Name';
+    
   SELECT table_name 
   FROM information_schema.tables 
   WHERE table_type <> 'VIEW' 

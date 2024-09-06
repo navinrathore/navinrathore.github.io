@@ -11,7 +11,7 @@ The component consists of below 5 jobs. the sequence of these jobs is shown in t
 
 
 ## Final Task
-Once all the previous 5 sub jobs are successfully complete, delete the table if exist in APP DB Connection.
+Once all the previous 5 sub jobs are successfully completed, delete the table if exists in APP DB Connection.
 
 ```sql
     "Drop table if exists `"+context.DL_Name+context.DL_Id+context.Job_Id+"`"

@@ -27,11 +27,11 @@ Once the Input parameters are read into the system, the database connection is e
 - Reference Points - TBD
 
  <details>
-    <summary>Additional Details</summary>
+  <summary>Additional Details</summary>
 
-    ```sql
-    "Update  ELT_DL_Alter_Script_Info set Active_flag=0  where DL_Id=`DL_Id`
-    ```
+  ```sql
+    Update  ELT_DL_Alter_Script_Info set Active_flag=0  where DL_Id=`DL_Id`
+  ```
  </details>
 
 ## Component 2: Execute Alter Delete job/service
@@ -42,16 +42,20 @@ Once the Input parameters are read into the system, the database connection is e
     - if `DL_Id` does not exist, DO ... (TBD)
 - Call service/job [Alter Delete Service/Job](ELT_DL_Alter_Delete_Job_M8_v1.md)
 
-    <details>
-    <summary>Additional details</summary>
+  <details>
+  <summary>Additional details</summary>
 
-      ```sql
-      SELECT distinct 
-        `ELT_DL_Mapping_Info_Saved`.`DL_Id`
-      FROM `ELT_DL_Mapping_Info_Saved` 
-      where DL_Id ='DL_Id'
-      ```
-    </Details>
+  ```sql
+  select max(Updated_Date) from ELT_DL_Mapping_Info where DL_Id='"+context.DL_Id+"'"
+  ```
+
+  ```sql
+  SELECT distinct 
+    `ELT_DL_Mapping_Info_Saved`.`DL_Id`
+  FROM `ELT_DL_Mapping_Info_Saved` 
+  where DL_Id ='DL_Id'
+  ```
+  </Details>
 
 ## Component 3: Execute Alter job/service
 
