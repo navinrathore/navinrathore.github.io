@@ -41,13 +41,16 @@ username and password need to passed to create connection.
 # Component 1: Read Data from ELT_DL_Mapping_Info_Saved
 Following  columns from the table **ELT_DL_Mapping_Info_Saved** are fetched for the input param **DL_Id**:
 
+It is similar but refined version of the query in the another create script.
 - Columns: `DL_Id`, `DL_Name`, `DL_Column_Names`, `Constraints`, `DL_Data_Types`
 - All the data in columns of type String and Char must be trimmed. 
 - Wherever applicable, bit(1) data type should be changed to tinyint(1). MySql?
+- Later dataType 'text' is converted into varchar(150) while creating definition
 <details>
 <summary>details</summary>
 Query to fetch data:
 
+Quite similar to that in another script. Little more refined.
 ``` sql
 SELECT 
   DISTINCT 
@@ -95,6 +98,7 @@ In the previous step, five fields from each row are read and mapped to the corre
 4. PKs (see details)
 
     The Field must have all previous PKs prepended. 
+    Note: Columns names may be tickquoted for mysql
     ```java
     If Constraint is 'PK',  
         PKs = row.Column_Names + ","
@@ -114,8 +118,15 @@ In the previous step, five fields from each row are read and mapped to the corre
     ```
 
 5. Column_Names (see details)
+
+    Note: Here it differs from another create script.  if `dataType` is text change it to `varchar`
+
     ```python
     Column_Names = "\n" + row.DL_Column_Names+" "+row.DL_Data_Types + " " 
+
+    Note: In addition to another create script
+    [If datatype is text && constraint is 'pk'] - DL_Data_Types = "varchar(150)"
+
     [If datatype is varchar] -  + "COLLATE utf8_unicode_ci"
         else                    + " "
     [If constraint is 'pk']  -  + "NOT NULL DEFAULT "  + DEFAULT_VALUE_FOR_TYPE
@@ -129,6 +140,10 @@ In the previous step, five fields from each row are read and mapped to the corre
     boolean - 0,
     date - '0000-00-00'
     OTHER - " "
+
+    Additonally, 
+    text - '',
+    char - ''
     ```
 
 

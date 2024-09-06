@@ -53,4 +53,25 @@ public class DBHelper {
             e.printStackTrace();
         }
     }
+
+    // Helper function to get the default value based on the data type
+    static String getDefaultForDataType(String dataType) {
+        switch (dataType.toLowerCase()) {
+            case "varchar":
+            case "text":
+            case "char":
+                return "''";
+            case "int":
+                return "0";
+            case "float":
+            case "decimal":
+                return "0.0";
+            case "boolean":
+                return "0";
+            case "date":
+                return "'0000-00-00'";
+            default:
+                return "''"; // Default to empty string for unknown types
+        }
+    }
 }

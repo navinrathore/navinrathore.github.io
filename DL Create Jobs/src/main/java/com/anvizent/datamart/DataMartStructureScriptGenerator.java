@@ -120,6 +120,12 @@ public class DataMartStructureScriptGenerator {
     private static String buildColumnDefinition(String columnName, String constraint, String dataType) {
         StringBuilder columnDefinitionBuilder = new StringBuilder();
 
+        // TBD: Taken from another create Script.
+        // if dataType is "text" and constraint is "pk", it is changed to varchar(150)
+        if ("text".equalsIgnoreCase(dataType) && "pk".equalsIgnoreCase(constraint)) {
+            dataType = "varchar(150)";
+        }
+
         columnDefinitionBuilder.append("\n")
                 .append(columnName)
                 .append(" ")
@@ -128,30 +134,11 @@ public class DataMartStructureScriptGenerator {
 
         if (constraint.equals("pk")) {
             columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
-            columnDefinitionBuilder.append(getDefaultForDataType(dataType));
+            columnDefinitionBuilder.append(DBHelper.getDefaultForDataType(dataType));
         } else {
             columnDefinitionBuilder.append(" DEFAULT NULL");
         }
         return columnDefinitionBuilder.toString();
-    }
-
-    // Helper function to get the default value based on the data type
-    private static String getDefaultForDataType(String dataType) {
-        switch (dataType.toLowerCase()) {
-            case "varchar":
-                return "''";
-            case "int":
-                return "0";
-            case "float":
-            case "decimal":
-                return "0.0";
-            case "boolean":
-                return "0";
-            case "date":
-                return "'0000-00-00'";
-            default:
-                return "''"; // Default to empty string for unknown types
-        }
     }
 
     /**
