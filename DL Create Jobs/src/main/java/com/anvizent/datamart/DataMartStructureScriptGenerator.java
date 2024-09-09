@@ -124,6 +124,8 @@ public class DataMartStructureScriptGenerator {
             boolean hasRecentUpdateForDLId = checkDLIdExistsWithUpdatedDate(conn, dlId, dateTime);
             if (hasRecentUpdateForDLId) {
                 // call Alter Services
+
+                buildChangeColumnNotNullQuery(conn, dlId, dlName);
             }
 
             return Status.SUCCESS;
@@ -281,6 +283,60 @@ public class DataMartStructureScriptGenerator {
         }
 
     }
+    
+    // Function to execute the left outer join query
+    public void buildChangeColumnNotNullQuery(Connection conn, String dlId, String dlName) {
+        String query = SQLQueries.JOIN_OUTER_ELT_DL_MAPPING_INFO_SAVED_AND_INFO;
+
+        StringBuilder combinedChangeColumnDefBuilder = new StringBuilder();
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+            // Set the DL_Id parameter in the query
+            stmt.setString(1, dlId);
+            stmt.setString(1, dlName);
+
+            // Execute the query
+            try (ResultSet rs = stmt.executeQuery()) {
+                // Process the result set
+                while (rs.next()) {
+                    String savedDlId = rs.getString("DL_Id");
+                    String savedColumnName = rs.getString("DL_Column_Names");
+                    String lookupColumnNames = rs.getString("lookup_column_names");
+                    String lookupDataTypes = rs.getString("lookup_data_types");
+                    String savedConstraints = rs.getString("saved_constraints");
+                    String lookupConstraints = rs.getString("lookup_constraints");
+                    // Form Change Column Definition and append to combined Definition
+                    String changeColumnDefinition = sqlChangeColumnDefinition(savedColumnName, lookupDataTypes,
+                            savedConstraints, lookupConstraints);
+                    if (combinedChangeColumnDefBuilder.length() > 0) {
+                        combinedChangeColumnDefBuilder.append(", ");
+                    }
+                    combinedChangeColumnDefBuilder.append(changeColumnDefinition);
+                }
+
+                String finalChangeColumnNotNullScript = combinedChangeColumnDefBuilder.toString();
+                System.out.println(finalChangeColumnNotNullScript);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private String sqlChangeColumnDefinition(String columnName, String lookupDataTypes, String savedConstraints,
+            String lookupConstraints) {
+        final String CHANGE_COLUMN_DEF_START = "Change column ";
+        final String NOT_NULL = " not NULL ";
+        StringBuilder finalScriptBuilder = new StringBuilder();
+        if (lookupDataTypes != null) {
+            if ("pk".equalsIgnoreCase(savedConstraints) && "".equalsIgnoreCase(lookupConstraints)) {
+                finalScriptBuilder.setLength(0); // ensure start afresh
+                finalScriptBuilder.append(CHANGE_COLUMN_DEF_START).append(" ")
+                        .append('`').append(columnName).append('`').append(" ")
+                        .append('`').append(columnName).append('`').append(" ")  
+                        .append(NOT_NULL);
+            }
+        }
+        return finalScriptBuilder.toString();
+    }
 
     public class DataMartSavedScriptGenerator {
         public DataMartSavedScriptGenerator() {
@@ -345,6 +401,35 @@ public class DataMartStructureScriptGenerator {
                 "    Updated_Date, " +
                 "    Updated_User" +
                 ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+
+        // SQL Query to perform the left outer join between ELT_DL_Mapping_Info_Saved
+        // and ELT_DL_Mapping_Info
+        public static final String JOIN_OUTER_ELT_DL_MAPPING_INFO_SAVED_AND_INFO =
+                // TBD: Performance - all are not keys?
+                "SELECT DISTINCT " +
+                        "    saved.DL_Id, " +
+                        "    saved.DL_Column_Names, " +
+                        // "    CONCAT('`', saved.DL_Column_Names, '`') AS tilt_columns, " + // redundant Used removed
+                        "    saved.Constraints AS saved_constraints, " + // Used
+                        "    lookup.Constraints AS lookup_constraints, " + // Used
+                        "    saved.DL_Data_Types AS saved_data_types, " + // Used
+                        "    lookup.DL_Data_Types AS lookup_data_types " + // Used
+                        "FROM " +
+                        "    ELT_DL_Mapping_Info_Saved saved " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_DL_Mapping_Info lookup " +
+                        "ON " +
+                        "    saved.DL_Id = lookup.DL_Id " +
+                        "    AND saved.DL_Column_Names = lookup.DL_Column_Names " +
+                        // " AND saved.DL_Data_Types = lookup.DL_Data_Types " + #TBD this check is not
+                        // required??
+                        // TBD Check what should eb the functionality, check on types will become very
+                        // restrictive
+                        "WHERE " +
+                        "    saved.DL_Id = ? " + // DL_Id as a parameter
+                        "    AND saved.DL_Name = ? " + // DL_Name as a parameter
+                        "    AND saved.Constraints = 'PK' " +
+                        "ORDER BY saved.DL_Column_Names";
     }
 
     // Enum to represent different data source types
