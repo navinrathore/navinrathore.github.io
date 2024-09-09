@@ -1,7 +1,6 @@
 package com.anvizent.datamart;
 
 import java.sql.Connection;
-import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -459,6 +458,9 @@ public class DataMartStructureScriptGenerator {
         String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED;
     
         StringBuilder finalAlterScriptBuilder = new StringBuilder();
+        StringBuilder combinedAlterScriptDefBuilder = new StringBuilder();
+
+        StringBuilder sb = new StringBuilder();
         try (PreparedStatement pstmt = conn.prepareStatement(query)) {
             pstmt.setString(1, dlId);
             pstmt.setTimestamp(2, maxUpdatedDate); // TBD: date vs Timestamp
@@ -468,27 +470,67 @@ public class DataMartStructureScriptGenerator {
                     String savedDLName = rs.getString("DL_Name");
                     String savedColumnNames = rs.getString("DL_Column_Names");
                     String savedDataTypes = rs.getString("saved_data_types");
+                    String savedConstraints = rs.getString("saved_constraints");
+
 
                     
                     String lookupDLName = rs.getString("lookup_DL_Name");
-                    String lookupColumnNames = rs.getString("lookup_column_names");
-    
+                    String lookupColumnNames = rs.getString("lookup_column_names"); 
+                    String lookupDataTypes = rs.getString("lookup_data_types");  
+                    String lookupConstraints = rs.getString("lookup_constraints");
+
+
                     // Change bit to Tinybit DL_dataTypes
                     if (savedDataTypes.contains("bit")) {
                         savedDataTypes = "tinyint(1)";
                     }
 
-                    // Handle the retrieved data here
-                    System.out.println("Saved DL Name: " + savedDLName);
-                    System.out.println("Lookup DL Name: " + lookupDLName);
-                }
+                    sb.append("ADD COLUMN `").append(savedColumnNames).append("` ").append(lookupColumnNames);
+                    // TBD: these consditions have to be studied
+                    if ((!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes) || savedConstraints.equals("PK"))) {
+                        sb.append("CHANGE `").append(lookupColumnNames).append("` ").append(savedColumnNames).append("` ").append(savedDataTypes).append(" NOT NULL");
+                    } else if (!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes)) {
+                        sb.append("CHANGE `").append(lookupColumnNames).append("` ").append(savedColumnNames).append("` ").append(savedDataTypes);
+                    } else {
+                        sb.append(""); // Do Nothing
+                    }
 
+                    if (!"".equals(combinedAlterScriptDefBuilder)) {
+                        if (combinedAlterScriptDefBuilder.length() > 0) {
+                            combinedAlterScriptDefBuilder.append(", ");
+                        }
+                        combinedAlterScriptDefBuilder.append(sb);
+                    }
+                }
+            // output from previous loop
+            String finalAddingColumn = combinedAlterScriptDefBuilder.toString();
             // TBD: in exceptional cases, value must be ""
             String notNullFinalStatement = buildChangeColumnNotNullQuery(conn, dlId, dlName);
             finalAlterScriptBuilder.append(notNullFinalStatement).append(", ");
             String nullFinalStatement = buildChangeColumnNullQuery(conn, dlId, dlName);
             finalAlterScriptBuilder.append(nullFinalStatement).append(", ");
+            // Check conditions if wither of them is "", null, empty or so on
+            String finalStatement = notNullFinalStatement + nullFinalStatement;
+            // Delete or Drop Column Script similar to above
+            String deleteAlterString = ""; // TBD
+            boolean dropFlag = true;
+            if (deleteAlterString == null || "".equals(deleteAlterString)) {
+                dropFlag = false;
+            }
 
+            StringBuilder sb2 = new StringBuilder();
+            if (finalAddingColumn == null || "".equals(finalAddingColumn) || finalAddingColumn.isEmpty() ) {
+                if (dropFlag == false) {
+                    sb2.append("");
+                } else // Drop Flag == true
+                    sb2.append("ALTER TABLE `").append(dlName).append("` ").append(deleteAlterString);
+            } else {
+                if (dropFlag == false) {
+                    sb2.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(finalAddingColumn);
+                } else {
+                    sb2.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(deleteAlterString).append(", ").append(finalAddingColumn);
+                }
+            }
 
             }
         } catch (SQLException e) {
