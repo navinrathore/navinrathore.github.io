@@ -124,10 +124,12 @@ public class DataMartStructureScriptGenerator {
             boolean hasRecentUpdateForDLId = checkDLIdExistsWithUpdatedDate(conn, dlId, dateTime);
             if (hasRecentUpdateForDLId) {
                 // call Alter Services
-
+                getPKColumnNames(conn, dlId);
                 buildChangeColumnNotNullQuery(conn, dlId, dlName);
+                buildChangeColumnNullQuery(conn, dlId, dlName);
             }
 
+            
             return Status.SUCCESS;
         }
 
@@ -281,10 +283,32 @@ public class DataMartStructureScriptGenerator {
                 return false;
             }
         }
-
     }
     
-    // Function to execute the left outer join query
+    public String getPKColumnNames(Connection conn, String dlId) {
+        String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_FOR_PK_COLUMNS;
+        StringBuilder pkColumnNamesBuilder = new StringBuilder();
+        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, dlId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                boolean first = true;
+                while (rs.next()) {
+                    if (!first) {
+                        pkColumnNamesBuilder.append(", ");
+                    }
+                    String columnName = rs.getString("DL_Column_Names");
+                    pkColumnNamesBuilder.append("`").append(columnName).append("`");
+                    first = false;
+                }
+            }
+        System.out.println(pkColumnNamesBuilder.toString());
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return pkColumnNamesBuilder.toString();
+    }
+    
+    // Function to build Change Column Non Null query
     public void buildChangeColumnNotNullQuery(Connection conn, String dlId, String dlName) {
         String query = SQLQueries.JOIN_OUTER_ELT_DL_MAPPING_INFO_SAVED_AND_INFO;
 
@@ -300,12 +324,12 @@ public class DataMartStructureScriptGenerator {
                 while (rs.next()) {
                     String savedDlId = rs.getString("DL_Id");
                     String savedColumnName = rs.getString("DL_Column_Names");
-                    String lookupColumnNames = rs.getString("lookup_column_names");
+                    //String lookupColumnNames = rs.getString("lookup_column_names");
                     String lookupDataTypes = rs.getString("lookup_data_types");
                     String savedConstraints = rs.getString("saved_constraints");
                     String lookupConstraints = rs.getString("lookup_constraints");
-                    // Form Change Column Definition and append to combined Definition
-                    String changeColumnDefinition = sqlChangeColumnDefinition(savedColumnName, lookupDataTypes,
+                    // Form Change Column Not Null Definition and append to combined Definition
+                    String changeColumnDefinition = sqlChangeColumnNotNullDefinition(savedColumnName, lookupDataTypes,
                             savedConstraints, lookupConstraints);
                     if (combinedChangeColumnDefBuilder.length() > 0) {
                         combinedChangeColumnDefBuilder.append(", ");
@@ -321,7 +345,44 @@ public class DataMartStructureScriptGenerator {
         }
     }
 
-    private String sqlChangeColumnDefinition(String columnName, String lookupDataTypes, String savedConstraints,
+    // Function to build Change Column Null query
+    public void buildChangeColumnNullQuery(Connection conn, String dlId, String dlName) {
+        String query = SQLQueries.JOIN_OUTER_ELT_DL_MAPPING_INFO_AS_MAIN_AND_SAVED_AS_LOOKUP;
+
+        StringBuilder combinedChangeColumnDefBuilder = new StringBuilder();
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+            // Set the DL_Id parameter in the query
+            stmt.setString(1, dlId);
+            stmt.setString(1, dlName);
+
+            // Execute the query
+            try (ResultSet rs = stmt.executeQuery()) {
+                // Process the result set
+                while (rs.next()) {
+                    String mainDlId = rs.getString("DL_Id");
+                    String columnName = rs.getString("DL_Column_Names");
+                    //String lookupColumnNames = rs.getString("lookup_column_names");
+                    String lookupDataTypes = rs.getString("lookup_data_types");
+                    String mainConstraints = rs.getString("main_constraints");
+                    String lookupConstraints = rs.getString("lookup_constraints");
+                    // Form Change Column Null Definition and append to combined Definition
+                    String changeColumnDefinition = sqlChangeColumnNullDefinition(columnName, lookupDataTypes,
+                    mainConstraints, lookupConstraints);
+                    if (combinedChangeColumnDefBuilder.length() > 0) {
+                        combinedChangeColumnDefBuilder.append(", ");
+                    }
+                    combinedChangeColumnDefBuilder.append(changeColumnDefinition);
+                }
+
+                String finalChangeColumnNotNullScript = combinedChangeColumnDefBuilder.toString();
+                System.out.println(finalChangeColumnNotNullScript);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private String sqlChangeColumnNotNullDefinition(String columnName, String lookupDataTypes, String savedConstraints,
             String lookupConstraints) {
         final String CHANGE_COLUMN_DEF_START = "Change column ";
         final String NOT_NULL = " not NULL ";
@@ -334,7 +395,24 @@ public class DataMartStructureScriptGenerator {
                         .append('`').append(columnName).append('`').append(" ")  
                         .append(NOT_NULL);
             }
-        }
+        } // TBD: Check the null case too, it may retuen empty string?
+        return finalScriptBuilder.toString();
+    }
+
+    private String sqlChangeColumnNullDefinition(String columnName, String lookupDataTypes, String mainConstraints,
+            String lookupConstraints) {
+        final String CHANGE_COLUMN_DEF_START = "Change column ";
+        final String NOT_NULL = " NULL ";
+        StringBuilder finalScriptBuilder = new StringBuilder();
+        if (lookupDataTypes != null) {
+            if ("pk".equalsIgnoreCase(mainConstraints) && "".equalsIgnoreCase(lookupConstraints)) {
+                finalScriptBuilder.setLength(0); // ensure start afresh
+                finalScriptBuilder.append(CHANGE_COLUMN_DEF_START).append(" ")
+                        .append('`').append(columnName).append('`').append(" ")
+                        .append('`').append(columnName).append('`').append(" ")
+                        .append(NOT_NULL);
+            }
+        } // TBD: Check the null case too, it may retuen empty string?
         return finalScriptBuilder.toString();
     }
 
@@ -430,7 +508,67 @@ public class DataMartStructureScriptGenerator {
                         "    AND saved.DL_Name = ? " + // DL_Name as a parameter
                         "    AND saved.Constraints = 'PK' " +
                         "ORDER BY saved.DL_Column_Names";
+        public static final String JOIN_OUTER_ELT_DL_MAPPING_INFO_AS_MAIN_AND_SAVED_AS_LOOKUP =
+                "SELECT DISTINCT " +
+                        "    main.DL_Id, " +
+                        "    main.DL_Column_Names, " +
+                        "    main.Constraints AS main_constraints, " +
+                        "    lookup.Constraints AS lookup_constraints, " +
+                        "    main.DL_Data_Types AS main_data_types, " +
+                        "    lookup.DL_Data_Types AS lookup_data_types " +
+                        "FROM " +
+                        "    ELT_DL_Mapping_Info main " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_DL_Mapping_Info_Saved lookup " +
+                        "ON " +
+                        "    main.DL_Id = lookup.DL_Id " +
+                        "    AND main.DL_Column_Names = lookup.DL_Column_Names " +
+                        // TBD: refer above counterpart query. Optionally remove this if matching data types isn't required:
+                        // " AND main.DL_Data_Types = lookup.DL_Data_Types " +
+                        "WHERE " +
+                        "    main.DL_Id = ? " + // DL_Id as a parameter
+                        "    AND main.DL_Name = ? " + // DL_Name as a parameter
+                        "    AND main.Constraints = 'PK' " +
+                        "ORDER BY main.DL_Column_Names";
+
+        public static final String JOIN_ELT_DL_MAPPING_INFO_TABLES_FOR_PK_COLUMNS =
+                "SELECT DISTINCT " +
+                        "    main.DL_Id, " +
+                        "    main.DL_Column_Names, " +
+                        "    lookup.DL_Column_Names AS lookup_column_names " +
+                        "FROM " +
+                        "    ELT_DL_Mapping_Info_Saved main " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_DL_Mapping_Info lookup " +
+                        "ON " +
+                        "    main.DL_Id = lookup.DL_Id " +
+                        "    AND main.DL_Column_Names = lookup.DL_Column_Names " +
+                        "WHERE " +
+                        "    main.DL_Id = ? " + // A parameter
+                        "    AND main.Constraints = 'PK' " +
+                        "ORDER BY main.DL_Column_Names";
+        // It's alternative to above query. try to execute this. Check the results and execution timing.
+        public static final String JOIN_ELT_DL_MAPPING_INFO_TABLES_FOR_PK_COLUMNS_GROUP_CONCAT = 
+                "SELECT " +
+                        "    main.DL_Id, " +
+                        "    main.DL_Column_Names, " +
+                        "    GROUP_CONCAT(CONCAT('`', main.DL_Column_Names, '`') ORDER BY main.DL_Column_Names SEPARATOR ', ') AS column_list " +
+                        "    GROUP_CONCAT(CONCAT('`', lookup.DL_Column_Names, '`') ORDER BY lookup.DL_Column_Names SEPARATOR ', ') AS lookup_column_list " +
+                        "    lookup.DL_Column_Names AS lookup_column_names " +
+                        "FROM " +
+                        "    ELT_DL_Mapping_Info_Saved main " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_DL_Mapping_Info lookup " +
+                        "ON " +
+                        "    main.DL_Id = lookup.DL_Id " +
+                        "    AND main.DL_Column_Names = lookup.DL_Column_Names " +
+                        "WHERE " +
+                        "    main.DL_Id = ? " + // A parameter
+                        "    AND main.Constraints = 'PK'";
+                    
     }
+
+
 
     // Enum to represent different data source types
     enum DataSourceType {
