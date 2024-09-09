@@ -106,12 +106,13 @@ public class DataMartStructureScriptGenerator {
             // Format of the dateTime is supposed to be "yyyy-MM-dd HH:mm:ss", Hence TimeStamp is used.
             Timestamp dateTime = getMaxUpdatedDate(conn, dlId);
             boolean dlIdExists = checkDLIdExists(conn, dlId);
+            //TBD: Note: Below check moved earlier to be reused elsewhere
+            String TargetDB = ""; // Input Param
+            boolean tableExists = doesTableExist(conn, dlName, TargetDB);
             // Step 2:
             if (dlIdExists) {
                 // call Alter delete funcitons
                 String dlName = ""; // Input Param
-                String TargetDB = ""; // Input Param
-                boolean tableExists = doesTableExist(conn, dlName, TargetDB);
                 if (tableExists) {
                     System.out.println("Table Exists. Execute Alter Statement.");
                     status = fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(conn, dlId);
@@ -129,6 +130,26 @@ public class DataMartStructureScriptGenerator {
                 buildChangeColumnNullQuery(conn, dlId, dlName);
             }
 
+            // Step 4:
+            // TBD: This function must be changed to set either value 0,1
+            status = updateActiveFlag(conn, dlId);
+            // Step 5:
+            // TBD: Table Exists or not (tableExists)
+            if (tableExists) { // TBD: any other check?
+                System.out.println("Table Exists. Executing Alter Statement.");
+            } else {
+                System.out.println("Table Doesn't Exists. Proceeding with Create Statement");
+            }
+            // Step 6:
+            //Delete columns. Call to get Alter script delete funcitons/script But without inser function (need refactor)
+            // fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo()
+            // TBD: Can it be reused from above
+            // TBD: it's date or time? refer to database. Though, script shows timestamp format.
+            // Step 7:
+            Timestamp maxUpdatedDate = getMaxUpdatedDate(conn, dlId); // TBD: isn't dlId and dl_name are 1-1 mapped. THis call is with dlName
+
+            // Step 8:
+            buildAndExecuteCompleteAlterScript(conn, dlId, maxUpdatedDate);
 
             return Status.SUCCESS;
         }
@@ -325,7 +346,7 @@ public class DataMartStructureScriptGenerator {
     }
     
     // Function to build Change Column Non Null query
-    public void buildChangeColumnNotNullQuery(Connection conn, String dlId, String dlName) {
+    public String buildChangeColumnNotNullQuery(Connection conn, String dlId, String dlName) {
         String query = SQLQueries.JOIN_OUTER_ELT_DL_MAPPING_INFO_SAVED_AND_INFO;
 
         StringBuilder combinedChangeColumnDefBuilder = new StringBuilder();
@@ -359,10 +380,11 @@ public class DataMartStructureScriptGenerator {
         } catch (SQLException e) {
             e.printStackTrace();
         }
+        return combinedChangeColumnDefBuilder.toString();
     }
 
     // Function to build Change Column Null query
-    public void buildChangeColumnNullQuery(Connection conn, String dlId, String dlName) {
+    public String buildChangeColumnNullQuery(Connection conn, String dlId, String dlName) {
         String query = SQLQueries.JOIN_OUTER_ELT_DL_MAPPING_INFO_AS_MAIN_AND_SAVED_AS_LOOKUP;
 
         StringBuilder combinedChangeColumnDefBuilder = new StringBuilder();
@@ -396,6 +418,7 @@ public class DataMartStructureScriptGenerator {
         } catch (SQLException e) {
             e.printStackTrace();
         }
+        return combinedChangeColumnDefBuilder.toString();
     }
 
     private String sqlChangeColumnNotNullDefinition(String columnName, String lookupDataTypes, String savedConstraints,
@@ -431,6 +454,49 @@ public class DataMartStructureScriptGenerator {
         } // TBD: Check the null case too, it may retuen empty string?
         return finalScriptBuilder.toString();
     }
+
+    public boolean buildAndExecuteCompleteAlterScript(Connection conn, String dlId, Timestamp maxUpdatedDate) {
+        String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED;
+    
+        StringBuilder finalAlterScriptBuilder = new StringBuilder();
+        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, dlId);
+            pstmt.setTimestamp(2, maxUpdatedDate); // TBD: date vs Timestamp
+    
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String savedDLName = rs.getString("DL_Name");
+                    String savedColumnNames = rs.getString("DL_Column_Names");
+                    String savedDataTypes = rs.getString("saved_data_types");
+
+                    
+                    String lookupDLName = rs.getString("lookup_DL_Name");
+                    String lookupColumnNames = rs.getString("lookup_column_names");
+    
+                    // Change bit to Tinybit DL_dataTypes
+                    if (savedDataTypes.contains("bit")) {
+                        savedDataTypes = "tinyint(1)";
+                    }
+
+                    // Handle the retrieved data here
+                    System.out.println("Saved DL Name: " + savedDLName);
+                    System.out.println("Lookup DL Name: " + lookupDLName);
+                }
+
+            // TBD: in exceptional cases, value must be ""
+            String notNullFinalStatement = buildChangeColumnNotNullQuery(conn, dlId, dlName);
+            finalAlterScriptBuilder.append(notNullFinalStatement).append(", ");
+            String nullFinalStatement = buildChangeColumnNullQuery(conn, dlId, dlName);
+            finalAlterScriptBuilder.append(nullFinalStatement).append(", ");
+
+
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return true;
+    }
+    
 
     public class DataMartSavedScriptGenerator {
         public DataMartSavedScriptGenerator() {
@@ -582,6 +648,31 @@ public class DataMartStructureScriptGenerator {
                         "    main.DL_Id = ? " + // A parameter
                         "    AND main.Constraints = 'PK'";
                     
+        public static final String JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED =
+                "SELECT DISTINCT " +
+                        "    saved.DL_Id, " +
+                        "    saved.DL_Name, " +
+                        "    saved.DL_Column_Names, " +
+                        "    saved.Constraints AS saved_constraints, " +
+                        "    saved.DL_Data_Types AS saved_data_types, " +
+                        "    lookup.DL_Name AS lookup_DL_Name, " +
+                        "    lookup.DL_Column_Names AS lookup_column_names, " +
+                        "    lookup.Constraints AS lookup_constraints, " +
+                        "    lookup.DL_Data_Types AS lookup_data_types " +
+                        "FROM " +
+                        "    ELT_DL_Mapping_Info_Saved saved " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_DL_Mapping_Info lookup " +
+                        "ON " +
+                        "    saved.DL_Id = lookup.DL_Id " +
+                        "    AND saved.DL_Column_Names = lookup.DL_Column_Names " +
+                        "WHERE " +
+                        "    saved.DL_Id = ? " +  // A parameter
+                        "    AND saved.Updated_Date > ? " +  // A parameter
+                        "ORDER BY " +
+                        "    saved.DL_Column_Names";
+                    
+
     }
 
 
