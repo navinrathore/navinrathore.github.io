@@ -129,7 +129,7 @@ public class DataMartStructureScriptGenerator {
                 buildChangeColumnNullQuery(conn, dlId, dlName);
             }
 
-            
+
             return Status.SUCCESS;
         }
 
@@ -288,19 +288,35 @@ public class DataMartStructureScriptGenerator {
     public String getPKColumnNames(Connection conn, String dlId) {
         String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_FOR_PK_COLUMNS;
         StringBuilder pkColumnNamesBuilder = new StringBuilder();
+        StringBuilder lookupColumnNamesBuilder = new StringBuilder();
         try (PreparedStatement pstmt = conn.prepareStatement(query)) {
             pstmt.setString(1, dlId);
             try (ResultSet rs = pstmt.executeQuery()) {
-                boolean first = true;
+                boolean firstColumn = true;
+                boolean firstLookupColumn = true;
                 while (rs.next()) {
-                    if (!first) {
+                    if (!firstColumn) {
                         pkColumnNamesBuilder.append(", ");
                     }
                     String columnName = rs.getString("DL_Column_Names");
                     pkColumnNamesBuilder.append("`").append(columnName).append("`");
-                    first = false;
+                    firstColumn = false;
+
+                    String lookupColumnName = rs.getString("lookup_column_names");
+                    if (lookupColumnName != null) {
+                        if (!firstLookupColumn) {
+                            pkColumnNamesBuilder.append(", ");
+                        }
+                        lookupColumnNamesBuilder.append("`").append(lookupColumnName).append("`");
+                        firstLookupColumn = false;
+                    }
                 }
             }
+        String changeFlag = "N";
+        if ("".equals(lookupColumnNamesBuilder)) {
+            changeFlag = "Y";
+        }
+        System.out.println("Change Flag: " + changeFlag);
         System.out.println(pkColumnNamesBuilder.toString());
         } catch (SQLException e) {
             e.printStackTrace();
