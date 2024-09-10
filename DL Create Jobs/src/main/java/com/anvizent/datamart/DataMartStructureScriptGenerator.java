@@ -82,6 +82,49 @@ public class DataMartStructureScriptGenerator {
         public Status generateConfigScript() {
             System.out.println("Generating config script for DL_ID: " + dlId);
             boolean status = false;
+
+//######################################
+            // Job 1 Source
+
+            // Job 2 lkp/join
+            
+            // Job 3 Recoercing
+            
+            // Job 4 NullReplacement
+            
+            // SubJob GroupbyJoin
+            String previousComponent = ""; // TBD
+            String componentFilterGroupBy = "executesqlfiltergroupby";
+            String filterGroupBy = fetchAndFormatProperties(conn, componentFilterGroupBy);
+            String dynamicFilterGroupByName = filterGroupBy.replace("Dynamic_FilterGroupby_Name", "Join_Aggregation");
+            String dynamicFilterGroupBySource = dynamicFilterGroupByName.replace("Dynamic_FilterGroupby_Source", previousComponent);
+            String previousName = "Join_Aggregation";
+            String joinDynamicGroupbyFilterConfig = dynamicFilterGroupBySource;
+            System.out.println("Previous Name: " + previousName);
+            System.out.println("Derived Dynamic Groupby Filter Config: " + joinDynamicGroupbyFilterConfig);
+
+            // Job 6 Derived
+            
+            // SubJob 7: GroupbyDerived
+            String previousComponent2 = ""; // TBD
+            // Same maybe reused from job 5 GroupbyJoin
+            //String componentFilterGroupBy = "executesqlfiltergroupby";
+            //String filterGroupBy = fetchAndFormatProperties(conn, componentFilterGroupBy);
+            String dynamicFilterGroupByName2 = filterGroupBy.replace("Dynamic_FilterGroupby_Name", "Derived_Aggregation");
+            String dynamicFilterGroupBySource2 = dynamicFilterGroupByName2.replace("Dynamic_FilterGroupby_Source", previousComponent2);
+            String previousName2 = "Derived_Aggregation";
+            String derivedDynamicGroupbyFilterConfig = dynamicFilterGroupBySource2;
+            System.out.println("Previous Name: " + previousName2);
+            System.out.println("Derived Dynamic Groupby Filter Config: " + derivedDynamicGroupbyFilterConfig);
+            
+            // Job 8 remit
+            
+            // Job 9 Rename
+            
+            // Job 10 Sink
+//######################################
+
+
             //config filename
             // script = result
             //TBD: to be filled up values built in previous steps
@@ -103,6 +146,28 @@ public class DataMartStructureScriptGenerator {
             return status ? Status.SUCCESS : Status.FAILURE;
         }
 
+        public String fetchAndFormatProperties(Connection conn, String component) {
+            String query = SQLQueries.SELECT_JOB_PROPERTIES_INFO_WITH_COMPONENT;
+        
+            StringBuilder script = new StringBuilder();
+            try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                stmt.setString(1, component);
+                ResultSet rs = stmt.executeQuery();
+                while (rs.next()) {
+                    String keyName = rs.getString("Key_Name");
+                    String valueName = rs.getString("Value_Name");
+                    script.append(keyName)
+                                 .append("=")
+                                 .append(valueName)
+                                 .append("\n");
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return "";
+            }
+            return script.toString();
+        }
+    
         private boolean insertIntoEltDlConfigProperties(Connection conn, Map<String, String> rowDetails) {
             String insertSql = "INSERT INTO ELT_DL_CONFIG_PROPERTIES (DL_Id, Job_Id, DL_Name, DL_Table_Name, config_file_name, Active_Flag) " +
                                "VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -131,6 +196,31 @@ public class DataMartStructureScriptGenerator {
         public Status generateValueScript() {
             System.out.println("Generating value script for DL_ID: " + dlId);
             boolean status = false;
+
+//######################################
+            // Job 1 Source
+
+            // Job 2 SourceExecutesql
+
+            // Job 3 lkp/join
+
+            // Job 4 Recoercing
+
+            // Job 5 NullReplacement
+
+            // Job 6 FilterValue
+
+            // Job 7 Expression
+
+            // Job 8 Sql_Expression
+
+            // Job 9 remit
+
+            // Job 10 Rename
+
+            // Job 11 Sink
+//######################################
+
             //config filename
             // script = result
             //TBD: to be filled up values built in previous steps
@@ -922,8 +1012,39 @@ public class DataMartStructureScriptGenerator {
             "SELECT DL_Id, DL_Name, DL_Table_Name, DL_Version, DL_Active_Flag " +
                 "FROM ELT_DL_Table_Info " +
                 "WHERE DL_Active_Flag = '1' AND DL_Id = ?";
-                    
+        
+        // Config File
+        public static final String SELECT_JOB_PROPERTIES_INFO_WITH_COMPONENT = "SELECT " +
+                "    `ELT_Job_Properties_Info`.`Id`, " +
+                "    `ELT_Job_Properties_Info`.`Job_Type`, " +
+                "    `ELT_Job_Properties_Info`.`Component`, " +
+                "    `ELT_Job_Properties_Info`.`Key_Name`, " +
+                "    `ELT_Job_Properties_Info`.`Value_Name`, " +
+                "    `ELT_Job_Properties_Info`.`Active_Flag`, " +
+                "    `ELT_Job_Properties_Info`.`Dynamic_Flag` " +
+                "FROM `ELT_Job_Properties_Info` " +
+                "WHERE Job_Type = 'DL' " +
+                "  AND Component = ? " +
+                "  AND Active_Flag = 1";
+                
+        public static final String SELECT_FILTER_GROUP_BY_INFO =
+                "SELECT DISTINCT " +
+                "    `ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
+                "    `ELT_DL_FilterGroupBy_Info`.`Job_Id`, " +
+                "    `ELT_DL_FilterGroupBy_Info`.`Group_By_Id`, " +
+                "    `ELT_DL_FilterGroupBy_Info`.`Filter_Id`, " +
+                "    `ELT_DL_FilterGroupBy_Info`.`Flow`, " +
+                "    `ELT_DL_FilterGroupBy_Info`.`Settings_Position` " +
+                "FROM " +
+                "    `ELT_DL_FilterGroupBy_Info` " +
+                "WHERE " +
+                "    Settings_Position = ? " + // Parameter for Settings_Position
+                "    AND Job_Id = ? " +
+                "    AND DL_Id = ?";
+            
     }
+
+
 
     // Enum to represent different data source types
     enum DataSourceType {
