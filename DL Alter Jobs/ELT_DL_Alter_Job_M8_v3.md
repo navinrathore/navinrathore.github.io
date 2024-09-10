@@ -25,7 +25,7 @@ Once the Input parameters are read into the system, the database connection is e
 
 ## Component 1: Statement for `Primary Key` PK Columns
 
-- From both the tables, primary key records are fetcched.
+- From both the tables, primary key records are fetched.
 - The values in the DL_Column_Names field must be enclosed in backticks (``) as required by MySQL for correct column name referencing. This modified value is stored in the derived column tilt_columns.
 - Aggregate on the column `DL_ID`. 
 - output column is DL_Column_Names. make a list of data of this field.

@@ -1,4 +1,4 @@
-# Data Mart: Mapping Info SAVED (ELT_DL_Saved_Info_M8_v1)
+# Data Mart: Escaping Special Characters in Table Names (ELT_DL_Spcl_char_repl_Config_M8_v2)
 
 ## Intent
 Purpose of this component is to copy all the records corresponding to the input `DL_ID` from the table `ELT_DL_Mapping_Info_Saved` to the table `ELT_DL_Mapping_Info`.
@@ -14,12 +14,16 @@ Once the Input parameters are read into the system, the database connection is e
 The component or service is dependent on the following input data:
 
 - App DB Connection Details
-- DL_Id - table id
+- orig_table_name - Original Table Name
+- DL_Id
+- Job_Id
+- DL_Name
+
 
 ## Component 1: Copy Records into `ELT_DL_Mapping_Info`
 
-### Fetch and Copy the Records
-Fetch the relevant data from `ELT_DL_Mapping_Info_Saved` and copy them into `ELT_DL_Mapping_Info`. As there is no modification in data, the following methodology can be used to fetch and copy the relevant records, at once. See additional Details below for list of the fields. Also, before copying delete all the relevant data from the table `ELT_DL_Mapping_Info`.
+Temporary table name is formed with the below parameters: 
+TempTableName = 'DL_Name' +  'DL_Id' +  'Job_Id';
 
 ```sql
 INSERT INTO target_table (column1, column2, column3, ...)
@@ -34,19 +38,22 @@ WHERE condition;
 In the talend job, following fields are fetched and copied
 
 ```sql
-"SELECT 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Id`, 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Name`, 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Column_Names`, 
-  `ELT_DL_Mapping_Info_Saved`.`Constraints`, 
-  `ELT_DL_Mapping_Info_Saved`.`DL_Data_Types`, 
-  `ELT_DL_Mapping_Info_Saved`.`Column_Type`, 
-  `ELT_DL_Mapping_Info_Saved`.`Added_Date`, 
-  `ELT_DL_Mapping_Info_Saved`.`Added_User`, 
-  `ELT_DL_Mapping_Info_Saved`.`Updated_Date`, 
-  `ELT_DL_Mapping_Info_Saved`.`Updated_User`
-FROM `ELT_DL_Mapping_Info_Saved`
-where DL_Id='"+context.DL_Id+"'"
+TempTableName = 'DL_Name' +  'DL_Id' +  'Job_Id';
+SELECT 
+  "+ DL_Id +" as `DL_Id`,
+  "+ Job_Id +" as `Job_Id`,
+  TempTableName.`table_name`, 
+  TempTableName.`property`
+FROM TempTableName 
+where property!='db' and table_name='orig_table_name'
+```
+```sql
+SELECT distinct
+  "+ DL_Id +" as `DL_Id`,
+  "+ Job_Id +" as `Job_Id`, 
+ case when `ELT_App_Names_Properties`.`CharacterValue`=' ' then ',' else CharacterValue end, 
+  `ELT_App_Names_Properties`.`Id`
+FROM `ELT_App_Names_Properties` where CharacterValue not in ('_','-','/','|')  limit 30
 ```
 Before inserting the records, all existing relevant records are purged.
 
@@ -58,10 +65,8 @@ Before inserting the records, all existing relevant records are purged.
 
 The schematic of the job is shown in the [attached diagram](#appendix-a).
 
-
-
 ## Appendix A
 
 Schematic diagram of the component (Talend job).
 
-![schematic diagram](./ELT_DL_Saved_Info_M8_v1_0.png "ELT_DL_Saved_Info_M8_v1")
+![schematic diagram](./Images/ELT_DL_Spcl_char_repl_Config_M8_v2_0.1.png "ELT_DL_Spcl_char_repl_Config_M8_v2")
