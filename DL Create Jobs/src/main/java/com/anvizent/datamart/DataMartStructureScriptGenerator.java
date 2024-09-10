@@ -92,53 +92,29 @@ public class DataMartStructureScriptGenerator {
                 System.out.println("No record found with DL_Id: " + dlId);
                 return Status.FAILURE;
             }
+            rowDetails.put("JobId", jobId);
             rowDetails.put("config_file_name", configFileName);
-            rowDetails.put("script", script);
-            status = deleteEltDlConfigProperties(conn, dlId, dlId);
-            status = insertIntoEltDlTableInfo(conn, rowDetails);
+            rowDetails.remove("DL_Version");
+            // TBD where is the script used??
+            //rowDetails.put("script", script);
+            status = deleteFromEltDlConfigProperties(conn, dlId, dlId);
+            status = insertIntoEltDlConfigProperties(conn, rowDetails);
 
             return status ? Status.SUCCESS : Status.FAILURE;
-         }
+        }
 
-         public Map<String, String> selectActiveEltDlTableInfo(Connection conn, String dlId) {
-             String selectSql = SQLQueries.SELECT_ACTIVE_ELT_DL_TABLE_INFO;
-
-             Map<String, String> rowDetails = new HashMap<>();
-    
-             try (PreparedStatement selectPs = conn.prepareStatement(selectSql)) {
-                 selectPs.setString(1, dlId);
-                 try (ResultSet rs = selectPs.executeQuery()) {
-                     if (rs.next()) {
-                         rowDetails.put("DL_Id", rs.getString("DL_Id"));
-                         rowDetails.put("DL_Name", rs.getString("DL_Name"));
-                         rowDetails.put("DL_Table_Name", rs.getString("DL_Table_Name"));
-                         rowDetails.put("DL_Version", rs.getString("DL_Version"));
-                         rowDetails.put("DL_Active_Flag", rs.getString("DL_Active_Flag"));
-                     } else {
-                         return null;
-                     }
-                 }
-             } catch (SQLException e) {
-                 e.printStackTrace();
-                 return null;
-             }
-
-             return rowDetails;
-         }
-
-         private boolean insertIntoEltDlTableInfo(Connection conn, Map<String, String> rowDetails) {
-            String insertSql = "INSERT INTO ELT_DL_Table_Info (DL_Id, DL_Name, DL_Table_Name, DL_Version, DL_Active_Flag, config_file_name, script) " +
+        private boolean insertIntoEltDlConfigProperties(Connection conn, Map<String, String> rowDetails) {
+            String insertSql = "INSERT INTO ELT_DL_CONFIG_PROPERTIES (DL_Id, Job_Id, DL_Name, DL_Table_Name, config_file_name, Active_Flag) " +
                                "VALUES (?, ?, ?, ?, ?, ?, ?)";
             
             try (PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
                 insertPs.setString(1, rowDetails.get("DL_Id"));
+                insertPs.setString(2, rowDetails.get("Job_Id"));
                 insertPs.setString(2, rowDetails.get("DL_Name"));
                 insertPs.setString(3, rowDetails.get("DL_Table_Name"));
-                insertPs.setString(4, rowDetails.get("DL_Version")); // TBD why was it skipped
-                insertPs.setString(5, rowDetails.get("DL_Active_Flag"));
                 insertPs.setString(6, rowDetails.get("config_file_name"));
-                insertPs.setString(7, rowDetails.get("script"));
-                
+                insertPs.setString(5, rowDetails.get("DL_Active_Flag"));
+
                 insertPs.executeUpdate();
                 return true;
             } catch (SQLException e) {
@@ -146,7 +122,6 @@ public class DataMartStructureScriptGenerator {
                 return false;
             }
         }
-
     }
 
     public class DataMartValueScriptGenerator {
@@ -155,8 +130,73 @@ public class DataMartStructureScriptGenerator {
 
         public Status generateValueScript() {
             System.out.println("Generating value script for DL_ID: " + dlId);
-            return Status.SUCCESS;
-         }
+            boolean status = false;
+            //config filename
+            // script = result
+            //TBD: to be filled up values built in previous steps
+            String configFileName = "";
+            String script = "";
+            Map<String, String> rowDetails = selectActiveEltDlTableInfo(conn, dlId);
+            if (rowDetails == null) {
+                System.out.println("No record found with DL_Id: " + dlId);
+                return Status.FAILURE;
+            }
+            rowDetails.put("JobId", jobId);
+            rowDetails.put("value_file_name", configFileName);
+            rowDetails.remove("DL_Version");
+            // TBD where is the script used??
+            //rowDetails.put("script", script);
+            status = deleteFromEltDlValuesProperties(conn, dlId, dlId);
+            status = insertIntoEltDlValuesProperties(conn, rowDetails);
+
+            return status ? Status.SUCCESS : Status.FAILURE;
+        }
+
+        private boolean insertIntoEltDlValuesProperties(Connection conn, Map<String, String> rowDetails) {
+            String insertSql = "INSERT INTO ELT_DL_VALUES_PROPERTIES (DL_Id, Job_Id, DL_Name, DL_Table_Name, value_file_name, Active_Flag) " +
+                               "VALUES (?, ?, ?, ?, ?, ?, ?)";
+            
+            try (PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
+                insertPs.setString(1, rowDetails.get("DL_Id"));
+                insertPs.setString(2, rowDetails.get("Job_Id"));
+                insertPs.setString(2, rowDetails.get("DL_Name"));
+                insertPs.setString(3, rowDetails.get("DL_Table_Name"));
+                insertPs.setString(6, rowDetails.get("value_file_name"));
+                insertPs.setString(5, rowDetails.get("DL_Active_Flag"));
+
+                insertPs.executeUpdate();
+                return true;
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+    }
+
+    public Map<String, String> selectActiveEltDlTableInfo(Connection conn, String dlId) {
+        String selectSql = SQLQueries.SELECT_ACTIVE_ELT_DL_TABLE_INFO;
+
+        Map<String, String> rowDetails = new HashMap<>();
+
+        try (PreparedStatement selectPs = conn.prepareStatement(selectSql)) {
+            selectPs.setString(1, dlId);
+            try (ResultSet rs = selectPs.executeQuery()) {
+                if (rs.next()) {
+                    rowDetails.put("DL_Id", rs.getString("DL_Id"));
+                    rowDetails.put("DL_Name", rs.getString("DL_Name"));
+                    rowDetails.put("DL_Table_Name", rs.getString("DL_Table_Name"));
+                    rowDetails.put("DL_Version", rs.getString("DL_Version"));
+                    rowDetails.put("DL_Active_Flag", rs.getString("DL_Active_Flag"));
+                } else {
+                    return null;
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return null;
+        }
+
+        return rowDetails;
     }
 
     public class DataMartAlterScriptGenerator {
@@ -648,7 +688,7 @@ public class DataMartStructureScriptGenerator {
     }
 
     // deleting records from ELT_DL_CONFIG_PROPERTIES
-    public boolean deleteEltDlConfigProperties(Connection conn, String dlId, String jobId) {
+    public boolean deleteFromEltDlConfigProperties(Connection conn, String dlId, String jobId) {
         String sql = SQLQueries.DELETE_FROM_ELT_DL_CONFIG_PROPERTIES;        
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, dlId);
@@ -953,5 +993,11 @@ public class DataMartStructureScriptGenerator {
         } catch (SQLException e) {
             System.err.println("Error executing drop table query: " + e.getMessage());
         }
+    }
+
+    public static void main(String[] args) {
+        String tableId = "XNXNXN";
+        DataMartStructureScriptGenerator generator = new DataMartStructureScriptGenerator(DataSourceType.MYSQL, tableId);
+        generator.generateScripts();
     }
 }
