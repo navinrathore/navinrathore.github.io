@@ -7,6 +7,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
 
 public class DataMartStructureScriptGenerator {
     private DataSourceType dataSourceType;
@@ -79,8 +81,72 @@ public class DataMartStructureScriptGenerator {
 
         public Status generateConfigScript() {
             System.out.println("Generating config script for DL_ID: " + dlId);
-            return Status.SUCCESS;
+            boolean status = false;
+            //config filename
+            // script = result
+            //TBD: to be filled up values built in previous steps
+            String configFileName = "";
+            String script = "";
+            Map<String, String> rowDetails = selectActiveEltDlTableInfo(conn, dlId);
+            if (rowDetails == null) {
+                System.out.println("No record found with DL_Id: " + dlId);
+                return Status.FAILURE;
+            }
+            rowDetails.put("config_file_name", configFileName);
+            rowDetails.put("script", script);
+            status = deleteEltDlConfigProperties(conn, dlId, dlId);
+            status = insertIntoEltDlTableInfo(conn, rowDetails);
+
+            return status ? Status.SUCCESS : Status.FAILURE;
          }
+
+         public Map<String, String> selectActiveEltDlTableInfo(Connection conn, String dlId) {
+             String selectSql = SQLQueries.SELECT_ACTIVE_ELT_DL_TABLE_INFO;
+
+             Map<String, String> rowDetails = new HashMap<>();
+    
+             try (PreparedStatement selectPs = conn.prepareStatement(selectSql)) {
+                 selectPs.setString(1, dlId);
+                 try (ResultSet rs = selectPs.executeQuery()) {
+                     if (rs.next()) {
+                         rowDetails.put("DL_Id", rs.getString("DL_Id"));
+                         rowDetails.put("DL_Name", rs.getString("DL_Name"));
+                         rowDetails.put("DL_Table_Name", rs.getString("DL_Table_Name"));
+                         rowDetails.put("DL_Version", rs.getString("DL_Version"));
+                         rowDetails.put("DL_Active_Flag", rs.getString("DL_Active_Flag"));
+                     } else {
+                         return null;
+                     }
+                 }
+             } catch (SQLException e) {
+                 e.printStackTrace();
+                 return null;
+             }
+
+             return rowDetails;
+         }
+
+         private boolean insertIntoEltDlTableInfo(Connection conn, Map<String, String> rowDetails) {
+            String insertSql = "INSERT INTO ELT_DL_Table_Info (DL_Id, DL_Name, DL_Table_Name, DL_Version, DL_Active_Flag, config_file_name, script) " +
+                               "VALUES (?, ?, ?, ?, ?, ?, ?)";
+            
+            try (PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
+                insertPs.setString(1, rowDetails.get("DL_Id"));
+                insertPs.setString(2, rowDetails.get("DL_Name"));
+                insertPs.setString(3, rowDetails.get("DL_Table_Name"));
+                insertPs.setString(4, rowDetails.get("DL_Version")); // TBD why was it skipped
+                insertPs.setString(5, rowDetails.get("DL_Active_Flag"));
+                insertPs.setString(6, rowDetails.get("config_file_name"));
+                insertPs.setString(7, rowDetails.get("script"));
+                
+                insertPs.executeUpdate();
+                return true;
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+
     }
 
     public class DataMartValueScriptGenerator {
@@ -547,12 +613,54 @@ public class DataMartStructureScriptGenerator {
         public Status generateSavedScript() {
             System.out.println("Generating saved script for DL_ID: " + dlId);
             boolean status = false;
+            status = deleteFromEltDlMappingInfo(conn, dlId);
             status = insertMappingInfoFromSaved(conn, dlId);
 
             return status? Status.SUCCESS : Status.FAILURE;
          }
     }
 
+    // deleting records from ELT_DL_Mapping_Info
+    public boolean deleteFromEltDlMappingInfo(Connection conn, String dlId) {
+        String sql = SQLQueries.DELETE_FROM_ELT_DL_MAPPING_INFO;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, dlId);
+            int rowsAffected = ps.executeUpdate();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    // deleting records from ELT_DL_VALUES_PROPERTIES
+    public boolean deleteFromEltDlValuesProperties(Connection conn, String dlId, String jobId) {
+        String sql = SQLQueries.DELETE_FROM_ELT_DL_VALUES_PROPERTIES;        
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, dlId);
+            ps.setString(2, jobId);
+            int rowsAffected = ps.executeUpdate();
+            return rowsAffected > 0;            
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    // deleting records from ELT_DL_CONFIG_PROPERTIES
+    public boolean deleteEltDlConfigProperties(Connection conn, String dlId, String jobId) {
+        String sql = SQLQueries.DELETE_FROM_ELT_DL_CONFIG_PROPERTIES;        
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, dlId);
+            ps.setString(2, jobId);
+            int rowsAffected = ps.executeUpdate();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
     // Copy the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
     public boolean insertMappingInfoFromSaved(Connection conn, String dlId) {
         String sql = SQLQueries.INSERT_INTO_ELT_DL_MAPPING_INFO_FROM_SAVED;
@@ -756,11 +864,26 @@ public class DataMartStructureScriptGenerator {
                         "    saved.Updated_User " +
                         "FROM `ELT_DL_Mapping_Info_Saved` saved " +
                         "WHERE saved.DL_Id = ?";
-                                
 
+        // SQL Query for deleting records from ELT_DL_Mapping_Info
+        public static final String DELETE_FROM_ELT_DL_MAPPING_INFO = "DELETE FROM ELT_DL_Mapping_Info " +
+                "WHERE DL_Id = ?";
+                    
+        // SQL Query for deleting records from ELT_DL_VALUES_PROPERTIES
+        public static final String DELETE_FROM_ELT_DL_VALUES_PROPERTIES = 
+                "DELETE FROM ELT_DL_VALUES_PROPERTIES " +
+                        "WHERE DL_Id = ? " +
+                        "AND Job_Id = ?";
+        // SQL Query for deleting records from DELETE_FROM_ELT_DL_CONFIG_PROPERTIES
+        public static final String DELETE_FROM_ELT_DL_CONFIG_PROPERTIES = 
+                "DELETE FROM ELT_DL_CONFIG_PROPERTIES WHERE DL_Id = ? AND Job_Id = ?";
+
+        public static final String SELECT_ACTIVE_ELT_DL_TABLE_INFO = 
+            "SELECT DL_Id, DL_Name, DL_Table_Name, DL_Version, DL_Active_Flag " +
+                "FROM ELT_DL_Table_Info " +
+                "WHERE DL_Active_Flag = '1' AND DL_Id = ?";
+                    
     }
-
-
 
     // Enum to represent different data source types
     enum DataSourceType {
