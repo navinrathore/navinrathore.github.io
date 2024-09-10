@@ -546,8 +546,24 @@ public class DataMartStructureScriptGenerator {
 
         public Status generateSavedScript() {
             System.out.println("Generating saved script for DL_ID: " + dlId);
-            return Status.SUCCESS;
+            boolean status = false;
+            status = insertMappingInfoFromSaved(conn, dlId);
+
+            return status? Status.SUCCESS : Status.FAILURE;
          }
+    }
+
+    // Copy the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
+    public boolean insertMappingInfoFromSaved(Connection conn, String dlId) {
+        String sql = SQLQueries.INSERT_INTO_ELT_DL_MAPPING_INFO_FROM_SAVED;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, dlId);
+            int rowsAffected = ps.executeUpdate();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
     }
 
     public class DataMartCreateScriptGenerator {
@@ -713,7 +729,34 @@ public class DataMartStructureScriptGenerator {
                         "    AND saved.Updated_Date > ? " +  // A parameter
                         "ORDER BY " +
                         "    saved.DL_Column_Names";
-                    
+
+        public static final String INSERT_INTO_ELT_DL_MAPPING_INFO_FROM_SAVED = 
+                "INSERT INTO `ELT_DL_Mapping_Info` (" +
+                        "    DL_Id, " +
+                        "    DL_Name, " +
+                        "    DL_Column_Names, " +
+                        "    Constraints, " +
+                        "    DL_Data_Types, " +
+                        "    Column_Type, " +
+                        "    Added_Date, " +
+                        "    Added_User, " +
+                        "    Updated_Date, " +
+                        "    Updated_User" +
+                        ") " +
+                        "SELECT " +
+                        "    saved.DL_Id, " +
+                        "    saved.DL_Name, " +
+                        "    saved.DL_Column_Names, " +
+                        "    saved.Constraints, " +
+                        "    saved.DL_Data_Types, " +
+                        "    saved.Column_Type, " +
+                        "    saved.Added_Date, " +
+                        "    saved.Added_User, " +
+                        "    saved.Updated_Date, " +
+                        "    saved.Updated_User " +
+                        "FROM `ELT_DL_Mapping_Info_Saved` saved " +
+                        "WHERE saved.DL_Id = ?";
+                                
 
     }
 
