@@ -106,28 +106,57 @@ public class DataMartStructureScriptGenerator {
             System.out.println("Derived Dynamic Groupby Filter Config: " + joinDynamicGroupbyFilterConfig);
 
             // Job 6 Derived
-
+                    // Subjob "Child"
             try {
                 List<Map<String, String>> results = getDerivedColumnInfoByJobAndDLId(conn, jobId, dlId);
 
                     // Iterating child Job
+                    String finalDerivedValue = "";
+                    StringBuilder finalExpressionComponentBuilder = new StringBuilder();
+
                     for (Map<String, String> row : results) {
                         String level = row.get("Level");
 
-                        String finalDerivedValue = "";
                         previousComponent = ""; // TBD
-                        String componentExpression = "expression";
+                        // Expression Type Java
+                        final String componentExpression = "expression";
+                        String expressionType = "JAVA";
                         // TBD: Below  function seems constant. Can be moved out of the loop. Verify?
-                        String expression = fetchAndFormatProperties(conn, componentExpression);
-                        // Java
-                        fetchDerivedColumnInfoByLevel(conn, expression, level, jobId, dlId);
-                        // Expression_Data
-                        String componentExecuteSql = "executesql";
-                        String executeSqlComponent = fetchAndFormatProperties(conn, componentExpression);
-                        // Sql
-                        String expressionType='SQL' // similar to 'JAVA' above
+                        String jobPropertiesJava = fetchAndFormatProperties(conn, componentExpression);
+                        List<Map<String, Object>> result = fetchDerivedColumnInfoByLevel(conn, expressionType, level, jobId, dlId);
+                        String expressionComponent = processDerivedColumnInfoForTypeSQL(result, jobPropertiesJava);
 
+                        // Expression_Data type SQL
+                        final String componentExecuteSql = "executesql";
+                        expressionType = "SQL";
+                        String jobPropertiesEexecuteSql = fetchAndFormatProperties(conn, componentExecuteSql);
+                        List<Map<String, Object>> result2 = fetchDerivedColumnInfoByLevel(conn, expressionType, level, jobId, dlId);
+                        String executeSqlComponent = processDerivedColumnInfoForTypeSQL(result2, jobPropertiesEexecuteSql);
+
+                        System.out.println(expressionComponent);
+                        System.out.println(executeSqlComponent);
+
+                        String derivedComponentConfig = expressionComponent + "\n" + executeSqlComponent;
+
+                        System.out.println(derivedComponentConfig);
+
+
+                        finalDerivedValue = derivedComponentConfig;
+
+                        // TBD: rechech that Talend "Iteration" component does other than this 
+                        // TBD: Set the Previous_Component; Need to see how it used
+                        if (finalExpressionComponentBuilder.length() > 0) {
+                            finalExpressionComponentBuilder.append("\n");
+                        }
+                        finalExpressionComponentBuilder.append(finalDerivedValue);
+
+                        System.out.println("Final_Derived_Value: " + finalDerivedValue);
                     }
+
+                    System.out.println("Final_Derived_Value: " + finalDerivedValue);
+                    // Output of the "Derived" component
+                    String expressionComponent = finalExpressionComponentBuilder.toString();
+
             } catch (SQLException e) {
                 e.printStackTrace();
             }
@@ -219,55 +248,152 @@ public class DataMartStructureScriptGenerator {
         }
 
         // Child of Derived - component 2
-        public List<Map<String, Object>> fetchDerivedColumnInfoByLevel(Connection conn, String expression, String level, String jobId, String dlId) throws SQLException {
+        // public List<Map<String, Object>> fetchDerivedColumnInfoByLevel(Connection conn, String expression, String expressionType, String level, String jobId, String dlId) throws SQLException {
+        //     String query = SQLQueries.SELECT_ELT_DL_DERIVED_COLUMN_INFO;
+            
+        //     try (PreparedStatement ps = conn.prepareStatement(query)) {
+        //         ps.setString(1, expressionType);
+        //         ps.setString(2, level);
+        //         ps.setString(3, jobId);
+        //         ps.setString(4, dlId);
+                
+        //         try (ResultSet rs = ps.executeQuery()) {
+        //             List<Map<String, Object>> results = new ArrayList<>();
+        //             StringBuilder finalExpressionBuilder = new StringBuilder();
+        //             String Last_Component_Source = "";
+        //             while (rs.next()) {
+        //                 Map<String, Object> row = new HashMap<>();
+        //                 row.put("DL_Id", rs.getString("DL_Id"));
+        //                 row.put("Job_Id", rs.getString("Job_Id"));
+        //                 row.put("Level", rs.getString("Level"));
+        //                 String previousComponent = ""; // TBD from inputs or otherwise
+        //                 final String expressionLevel = "Expression_" + rs.getString("Level");
+        //                 Last_Component_Source = "Expression_" + rs.getString("Level"); // TBD: Use one of them this, previous
+        //                 String expressionName = expression.replace("Dynamic_Expression_Name", expressionLevel);
+        //                 String expressionSource = expressionName.replace("Dynamic_Expression_Source", previousComponent);
+                        
+        //             // Block to make a final expression
+        //                 String lookupColumnName = rs.getString("lookup_column_names");
+
+        //                 // One of them to be prferred
+        //                 //Concise code
+        //                 if (finalExpressionBuilder.length() > 0) {
+        //                     finalExpressionBuilder.append("\n");
+        //                 }
+        //                 finalExpressionBuilder.append(expressionSource);
+
+        //                 // // Explicit code
+        //                 // if (finalExpressionBuilder.length() > 0) {
+        //                 //     finalExpressionBuilder.append("\n").append(expressionSource);
+        //                 // } else {
+        //                 //     finalExpressionBuilder.append(expressionSource);
+        //                 // }
+
+        //                 results.add(row);
+        //             }
+
+        //             System.out.println("finalExpression      : " + finalExpressionBuilder.toString());
+        //             System.out.println("Last_Component_Source: " + Last_Component_Source);
+
+        //             return results;
+        //         }
+        //     }
+        // }
+
+        public List<Map<String, Object>> fetchDerivedColumnInfoByLevel(Connection conn, String expressionType, String level, String jobId, String dlId) throws SQLException {
             String query = SQLQueries.SELECT_ELT_DL_DERIVED_COLUMN_INFO;
             
             try (PreparedStatement ps = conn.prepareStatement(query)) {
-                ps.setString(1, level);
-                ps.setString(2, jobId);
-                ps.setString(3, dlId);
+                ps.setString(1, expressionType);
+                ps.setString(2, level);
+                ps.setString(3, jobId);
+                ps.setString(4, dlId);
                 
                 try (ResultSet rs = ps.executeQuery()) {
                     List<Map<String, Object>> results = new ArrayList<>();
-                    StringBuilder finalExpressionBuilder = new StringBuilder();
-                    String Last_Component_Source = "";
+                    // StringBuilder finalExpressionBuilder = new StringBuilder();
+                    // String Last_Component_Source = "";
+        
                     while (rs.next()) {
                         Map<String, Object> row = new HashMap<>();
                         row.put("DL_Id", rs.getString("DL_Id"));
                         row.put("Job_Id", rs.getString("Job_Id"));
                         row.put("Level", rs.getString("Level"));
-                        String previousComponent = ""; // TBD from inputs or otherwise
-                        final String expressionLevel = "Expression_" + rs.getString("Level");
-                        Last_Component_Source = "Expression_" + rs.getString("Level"); // TBD: Use one of them this, previous
-                        String expressionName = expression.replace("Dynamic_Expression_Name", expressionLevel);
-                        String expressionSource = expressionName.replace("Dynamic_Expression_Source", previousComponent);
-                        
-                    // Block to make a final expression
-                        String lookupColumnName = rs.getString("lookup_column_names");
 
-                        // One of them to be prferred
-                        //Concise code
-                        if (finalExpressionBuilder.length() > 0) {
-                            finalExpressionBuilder.append("\n");
-                        }
-                        finalExpressionBuilder.append(expressionSource);
-
-                        // // Explicit code
-                        // if (finalExpressionBuilder.length() > 0) {
-                        //     finalExpressionBuilder.append("\n").append(expressionSource);
-                        // } else {
-                        //     finalExpressionBuilder.append(expressionSource);
-                        // }
-
+                        //String expressionSource = buildExpressionSource(rs, expression, finalExpressionBuilder);
+                        // Last_Component_Source = getLastComponentSource(rs);
+                        //finalExpressionBuilder = buildFinalExpression(finalExpressionBuilder, expressionSource);
+        
                         results.add(row);
                     }
-
-                    System.out.println("finalExpression      : " + finalExpressionBuilder.toString());
-                    System.out.println("Last_Component_Source: " + Last_Component_Source);
-
+        
+                    //logFinalExpression(finalExpressionBuilder, Last_Component_Source);
+        
                     return results;
                 }
             }
+        }
+
+        public void processDerivedColumnInfoForTypeJava(List<Map<String, Object>> results, String expression) {
+            // Loop over the results list
+            StringBuilder finalExpressionBuilder = new StringBuilder();
+            String lastComponentSource = "";
+            for (Map<String, Object> row : results) {
+                String dlId = (String) row.get("DL_Id");
+                String jobId = (String) row.get("Job_Id");
+                String level = (String) row.get("Level");
+                
+                String previousComponent = ""; // TBD from inputs or otherwise
+                final String expressionLevel = "Expression_" + level;
+                lastComponentSource = "Expression_" + level; // TBD: Use one of them this, previous
+                String expressionName = expression.replace("Dynamic_Expression_Name", expressionLevel);
+                String expressionSource = expressionName.replace("Dynamic_Expression_Source", previousComponent);
+        
+                // One of them to be prferred
+                // Concise code
+                if (finalExpressionBuilder.length() > 0) {
+                    finalExpressionBuilder.append("\n");
+                }
+                finalExpressionBuilder.append(expressionSource);
+
+                // // Explicit code
+                // if (finalExpressionBuilder.length() > 0) {
+                //     finalExpressionBuilder.append("\n").append(expressionSource);
+                // } else {
+                //     finalExpressionBuilder.append(expressionSource);
+                // }
+            }
+
+            System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
+            System.out.println("Last_Component_Source: " + lastComponentSource);
+
+        }
+
+        public String processDerivedColumnInfoForTypeSQL(List<Map<String, Object>> results, String expression) {
+            // Loop over the results list
+            StringBuilder finalExpressionBuilder = new StringBuilder();
+            String lastComponentSource = "";
+            for (Map<String, Object> row : results) {
+                String dlId = (String) row.get("DL_Id");
+                String jobId = (String) row.get("Job_Id");
+                String level = (String) row.get("Level");
+                
+                String previousComponent = ""; // TBD from inputs or otherwise
+                final String expressionLevel = "ExecuteSql_" + level;
+                lastComponentSource = "ExecuteSql_" + level; // TBD: Use one of them this, previous
+                String expressionName = expression.replace("Dynamic_Name", expressionLevel);
+                String expressionSource = expressionName.replace("Dynamic_Source", previousComponent);
+
+                if (finalExpressionBuilder.length() > 0) {
+                    finalExpressionBuilder.append("\n");
+                }
+                finalExpressionBuilder.append(expressionSource);
+            }
+
+            System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
+            System.out.println("Last_Component_Source: " + lastComponentSource);
+
+            return finalExpressionBuilder.toString();
         }
 
         private boolean insertIntoEltDlConfigProperties(Connection conn, Map<String, String> rowDetails) {
@@ -1162,7 +1288,7 @@ public class DataMartStructureScriptGenerator {
                 "    `ELT_DL_Derived_Column_Info`.`Level` " +
                 "FROM `ELT_DL_Derived_Column_Info` " +
                 "WHERE " +
-                "    Expression_Type = 'JAVA' " +
+                "    Expression_Type = ? " +
                 "    AND Level = ? " + // Parameterized Level
                 "    AND Job_Id = ? " + 
                 "    AND DL_Id = ?"; 
