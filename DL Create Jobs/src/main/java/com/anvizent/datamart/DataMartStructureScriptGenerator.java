@@ -91,13 +91,15 @@ public class DataMartStructureScriptGenerator {
             // Job 2 lkp/join
             
             // Job 3 Recoercing
-            
-            // Job 4 NullReplacement
             String previousComponent = ""; // TBD
+            String componentEmptyRecoercing = "empty_recoercing";
+            String propsEmptyRecoercing = fetchAndFormatProperties(conn, componentEmptyRecoercing);
+            String recoercingScript = propsEmptyRecoercing.replace("Dynamic_Join_Name", previousComponent);
+            previousComponent = "Recoercing";
 
+            // Job 4 NullReplacement
             String componentNullReplacement = "executesqlfiltergroupby";
             String propsNullReplacement = fetchAndFormatProperties(conn, componentNullReplacement);
-
             String emptyScript = propsNullReplacement.replace("Dynamic_Join_Name", previousComponent);
             previousComponent = "Cleansing_Fields";
 
