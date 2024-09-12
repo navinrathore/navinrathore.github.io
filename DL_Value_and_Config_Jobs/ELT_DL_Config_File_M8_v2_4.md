@@ -1,4 +1,4 @@
-# Data Mart: DL Value File Parent (ELT_DL_Value_File_M8_v2_4)
+# Data Mart: DL Config File Parent (ELT_DL_Config_File_M8_v2_4)
 
 The component comprises 10 jobs, executed in the sequence shown in the [attached diagram](#appendix-a).
 
@@ -18,8 +18,8 @@ The component comprises 10 jobs, executed in the sequence shown in the [attached
 ## Final Task
 After successfully completing the previous 10 sub-jobs:
 - Select the updated table information from the above sub-jobs.
-- Delete old records from `ELT_DL_VALUES_PROPERTIES` table associated with the `DL_Id` and `Job_Id`.
-- Update the `ELT_DL_VALUES_PROPERTIES` table with the new details. (refer to Additional Details below)
+- Delete old records from `ELT_DL_CONFIG_PROPERTIES` table associated with the `DL_Id` and `Job_Id`.
+- Update the `ELT_DL_CONFIG_PROPERTIES` table with the new details. (refer to Additional Details below)
 
 <details>
 <summary>Additional Details</summary>
@@ -37,10 +37,10 @@ After successfully completing the previous 10 sub-jobs:
     ```
 1. Purge the old references
     ```sql
-    Delete from ELT_DL_VALUES_PROPERTIES where DL_Id = 'DL_Id' and Job_Id='Job_Id'
+    Delete from ELT_DL_CONFIG_PROPERTIES where DL_Id = 'DL_Id' and Job_Id='Job_Id'
     ```
 
-3. Details that have to be updated into the table `ELT_DL_VALUES_PROPERTIES` 
+3. Details that have to be updated into the table `ELT_DL_CONFIG_PROPERTIES` 
 
     | Name             | Expression             |
     |------------------|------------------------|
@@ -48,7 +48,7 @@ After successfully completing the previous 10 sub-jobs:
     | Job_Id           | context.Job_Id         |
     | DL_Name          | row3.DL_Name           |
     | DL_Table_Name    | row3.DL_Table_Name     |
-    | value_file_name  | Var.config_file_name   |
+    | config_file_name  | Var.config_file_name   |
     | Active_Flag      | row3.DL_Active_Flag    |
 
 

@@ -7,7 +7,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class DataMartStructureScriptGenerator {
@@ -92,7 +94,7 @@ public class DataMartStructureScriptGenerator {
             
             // Job 4 NullReplacement
             
-            // SubJob GroupbyJoin
+            // SubJob 5 - GroupbyJoin
             String previousComponent = ""; // TBD
             String componentFilterGroupBy = "executesqlfiltergroupby";
             String filterGroupBy = fetchAndFormatProperties(conn, componentFilterGroupBy);
@@ -104,7 +106,33 @@ public class DataMartStructureScriptGenerator {
             System.out.println("Derived Dynamic Groupby Filter Config: " + joinDynamicGroupbyFilterConfig);
 
             // Job 6 Derived
-            
+
+            try {
+                List<Map<String, String>> results = getDerivedColumnInfoByJobAndDLId(conn, jobId, dlId);
+
+                    // Iterating child Job
+                    for (Map<String, String> row : results) {
+                        String level = row.get("Level");
+
+                        String finalDerivedValue = "";
+                        previousComponent = ""; // TBD
+                        String componentExpression = "expression";
+                        // TBD: Below  function seems constant. Can be moved out of the loop. Verify?
+                        String expression = fetchAndFormatProperties(conn, componentExpression);
+                        // Java
+                        fetchDerivedColumnInfoByLevel(conn, expression, level, jobId, dlId);
+                        // Expression_Data
+                        String componentExecuteSql = "executesql";
+                        String executeSqlComponent = fetchAndFormatProperties(conn, componentExpression);
+                        // Sql
+                        String expressionType='SQL' // similar to 'JAVA' above
+
+                    }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+
+
             // SubJob 7: GroupbyDerived
             String previousComponent2 = ""; // TBD
             // Same maybe reused from job 5 GroupbyJoin
@@ -168,6 +196,80 @@ public class DataMartStructureScriptGenerator {
             return script.toString();
         }
     
+        public List<Map<String, String>> getDerivedColumnInfoByJobAndDLId(Connection conn, String jobId, String dlId) {
+            List<Map<String, String>> results = new ArrayList<>();
+
+            String query = SQLQueries.SELECT_ELT_DL_DERIVED_COLUMN_INFO_BY_JOB_AND_DL_ID;
+            try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                stmt.setString(1, jobId);
+                stmt.setString(2, dlId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> row = new HashMap<>();
+                        row.put("DL_Id", rs.getString("DL_Id"));
+                        row.put("Job_Id", rs.getString("Job_Id"));
+                        row.put("Level", rs.getString("Level"));
+                        results.add(row);
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return results;
+        }
+
+        // Child of Derived - component 2
+        public List<Map<String, Object>> fetchDerivedColumnInfoByLevel(Connection conn, String expression, String level, String jobId, String dlId) throws SQLException {
+            String query = SQLQueries.SELECT_ELT_DL_DERIVED_COLUMN_INFO;
+            
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, level);
+                ps.setString(2, jobId);
+                ps.setString(3, dlId);
+                
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<Map<String, Object>> results = new ArrayList<>();
+                    StringBuilder finalExpressionBuilder = new StringBuilder();
+                    String Last_Component_Source = "";
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+                        row.put("DL_Id", rs.getString("DL_Id"));
+                        row.put("Job_Id", rs.getString("Job_Id"));
+                        row.put("Level", rs.getString("Level"));
+                        String previousComponent = ""; // TBD from inputs or otherwise
+                        final String expressionLevel = "Expression_" + rs.getString("Level");
+                        Last_Component_Source = "Expression_" + rs.getString("Level"); // TBD: Use one of them this, previous
+                        String expressionName = expression.replace("Dynamic_Expression_Name", expressionLevel);
+                        String expressionSource = expressionName.replace("Dynamic_Expression_Source", previousComponent);
+                        
+                    // Block to make a final expression
+                        String lookupColumnName = rs.getString("lookup_column_names");
+
+                        // One of them to be prferred
+                        //Concise code
+                        if (finalExpressionBuilder.length() > 0) {
+                            finalExpressionBuilder.append("\n");
+                        }
+                        finalExpressionBuilder.append(expressionSource);
+
+                        // // Explicit code
+                        // if (finalExpressionBuilder.length() > 0) {
+                        //     finalExpressionBuilder.append("\n").append(expressionSource);
+                        // } else {
+                        //     finalExpressionBuilder.append(expressionSource);
+                        // }
+
+                        results.add(row);
+                    }
+
+                    System.out.println("finalExpression      : " + finalExpressionBuilder.toString());
+                    System.out.println("Last_Component_Source: " + Last_Component_Source);
+
+                    return results;
+                }
+            }
+        }
+
         private boolean insertIntoEltDlConfigProperties(Connection conn, Map<String, String> rowDetails) {
             String insertSql = "INSERT INTO ELT_DL_CONFIG_PROPERTIES (DL_Id, Job_Id, DL_Name, DL_Table_Name, config_file_name, Active_Flag) " +
                                "VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -1041,7 +1143,30 @@ public class DataMartStructureScriptGenerator {
                 "    Settings_Position = ? " + // Parameter for Settings_Position
                 "    AND Job_Id = ? " +
                 "    AND DL_Id = ?";
-            
+
+        public static final String SELECT_ELT_DL_DERIVED_COLUMN_INFO_BY_JOB_AND_DL_ID = "SELECT DISTINCT " +
+                "  ELT_DL_Derived_Column_Info.DL_Id, " +
+                "  ELT_DL_Derived_Column_Info.Job_Id, " +
+                "  ELT_DL_Derived_Column_Info.Level " +
+                "FROM " +
+                "  ELT_DL_Derived_Column_Info " +
+                "WHERE " +
+                "  Job_Id = ? " +
+                "  AND DL_Id = ? " +
+                "ORDER BY " +
+                "  Level";
+
+        public static final String SELECT_ELT_DL_DERIVED_COLUMN_INFO = "SELECT DISTINCT " +
+                "    `ELT_DL_Derived_Column_Info`.`DL_Id`, " +
+                "    `ELT_DL_Derived_Column_Info`.`Job_Id`, " +
+                "    `ELT_DL_Derived_Column_Info`.`Level` " +
+                "FROM `ELT_DL_Derived_Column_Info` " +
+                "WHERE " +
+                "    Expression_Type = 'JAVA' " +
+                "    AND Level = ? " + // Parameterized Level
+                "    AND Job_Id = ? " + 
+                "    AND DL_Id = ?"; 
+
     }
 
 
