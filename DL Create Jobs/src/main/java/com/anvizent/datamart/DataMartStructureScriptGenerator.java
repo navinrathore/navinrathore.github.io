@@ -93,9 +93,15 @@ public class DataMartStructureScriptGenerator {
             // Job 3 Recoercing
             
             // Job 4 NullReplacement
-            
-            // SubJob 5 - GroupbyJoin
             String previousComponent = ""; // TBD
+
+            String componentNullReplacement = "executesqlfiltergroupby";
+            String propsNullReplacement = fetchAndFormatProperties(conn, componentNullReplacement);
+
+            String emptyScript = propsNullReplacement.replace("Dynamic_Join_Name", previousComponent);
+            previousComponent = "Cleansing_Fields";
+
+            // SubJob 5 - GroupbyJoin
             String componentFilterGroupBy = "executesqlfiltergroupby";
             String filterGroupBy = fetchAndFormatProperties(conn, componentFilterGroupBy);
             String dynamicFilterGroupByName = filterGroupBy.replace("Dynamic_FilterGroupby_Name", "Join_Aggregation");
