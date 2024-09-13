@@ -92,7 +92,7 @@ public class DataMartStructureScriptGenerator {
 
             
 
-            
+
             // Job 2 lkp/join
             String previousComponent = ""; // TBD
             String componentJoin = "join";
@@ -208,9 +208,26 @@ public class DataMartStructureScriptGenerator {
             // Job 8 remit
             
             // Job 9 Rename
-            
+            String componentEmptyRename = "empty_rename";
+            String propsEmptyRename = fetchAndFormatProperties(conn, componentEmptyRename);
+            String EmptyRenameScript = propsEmptyRename.replace("Dynamic_Previous_Component", previousComponent);
+            String EmptyRenameComponent = EmptyRenameScript; /// output of this component
+            String previousJoinName = ""; // TBD or NULL
+            try {
+                previousJoinName = processDerivedColumnInfoInRename(conn, jobId, dlId);
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            previousComponent = previousJoinName; // output of this component
+
             // Job 10 Sink
-//######################################
+            String componentSink = "sqlsink";
+            String propsSink = fetchAndFormatProperties(conn, componentSink);
+            String sinkScript = propsSink.replace("Dynamic_Sink_Source", previousComponent);
+            String sinkComponent = sinkScript;
+            //previousComponent = ""; Should it be set here?
+    //######################################
 
 
             //config filename
@@ -278,6 +295,33 @@ public class DataMartStructureScriptGenerator {
             return results;
         }
 
+        public String processDerivedColumnInfoInRename(Connection conn, String jobId, String dlId) throws SQLException {
+            String query = "SELECT DISTINCT DL_Id FROM ELT_DL_Derived_Column_Info WHERE Job_Id = ? AND DL_Id = ?";
+            String previousJoinName = null;
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, jobId);
+                ps.setString(2, dlId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    String emptyRetainRename = "empty_Component"; // TBD: it has to come from env or some previopus setting!!
+                    while (rs.next()) {
+                        String dlIdResult = rs.getString("DL_Id");
+                        if (dlIdResult == null) {
+                            previousJoinName = null;
+                        } else {
+                            previousJoinName = "Rename_Derived_Columns";
+                        }
+                        System.out.println("DL_Id: " + dlIdResult);
+                    }
+                    System.out.println("Previous_Join_Name: " + previousJoinName);
+                    System.out.println("Empty_Retain_Rename: " + emptyRetainRename);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                throw new SQLException("Error while processing derived column info", e);
+            }
+            return previousJoinName;
+        }
+        
         public String executeJoinQueryAndBuildJoinComponent(Connection conn, String table) throws SQLException {
             String query = SQLQueries.buildFullJoinQuery(table);
             
