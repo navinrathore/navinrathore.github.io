@@ -12,6 +12,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.xml.transform.Source;
+
 public class DataMartStructureScriptGenerator {
     private DataSourceType dataSourceType;
     private String dlId;
@@ -88,10 +90,31 @@ public class DataMartStructureScriptGenerator {
 //######################################
             // Job 1 Source
 
-            // Job 2 lkp/join
             
-            // Job 3 Recoercing
+
+            
+            // Job 2 lkp/join
             String previousComponent = ""; // TBD
+            String componentJoin = "join";
+            String propsJoin = fetchAndFormatProperties(conn, componentJoin);
+            //String joinScript = propsJoin.replace("Dynamic_Join_Name", previousComponent);
+            //previousComponent = "Join";
+
+            // Both tables carry same name that is context.DL_Name+context.DL_Id+context.Job_Id
+            // Trying to use simplified Join
+            String table = dlName + dlId + jobId;
+            // String finalQuery = SQLQueries.buildFullJoinQuery(table);   
+            //String finalQuery = SQLQueries.buildFullJoinQuery(table, table); If two tables are joined separatly.
+
+            try {
+                String JoinComponent = executeJoinQueryAndBuildJoinComponent(conn, table);
+                // previousComponent = ; TBD returned from above function
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+
+            // Job 3 Recoercing
             String componentEmptyRecoercing = "empty_recoercing";
             String propsEmptyRecoercing = fetchAndFormatProperties(conn, componentEmptyRecoercing);
             String recoercingScript = propsEmptyRecoercing.replace("Dynamic_Join_Name", previousComponent);
@@ -253,6 +276,69 @@ public class DataMartStructureScriptGenerator {
                 e.printStackTrace();
             }
             return results;
+        }
+
+        public String executeJoinQueryAndBuildJoinComponent(Connection conn, String table) throws SQLException {
+            String query = SQLQueries.buildFullJoinQuery(table);
+            
+            try (PreparedStatement ps = conn.prepareStatement(query);
+                 ResultSet rs = ps.executeQuery()) {
+                  
+                String joinComponent = ""; // Value used ion all iterations
+                String previousJoinName = ""; // Value used ion all iterations
+                StringBuilder finalDynamicJoinSources = new StringBuilder();
+
+                while (rs.next()) {
+                    String tableName = rs.getString("Table_Name");
+                    String joinTableName = rs.getString("Join_Table_Name");
+                    String tableNameAlias = rs.getString("Table_Name_Alias");
+                    String joinTableAlias = rs.getString("Join_Table_Alias");
+                    String joinName = rs.getString("Join_Name");
+
+                    String finalTableName = rs.getString("Final_Table_Name");
+                    String joinProperty = rs.getString("property");
+
+                    // Process aliases
+                    tableNameAlias = tableNameAlias.replace(" ", "_");
+                    joinTableAlias = joinTableAlias.replace(" ", "_");
+                    tableName = (joinProperty == null) ? tableNameAlias : finalTableName + "_ExecuteSql";
+                    joinTableName = (joinProperty == null) ? joinTableAlias : finalTableName + "_ExecuteSql";
+                
+                    //String currentJoinName = tableName + joinTableAlias;
+                    tableName = tableName.replace("\\$", "\\\\$");
+                    joinTableName = joinTableName.replace("\\$", "\\\\$");
+
+                    String joinSourceTables = previousJoinName == null ? (tableName + "," + joinTableName) : (previousJoinName + "," + joinTableName);
+                    joinSourceTables = joinSourceTables.replace("\\$", "\\\\$"); // TBD: redundant? to be removed done above in parts
+                    joinComponent = finalDynamicJoinSources.toString(); // from previous iteration
+                    String dynamicJoinName = joinComponent.replace("Dynamic_Join_Name", tableName + "_" + joinTableName);
+                    String dynamicJoinSources = dynamicJoinName.replace("Dynamic_Join_Sources", joinSourceTables);
+
+                     // Append to final dynamic join sources
+                    if (finalDynamicJoinSources.length() > 0) {
+                        finalDynamicJoinSources.append("\n");
+                    }
+                    finalDynamicJoinSources.append(dynamicJoinSources);
+                    // Below to be used in next iteration
+                    joinComponent = finalDynamicJoinSources.toString();
+                    previousJoinName = joinName; // From resultSet object
+                }
+
+                // Print or use finalDynamicJoinSources and previousJoinName. They are end Results.
+                System.out.println("Join Component: " + joinComponent);
+                System.out.println("Join Name: " + previousJoinName);
+
+                return joinComponent;
+            }
+        }
+    
+        // Helper method to sanitize and replace spaces with underscores (like StringHandling.EREPLACE in Talend)
+        private String sanitizeAlias(String alias) {
+            return alias != null ? alias.replace(" ", "_") : null;
+        }
+
+        private String sanitizeReplace(String input, String target, String replacement) {
+            return input.replace(target, replacement);
         }
 
         // Child of Derived - component 2
@@ -1300,6 +1386,77 @@ public class DataMartStructureScriptGenerator {
                 "    AND Level = ? " + // Parameterized Level
                 "    AND Job_Id = ? " + 
                 "    AND DL_Id = ?"; 
+
+        // Config Job 2 lkp/join
+        // Java function to create a query as table name cannot be passed as parameter.
+        // As 2nd and 3rd queries are same, both join are combined in one.
+        // However, the separate ones are also added, in case they are needed.
+        public static String buildFullJoinQuery(String table) {
+            return "SELECT DISTINCT " +
+                    "ELT_DL_Join_Mapping_Info.Table_Name, " +
+                    "ELT_DL_Join_Mapping_Info.Join_Table_Alias, " +
+                    "ELT_DL_Join_Mapping_Info.Table_Name_Alias, " +
+                    "CONCAT(ELT_DL_Join_Mapping_Info.Table_Name_Alias, '_', ELT_DL_Join_Mapping_Info.Join_Table_Alias) AS Join_Name, " +
+                    table + ".Final_Table_Name AS Final_Table_Name, " +
+                    table + ".property AS Property " +
+                    "FROM ELT_DL_Join_Mapping_Info " +
+                    "LEFT OUTER JOIN " + table + " " +
+                    "ON (ELT_DL_Join_Mapping_Info.Table_Name_Alias = " + table + ".table_name AND " + table + ".property != 'db') " +
+                    "OR (ELT_DL_Join_Mapping_Info.Join_Table_Alias = " + table + ".table_name AND " + table + ".property != 'db') " + 
+                    "WHERE ELT_DL_Join_Mapping_Info.Job_Id = ? " +
+                    "AND ELT_DL_Join_Mapping_Info.DL_Id = ? " +
+                    "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
+        }
+        // TBD: refer above. May be deleted
+        // Query 1: Primary query from ELT_DL_Join_Mapping_Info
+        public static final String QUERY1 = "SELECT DISTINCT " +
+                "ELT_DL_Join_Mapping_Info.Table_Name, " +
+                "ELT_DL_Join_Mapping_Info.Join_Table_Alias, " +
+                "ELT_DL_Join_Mapping_Info.Join_Table_Alias, " +
+                "ELT_DL_Join_Mapping_Info.Table_Name_Alias, " +
+                "CONCAT(ELT_DL_Join_Mapping_Info.Table_Name_Alias, '_', ELT_DL_Join_Mapping_Info.Join_Table_Alias) AS Join_Name "
+                +
+                "FROM ELT_DL_Join_Mapping_Info " +
+                "WHERE Job_Id = ? AND DL_Id = ? " +
+                "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
+        // TBD: refer above. May be deleted
+        // Method to dynamically build Query 2 with the table name passed as a parameter
+        public static String buildQuery2(String table2) {
+            return "SELECT " +
+                    table2 + ".`table_name`, " +
+                    table2 + ".`Final_Table_Name`, " +
+                    table2 + ".`property` " +
+                    "FROM " + table2 + " WHERE " + table2 + ".`property` != 'db'";
+        }
+        // TBD: refer above. May be deleted
+        // Method to dynamically build Query 3 with the table name passed as a parameter
+        public static String buildQuery3(String table3) {
+            return "SELECT " +
+                    table3 + ".`table_name`, " +
+                    table3 + ".`Final_Table_Name`, " +
+                    table3 + ".`property` " +
+                    "FROM " + table3 + " WHERE " + table3 + ".`property` != 'db'";
+        }
+        // TBD: refer above. May be deleted
+        // Full Join Query: Joining ELT_DL_Join_Mapping_Info with tables in Query 2 and Query 3
+        public static String buildFullJoinQuery(String table2, String table3) {
+            return "SELECT DISTINCT " +
+                    "ELT_DL_Join_Mapping_Info.Table_Name, " +
+                    "ELT_DL_Join_Mapping_Info.Join_Table_Alias, " +
+                    "ELT_DL_Join_Mapping_Info.Table_Name_Alias, " +
+                    "CONCAT(ELT_DL_Join_Mapping_Info.Table_Name_Alias, '_', ELT_DL_Join_Mapping_Info.Join_Table_Alias) AS Join_Name, "
+                    +
+                    "t2.Final_Table_Name AS Table2_Final_Table_Name, " +
+                    "t3.Final_Table_Name AS Table3_Final_Table_Name " +
+                    "FROM ELT_DL_Join_Mapping_Info " +
+                    "LEFT OUTER JOIN (" + buildQuery2(table2) + ") t2 " +
+                    "ON ELT_DL_Join_Mapping_Info.Table_Name_Alias = t2.table_name " +
+                    "LEFT OUTER JOIN (" + buildQuery3(table3) + ") t3 " +
+                    "ON ELT_DL_Join_Mapping_Info.Join_Table_Alias = t3.table_name " +
+                    "WHERE ELT_DL_Join_Mapping_Info.Job_Id = ? " +
+                    "AND ELT_DL_Join_Mapping_Info.DL_Id = ? " +
+                    "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
+        }
 
     }
 
