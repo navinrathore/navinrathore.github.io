@@ -204,23 +204,41 @@ public class DataMartStructureScriptGenerator {
             String derivedDynamicGroupbyFilterConfig = dynamicFilterGroupBySource2;
             System.out.println("Previous Name: " + previousName2);
             System.out.println("Derived Dynamic Groupby Filter Config: " + derivedDynamicGroupbyFilterConfig);
-            
+            //#########################
             // Job 8 remit
-            
-            // Job 9 Rename
-            String componentEmptyRename = "empty_rename";
-            String propsEmptyRename = fetchAndFormatProperties(conn, componentEmptyRename);
-            String EmptyRenameScript = propsEmptyRename.replace("Dynamic_Previous_Component", previousComponent);
-            String EmptyRenameComponent = EmptyRenameScript; /// output of this component
+            String componentEmptyRemit = "empty_remit";
+            String propsEmptyRemit = fetchAndFormatProperties(conn, componentEmptyRemit);
+            // No replacement
+            String emptyRetainRename = "empty_Component"; // TBD: it has to come from env or some previopus setting!!
+            final String defaultJoinNameRemit = "Emit_UnWanted_Columns";
+            String emptyRemitComponent = propsEmptyRemit; // output of this component
             String previousJoinName = ""; // TBD or NULL
+            // TBD: Below funciton/query seems not doing any actual processing. Seems redundent. Check!!
             try {
-                previousJoinName = processDerivedColumnInfoInRename(conn, jobId, dlId);
+                previousJoinName = processDerivedColumnInfo(conn, jobId, dlId, defaultJoinNameRemit, emptyRetainRename);
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
             }
             previousComponent = previousJoinName; // output of this component
-
+            //#########################
+            // Job 9 Rename
+            String componentEmptyRename = "empty_rename";
+            String propsEmptyRename = fetchAndFormatProperties(conn, componentEmptyRename);
+            String EmptyRenameScript = propsEmptyRename.replace("Dynamic_Previous_Component", previousComponent);
+            String EmptyRenameComponent = EmptyRenameScript; /// output of this component
+            final String defaultJoinNameRename = "Rename_Derived_Columns";
+           // String emptyRetainRename = "empty_Component"; // TBD: it has to come from env or some previopus setting!!
+            previousJoinName = ""; // TBD or NULL; see above
+            // TBD: Below funciton/query seems not doing any actual processing. Seems redundent. Check!!
+            try {
+                previousJoinName = processDerivedColumnInfo(conn, jobId, dlId, defaultJoinNameRename, emptyRetainRename);
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            previousComponent = previousJoinName; // output of this component
+            //#########################
             // Job 10 Sink
             String componentSink = "sqlsink";
             String propsSink = fetchAndFormatProperties(conn, componentSink);
@@ -295,25 +313,27 @@ public class DataMartStructureScriptGenerator {
             return results;
         }
 
-        public String processDerivedColumnInfoInRename(Connection conn, String jobId, String dlId) throws SQLException {
+        public String processDerivedColumnInfo(Connection conn, String jobId, String dlId, final String joinName, String rename) throws SQLException {
             String query = "SELECT DISTINCT DL_Id FROM ELT_DL_Derived_Column_Info WHERE Job_Id = ? AND DL_Id = ?";
             String previousJoinName = null;
+            String emptyRetainRename = null;
             try (PreparedStatement ps = conn.prepareStatement(query)) {
                 ps.setString(1, jobId);
                 ps.setString(2, dlId);
                 try (ResultSet rs = ps.executeQuery()) {
-                    String emptyRetainRename = "empty_Component"; // TBD: it has to come from env or some previopus setting!!
                     while (rs.next()) {
                         String dlIdResult = rs.getString("DL_Id");
                         if (dlIdResult == null) {
                             previousJoinName = null;
+                            emptyRetainRename = null;
                         } else {
-                            previousJoinName = "Rename_Derived_Columns";
+                            previousJoinName = joinName;
+                            emptyRetainRename = rename;
                         }
                         System.out.println("DL_Id: " + dlIdResult);
                     }
                     System.out.println("Previous_Join_Name: " + previousJoinName);
-                    System.out.println("Empty_Retain_Rename: " + emptyRetainRename);
+                    System.out.println("Empty Retain Rename: " + emptyRetainRename);
                 }
             } catch (SQLException e) {
                 e.printStackTrace();
