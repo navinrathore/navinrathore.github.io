@@ -90,7 +90,13 @@ public class DataMartStructureScriptGenerator {
 //######################################
             // Job 1 Source
 
-            
+            try {
+                String settings = fetchLoadConfigsSettings(conn, dlId, jobId);
+
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
 
 
             // Job 2 lkp/join
@@ -291,6 +297,160 @@ public class DataMartStructureScriptGenerator {
             return script.toString();
         }
     
+        public String fetchLoadConfigsSettings(Connection conn, String dlId, String jobId) throws SQLException {
+            String query = "SELECT `ELT_DL_Load_Configs`.`Settings` FROM `ELT_DL_Load_Configs` WHERE DL_Id = ? AND Job_Id = ?";
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, dlId);
+                ps.setString(2, jobId);
+                // TBD: One result only?
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getString("Settings");
+                    } else {
+                        return null;
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                throw new SQLException("Error while fetching load config settings", e);
+            }
+        }
+
+        // Function to execute both queries and perform an inner join using a hash map
+        // for efficiency
+        public List<Map<String, Object>> executeAndJoinTables(Connection conn, String dlId, String jobId)
+                throws SQLException {
+            // Step 1: Fetch Filter Group By Info and store in a hash map
+            Map<String, Map<String, Object>> filterGroupByInfoMap = fetchFilterGroupByInfoMap(conn, dlId, jobId);
+
+            // Step 2: Fetch Driving and Lookup Table Info and perform the join
+            return joinWithDrivingAndLookupTableInfo(conn, dlId, jobId, filterGroupByInfoMap);
+        }
+
+        // Function to fetch SELECT_ELT_DL_FILTER_GROUP_BY_INFO and store in a hash map
+        // for fast lookups
+        private Map<String, Map<String, Object>> fetchFilterGroupByInfoMap(Connection conn, String dlId, String jobId)
+                throws SQLException {
+            String query = SQLQueries.SELECT_ELT_DL_FILTER_GROUP_BY_INFO;
+
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, dlId);
+                ps.setString(2, jobId);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    Map<String, Map<String, Object>> resultMap = new HashMap<>();
+
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+                        row.put("DL_Id", rs.getString("DL_Id"));
+                        row.put("Job_Id", rs.getString("Job_Id"));
+                        row.put("Table_Name", rs.getString("Table_Name"));
+                        row.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));
+                        row.put("Settings_Position", rs.getString("Settings_Position"));
+
+                        // Create a unique key using the join fields
+                        String key = createJoinKey(
+                                rs.getString("DL_Id"),
+                                rs.getString("Job_Id"),
+                                rs.getString("Table_Name"),
+                                rs.getString("Table_Name_Alias"),
+                                rs.getString("Settings_Position"));
+
+                        // Store the row in the map using the key
+                        resultMap.put(key, row);
+                    }
+
+                    return resultMap;
+                }
+            }
+        }
+
+        
+        // Function to join with SELECT_ELT_DL_DRIVING_AND_LOOKUP_TABLE_INFO using the
+        // hash map
+        private List<Map<String, Object>> joinWithDrivingAndLookupTableInfo(Connection conn, String dlId, String jobId,
+                Map<String, Map<String, Object>> filterGroupByInfoMap) throws SQLException {
+            String query = SQLQueries.SELECT_ELT_DL_DRIVING_AND_LOOKUP_TABLE_INFO;
+
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, dlId); // Set DL_Id for Driving Table
+                ps.setString(2, jobId); // Set Job_Id for Driving Table
+                ps.setString(3, dlId); // Set DL_Id for Lookup Table
+                ps.setString(4, jobId); // Set Job_Id for Lookup Table
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<Map<String, Object>> joinedResults = new ArrayList<>();
+
+                    while (rs.next()) {
+                        // Create a unique key using the join fields
+                        String key = createJoinKey(
+                                rs.getString("DL_Id"),
+                                rs.getString("Job_Id"),
+                                rs.getString("Table_Name"),
+                                rs.getString("Table_Name_Alias"),
+                                rs.getString("Settings_Position"));
+
+                        // Check if there's a matching row in the filterGroupByInfoMap
+                        if (filterGroupByInfoMap.containsKey(key)) {
+                            Map<String, Object> filterRow = filterGroupByInfoMap.get(key);
+                            Map<String, Object> drivingRow = new HashMap<>();
+                            drivingRow.put("DL_Id", rs.getString("DL_Id"));
+                            drivingRow.put("Job_Id", rs.getString("Job_Id"));
+                            drivingRow.put("Table_Name", rs.getString("Table_Name"));
+                            drivingRow.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));
+                            drivingRow.put("Settings_Position", rs.getString("Settings_Position"));
+
+                            // Merge the filterRow and drivingRow
+                            Map<String, Object> joinedRow = new HashMap<>(filterRow);
+                            joinedRow.putAll(drivingRow);
+
+                            // Add the joined row to the result list
+                            joinedResults.add(joinedRow);
+                        }
+                    }
+
+                    return joinedResults;
+                }
+            }
+        }
+
+        // Helper function to create a unique key for joining
+        private String createJoinKey(String dlId, String jobId, String tableName, String tableAlias, String settingsPosition) {
+            return dlId + "_" + jobId + "_" + tableName + "_" + tableAlias + "_" + settingsPosition;
+        }
+
+        // Job source - Alternate approach
+        public void executeJoinedQuery(Connection conn, String dlId, String jobId) throws SQLException {
+            String query = SQLQueries.SELECT_ELT_JOINED_FILTER_GROUP_BY_DRIVING_AND_LOOKUP;
+            
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, dlId); // For the Filter Group By Info and Driving Table
+                ps.setString(2, jobId); // For the Filter Group By Info and Driving Table
+                ps.setString(3, dlId); // For the Lookup Table
+                ps.setString(4, jobId); // For the Lookup Table
+                ps.setString(5, dlId); // For the Filter Group By Info again
+                ps.setString(6, jobId); // For the Filter Group By Info again
+                
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        // Process the result set
+                        String dlIdResult = rs.getString("DL_Id");
+                        String jobIdResult = rs.getString("Job_Id");
+                        String tableName = rs.getString("Table_Name");
+                        String tableNameAlias = rs.getString("Table_Name_Alias");
+                        String settingsPosition = rs.getString("Settings_Position");
+    
+                        // Driving/Lookup table details
+                        String drivingLookupTableName = rs.getString("Driving_Lookup_Table_Name");
+                        String drivingLookupTableAlias = rs.getString("Driving_Lookup_Table_Alias");
+                        String drivingLookupSettingsPosition = rs.getString("Driving_Lookup_Settings_Position");
+    
+                        // Further processing...
+                    }
+                }
+            }
+        }
+
         public List<Map<String, String>> getDerivedColumnInfoByJobAndDLId(Connection conn, String jobId, String dlId) {
             List<Map<String, String>> results = new ArrayList<>();
 
@@ -1522,8 +1682,93 @@ public class DataMartStructureScriptGenerator {
                     "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
         }
 
+        // TBD: See if this and above queries if one of them can be got rid of!! Job - Source
+        public static final String SELECT_ELT_DL_FILTER_GROUP_BY_INFO = 
+                "SELECT " +
+                "`ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Job_Id`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Table_Name`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Table_Name_Alias`, " +
+                "Settings_Position " +
+                "FROM `ELT_DL_FilterGroupBy_Info` " +
+                "WHERE Settings_Position IN ('Lookup_Table', 'Driving_Table') " +
+                "AND Group_By_Id <> '0' " +
+                "AND DL_Id = ? " + 
+                "AND Job_Id = ?";
+
+        // Job - Source
+        public static final String SELECT_ELT_DL_DRIVING_AND_LOOKUP_TABLE_INFO = 
+                "SELECT " +
+                "DL_Id, " +
+                "Job_Id, " +
+                "`Table_Name`, " +
+                "`Table_Name` AS `Table_Name_Alias`, " +
+                "'Driving_Table' AS Settings_Position " +
+                "FROM `ELT_DL_Driving_Table_Info` " +
+                "WHERE DL_Id = ? " +
+                "AND Job_Id = ? " + 
+                "UNION ALL " +
+                "SELECT " +
+                "DL_Id, " +
+                "Job_Id, " +
+                "`Table_Name`, " +
+                "`Table_Name_Alias` AS `Table_Name_Alias`, " +
+                "'Lookup_Table' AS Settings_Position " +
+                "FROM `ELT_DL_Lookup_Table_Info` " +
+                "WHERE DL_Id = ? " + 
+                "AND Job_Id = ?";
+        // TBD: Alternate approach of above - inner join in query itself. efficient approach
+        public static final String SELECT_ELT_JOINED_FILTER_GROUP_BY_DRIVING_AND_LOOKUP = 
+                "SELECT " +
+                "  fgi.DL_Id, " +
+                "  fgi.Job_Id, " +
+                "  fgi.Table_Name, " +
+                "  fgi.Table_Name_Alias, " +
+                "  fgi.Settings_Position, " +
+                "  dli.Table_Name AS Driving_Lookup_Table_Name, " +
+                "  dli.Table_Name_Alias AS Driving_Lookup_Table_Alias, " +
+                "  dli.Settings_Position AS Driving_Lookup_Settings_Position " +
+                "FROM " +
+                "  ELT_DL_FilterGroupBy_Info fgi " +
+                "INNER JOIN (" +
+                "  (SELECT " +
+                "    ELT_DL_Driving_Table_Info.DL_Id, " +
+                "    ELT_DL_Driving_Table_Info.Job_Id, " +
+                "    ELT_DL_Driving_Table_Info.Table_Name, " +
+                "    ELT_DL_Driving_Table_Info.Table_Name AS Table_Name_Alias, " +
+                "    'Driving_Table' AS Settings_Position " +
+                "  FROM " +
+                "    ELT_DL_Driving_Table_Info " +
+                "  WHERE " +
+                "    ELT_DL_Driving_Table_Info.DL_Id = ? " +
+                "    AND ELT_DL_Driving_Table_Info.Job_Id = ?) " +
+                "  UNION ALL " +
+                "  (SELECT " +
+                "    ELT_DL_Lookup_Table_Info.DL_Id, " +
+                "    ELT_DL_Lookup_Table_Info.Job_Id, " +
+                "    ELT_DL_Lookup_Table_Info.Table_Name, " +
+                "    ELT_DL_Lookup_Table_Info.Table_Name_Alias AS Table_Name_Alias, " +
+                "    'Lookup_Table' AS Settings_Position " +
+                "  FROM " +
+                "    ELT_DL_Lookup_Table_Info " +
+                "  WHERE " +
+                "    ELT_DL_Lookup_Table_Info.DL_Id = ? " +
+                "    AND ELT_DL_Lookup_Table_Info.Job_Id = ?" +
+                ") dli " +
+                "ON fgi.DL_Id = dli.DL_Id " +
+                "  AND fgi.Job_Id = dli.Job_Id " +
+                "  AND fgi.Table_Name = dli.Table_Name " +
+                "  AND fgi.Table_Name_Alias = dli.Table_Name_Alias " +
+                "  AND fgi.Settings_Position = dli.Settings_Position " +
+                "WHERE " +
+                "  fgi.Settings_Position IN ('Lookup_Table', 'Driving_Table') " +
+                "  AND fgi.Group_By_Id <> '0' " +
+                "  AND fgi.DL_Id = ? " +
+                "  AND fgi.Job_Id = ?";
+                
     }
 
+    
 
 
     // Enum to represent different data source types
