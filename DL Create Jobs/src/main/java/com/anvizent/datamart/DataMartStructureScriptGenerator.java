@@ -766,7 +766,7 @@ public class DataMartStructureScriptGenerator {
             String componentExpression = "'expression'";
             String expressionType = "JAVA";
             List<String> levels = getDistinctLevels(conn, jobId, dlId); // TODO name of output
-            executeExpressionChildComponentValue(conn, levels, jobId, dlId);
+            String expressionValue = executeExpressionChildComponentValue(conn, levels, jobId, dlId);
 
             // Job 8 Sql_Expression
             String componentSQLExpression = "'executesql'";
@@ -830,8 +830,9 @@ public class DataMartStructureScriptGenerator {
             return levels;
         }
 
-        private void executeExpressionChildComponentValue(Connection connection, List<String> levels, String jobId, String dlId) {
+        private String executeExpressionChildComponentValue(Connection connection, List<String> levels, String jobId, String dlId) {
             System.out.println("Total levels: " + levels.size());
+            StringBuilder expressionValueBuilder = new StringBuilder();
             try {
                 for (String level : levels) {
                     // part 1:
@@ -848,7 +849,7 @@ public class DataMartStructureScriptGenerator {
                     // part 3:
                     String expressions = updateColumnExpression(connection, columnExpression);
 
-                    //part 4:
+                    // part 4:
                     StringBuilder javaDataTypeBuilder = new StringBuilder();
                     String columnArguments = performInMemoryJoin(connection, null);
                     String javaDataType = javaDataTypeBuilder.toString();
@@ -858,13 +859,17 @@ public class DataMartStructureScriptGenerator {
                     String derivedValue= getValueNamesFromJobPropertiesInfo(conn, componentExpression);
 
                     // part 6:
-                    processDerivedExpressions(connection, derivedValue, columnArguments, javaDataType, level, expressions, jobId, dlId);
-
+                    String finalDerivedValue = processDerivedExpressions(connection, derivedValue, columnArguments, javaDataType, level, expressions, jobId, dlId);
+                    if (expressionValueBuilder.length() > 0) {
+                        expressionValueBuilder.append("\n");
+                    }
+                    expressionValueBuilder.append(finalDerivedValue);
                 }
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
             }
+            return expressionValueBuilder.toString();
         }
 
         // Value Expression
