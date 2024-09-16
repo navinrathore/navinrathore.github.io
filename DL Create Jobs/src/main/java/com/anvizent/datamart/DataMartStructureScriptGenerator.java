@@ -766,6 +766,8 @@ public class DataMartStructureScriptGenerator {
             // Job 8 Sql_Expression
 
             // Job 9 remit
+            String componentRemit = "'empty_remit'";
+            String MappingRemitValue = componentRemitValue(componentRemit);
 
             // Job 10 Rename
             String componentRename = "'empty_rename'";
@@ -795,22 +797,56 @@ public class DataMartStructureScriptGenerator {
             return status ? Status.SUCCESS : Status.FAILURE;
         }
 
-        private String componentRenameValue(String component) {
+        // remit
+        private String componentRemitValue(String component) {
+            String mappingRemitValue = "";
             try {
-                String mappingRenameValue= getValueNamesFromJobPropertiesInfo(conn, component);
-                fetchAndProcessColumnInfo(conn, jobId, dlId, mappingRenameValue);
-                // List<Map<String, Object>> replacementMappingInfoList = fetchReplacementMappingInfo(conn, jobId, dlId);
-                // List<Map<String, Object>> dataTyperConversionList = executeDataTypeConversionsQuery(conn);
-            
+                String mappingRetainValueRemit = getValueNamesFromJobPropertiesInfo(conn, component);
+                mappingRemitValue = fetchAndProcessColumnInfoForRemit(conn, jobId, dlId, mappingRetainValueRemit);          
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
             }
-            return ""; //TODO
+            return mappingRemitValue; //TODO
+        }
+        // remit
+        public String fetchAndProcessColumnInfoForRemit(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
+            String query = "SELECT DL_Id, Job_Id, Column_Name, Column_Alias_Name " +
+                        "FROM ELT_DL_Derived_Column_Info " +
+                        "WHERE Job_Id = ? AND DL_Id = ? AND Column_Alias_Name != ''";
+
+            String mappingRemitValue = null;
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, jobId);
+                ps.setString(2, dlId);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String columnName = rs.getString("Column_Name");
+                        // String columnAliasName = rs.getString("Column_Alias_Name");
+                        String emit_unwanted_columns = mappingRetainValue.replaceAll("\\$\\{emit.unwanted.columns}", "emit.unwanted.columns=" + columnName);
+                        mappingRemitValue = emit_unwanted_columns;
+                    }
+                }
+            }
+            return mappingRemitValue;
+        }
+        // Rename
+        private String componentRenameValue(String component) {
+            String mappingRenameValue = "";
+            try {
+                String mappingRetainValue= getValueNamesFromJobPropertiesInfo(conn, component);
+                mappingRenameValue = fetchAndProcessColumnInfo(conn, jobId, dlId, mappingRetainValue);          
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return mappingRenameValue; //TODO
         }
 
+        // Rename
         //public static List<Map<String, String>> fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
-        public static String fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
+        public String fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
             String query = "SELECT DL_Id, Job_Id, Column_Name, Column_Alias_Name " +
                         "FROM ELT_DL_Derived_Column_Info " +
                         "WHERE Job_Id = ? AND DL_Id = ? AND Column_Alias_Name != ''";
@@ -826,8 +862,6 @@ public class DataMartStructureScriptGenerator {
                     while (rs.next()) {
                         String columnName = rs.getString("Column_Name");
                         String columnAliasName = rs.getString("Column_Alias_Name");
-
-                        // Process each result and update the mapping rename value
                         String from = mappingRetainValue.replaceAll("\\$\\{derived.rename.from}", "derived.rename.from=" + columnName);
                         String to = from.replaceAll("\\$\\{derived.rename.to}", "derived.rename.to=" + columnAliasName);
 
