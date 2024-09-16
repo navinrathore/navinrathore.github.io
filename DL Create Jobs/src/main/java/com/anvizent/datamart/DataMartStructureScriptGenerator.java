@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import javax.xml.transform.Source;
 
@@ -753,6 +754,10 @@ public class DataMartStructureScriptGenerator {
             // Job 4 Recoercing
 
             // Job 5 NullReplacement
+            String tgtPwd = ""; // TBD: TODO use input, replace literal $
+            tgtPwd = tgtPwd.replace("$", "\\$");
+            String componentNullReplacement = "'empty'";
+            String emptyValueScript = componentNullReplacementValue(componentNullReplacement); 
 
             // Job 6 FilterValue
 
@@ -763,6 +768,8 @@ public class DataMartStructureScriptGenerator {
             // Job 9 remit
 
             // Job 10 Rename
+            String componentRename = "'empty_rename'";
+            String MappingRetainValue = componentRenameValue(componentRename);
 
             // Job 11 Sink
 //######################################
@@ -788,6 +795,172 @@ public class DataMartStructureScriptGenerator {
             return status ? Status.SUCCESS : Status.FAILURE;
         }
 
+        private String componentRenameValue(String component) {
+            try {
+                String mappingRenameValue= getValueNamesFromJobPropertiesInfo(conn, component);
+                fetchAndProcessColumnInfo(conn, jobId, dlId, mappingRenameValue);
+                // List<Map<String, Object>> replacementMappingInfoList = fetchReplacementMappingInfo(conn, jobId, dlId);
+                // List<Map<String, Object>> dataTyperConversionList = executeDataTypeConversionsQuery(conn);
+            
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return ""; //TODO
+        }
+
+        //public static List<Map<String, String>> fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
+        public static String fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
+            String query = "SELECT DL_Id, Job_Id, Column_Name, Column_Alias_Name " +
+                        "FROM ELT_DL_Derived_Column_Info " +
+                        "WHERE Job_Id = ? AND DL_Id = ? AND Column_Alias_Name != ''";
+
+            List<Map<String, String>> resultList = new ArrayList<>();
+            String mappingRenameValue = null;
+
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, jobId);
+                ps.setString(2, dlId);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String columnName = rs.getString("Column_Name");
+                        String columnAliasName = rs.getString("Column_Alias_Name");
+
+                        // Process each result and update the mapping rename value
+                        String from = mappingRetainValue.replaceAll("\\$\\{derived.rename.from}", "derived.rename.from=" + columnName);
+                        String to = from.replaceAll("\\$\\{derived.rename.to}", "derived.rename.to=" + columnAliasName);
+
+                        mappingRenameValue = to;
+
+                        // Map<String, String> resultMap = new HashMap<>();
+                        // resultMap.put("Column_Name", columnName);
+                        // resultMap.put("Column_Alias_Name", columnAliasName);
+                        // resultList.add(resultMap);
+                    }
+                }
+            }
+            return mappingRenameValue;
+        }
+
+        private String componentNullReplacementValue(String component) {
+            try {
+                getValueNamesFromJobPropertiesInfo(conn, component);
+                List<Map<String, Object>> replacementMappingInfoList = fetchReplacementMappingInfo(conn, jobId, dlId);
+                List<Map<String, Object>> dataTyperConversionList = executeDataTypeConversionsQuery(conn);
+            
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return ""; //TODO
+        }
+
+        public List<Map<String, Object>> fetchReplacementMappingInfo(Connection conn, String jobId, String dlId) throws SQLException {
+            String query = SQLQueries.SELECT_REPLACEMENT_MAPPING_INFO;
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, jobId);
+                ps.setString(2, dlId);
+                ps.setString(3, dlId);
+                ps.setString(4, jobId);
+        
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<Map<String, Object>> results = new ArrayList<>();
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+                        row.put("Table_Name", rs.getString("Table_Name"));
+                        row.put("DL_Column_Names", rs.getString("DL_Column_Names"));
+                        row.put("Constraints", rs.getString("Constraints"));
+                        row.put("Source_Name", rs.getString("Source_Name"));
+                        row.put("Data_Type", rs.getString("Data_Type"));
+                        row.put("DL_Id", rs.getString("DL_Id"));
+                        row.put("Job_Id", rs.getString("Job_Id"));
+                        results.add(row);
+                    }
+                    return results;
+                }
+            }
+        }
+
+        public List<Map<String, Object>> executeDataTypeConversionsQuery(Connection conn) throws SQLException {
+            String query = "SELECT " +
+                           "`ELT_Datatype_Conversions`.`Id`, " +
+                           "`ELT_Datatype_Conversions`.`Source_Data_Type`, " +
+                           "LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS Data_Type, " +
+                           "`ELT_Datatype_Conversions`.`Java_Data_Type`, " +
+                           "PK_Cleansing_Value " +
+                           "FROM `ELT_Datatype_Conversions`";
+    
+            List<Map<String, Object>> results = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(query);
+                ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("Id", rs.getObject("Id"));
+                    row.put("Source_Data_Type", rs.getObject("Source_Data_Type"));
+                    row.put("Data_Type", rs.getObject("Data_Type"));
+                    row.put("Java_Data_Type", rs.getObject("Java_Data_Type"));
+                    row.put("PK_Cleansing_Value", rs.getObject("PK_Cleansing_Value"));
+                    results.add(row);
+                }
+            }
+            return results;
+        }
+        
+
+        // Value NullReplacement - Method to perform in-memory inner join and process data
+        public List<Map<String, Object>> processJoinedData(
+                List<Map<String, Object>> replacementMappingInfo, 
+                List<Map<String, Object>> dataTypeConversions) {
+
+            // Convert the list of maps from dataTypeConversions into a lookup map for fast access
+            Map<String, Map<String, Object>> dataTypeMap = dataTypeConversions.stream()
+                .collect(Collectors.toMap(
+                    map -> (String) map.get("Data_Type"),
+                    map -> map));                         // Value: Map with Data_Type and other columns
+
+            List<Map<String, Object>> joinedResults = new ArrayList<>();
+
+            for (Map<String, Object> replacementMap : replacementMappingInfo) {
+                String dataType = (String) replacementMap.get("Data_Type");
+                if (dataType != null && dataTypeMap.containsKey(dataType)) {
+                    Map<String, Object> dataTypeMapEntry = dataTypeMap.get(dataType);
+                    Map<String, Object> joinedMap = new HashMap<>(replacementMap);
+                    joinedMap.putAll(dataTypeMapEntry);
+
+                    String columnNameAlias = (String) joinedMap.get("Column_Name_Alias");
+                    String dataTypeContains = (String) joinedMap.get("Data_Type");
+                    
+                    // New columns
+                    joinedMap.put("cleansing_Validation", columnNameAlias == null ? "EMPTY" : columnNameAlias);
+                    joinedMap.put("date_formats", dataTypeContains != null && dataTypeContains.contains("date") ? "yyyy-MM-dd" : "");
+
+                    joinedResults.add(joinedMap);
+                }
+            }
+
+            return joinedResults;
+        }
+
+        // value function
+        public String getValueNamesFromJobPropertiesInfo(Connection conn, String component) {
+            String query = SQLQueries.SELECT_VALUE_NAMES_FROM_ELT_JOB_PROPERTIES_INFO;
+            StringBuilder script = new StringBuilder();
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, component);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String valueName = rs.getString("Value_Name");
+                        script.append(valueName).append("\n");
+                    }
+                }
+            }  catch (SQLException e) {
+                e.printStackTrace();
+                return "";
+            }    
+            return script.toString();
+        }
+        
         private boolean insertIntoEltDlValuesProperties(Connection conn, Map<String, String> rowDetails) {
             String insertSql = "INSERT INTO ELT_DL_VALUES_PROPERTIES (DL_Id, Job_Id, DL_Name, DL_Table_Name, value_file_name, Active_Flag) " +
                                "VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -1572,7 +1745,36 @@ public class DataMartStructureScriptGenerator {
                 "WHERE Job_Type = 'DL' " +
                 "  AND Component = ? " +
                 "  AND Active_Flag = 1";
-                
+
+        // Value 
+        public static final String SELECT_VALUE_NAMES_FROM_ELT_JOB_PROPERTIES_INFO = 
+                "SELECT DISTINCT `ELT_Job_Properties_Info`.`Value_Name` " +
+                "FROM `ELT_Job_Properties_Info` " +
+                "WHERE Job_Type='DL' AND Component IN (?) " +
+                "AND Active_Flag=1 AND Dynamic_Flag=1";
+        
+        public static String SELECT_REPLACEMENT_MAPPING_INFO = 
+                "SELECT DISTINCT " +
+                "    '' AS Table_Name, " +
+                "    m.DL_Column_Names, " +
+                "    m.Constraints, " +
+                "    '' AS Source_Name, " +
+                "    LOWER(SUBSTRING_INDEX(m.DL_Data_Types, '(', 1)) AS Data_Type, " +
+                "    m.DL_Id, " +
+                "    ? AS Job_Id " +
+                "FROM ELT_DL_Mapping_Info_Saved m " +
+                "INNER JOIN ELT_DL_Join_Mapping_Info j " +
+                "    ON m.DL_Id = j.DL_Id " +
+                "    AND m.Job_Id = j.Job_Id " +
+                "    AND m.DL_Column_Names = j.Join_Column_Alias " +
+                "WHERE m.Constraints IN ('Pk', 'SK') " +
+                "    AND m.DL_Id = ? " +
+                "    AND m.DL_Column_Names NOT IN ( " +
+                "        SELECT DISTINCT Column_Alias_Name " +
+                "        FROM ELT_DL_Derived_Column_Info " +
+                "        WHERE DL_ID = ? AND Job_Id = ? " +
+                "    )";
+
         public static final String SELECT_FILTER_GROUP_BY_INFO =
                 "SELECT DISTINCT " +
                 "    `ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
