@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.stream.Collectors;
 
 import javax.xml.transform.Source;
@@ -762,9 +763,12 @@ public class DataMartStructureScriptGenerator {
             // Job 6 FilterValue
 
             // Job 7 Expression
+            String componentExpression = "'expression'";
+            String expressionType = "JAVA";
+            List<String> levels = getDistinctLevels(conn, jobId, dlId); // TODO name of output
+            executeExpressionChildComponentValue(conn, levels, jobId, dlId);
 
             // Job 8 Sql_Expression
-            
             String componentSQLExpression = "'executesql'";
             String MappingSQLExpressionValue = componentSQLExpressionValue(componentSQLExpression); // TODO name of output
 
@@ -798,6 +802,321 @@ public class DataMartStructureScriptGenerator {
             status = insertIntoEltDlValuesProperties(conn, rowDetails);
 
             return status ? Status.SUCCESS : Status.FAILURE;
+        }
+
+        // Value Expression
+        public List<String> getDistinctLevels(Connection connection, String jobId, String dlId){
+            List<String> levels = new ArrayList<>();
+            String query = "SELECT DISTINCT `ELT_DL_Derived_Column_Info`.`Level` " +
+                        "FROM `ELT_DL_Derived_Column_Info` " +
+                        "WHERE Expression_Type = 'JAVA' AND Job_Id = ? AND DL_Id = ?";
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, jobId);
+                preparedStatement.setString(2, dlId);
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String level = resultSet.getString("Level");
+                        levels.add(level);
+                    }
+                } catch (SQLException e) {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
+            } catch (SQLException e1) {
+                // TODO Auto-generated catch block
+                e1.printStackTrace();
+            }
+            return levels;
+        }
+
+        private void executeExpressionChildComponentValue(Connection connection, List<String> levels, String jobId, String dlId) {
+            System.out.println("Total levels: " + levels.size());
+            try {
+                for (String level : levels) {
+                    // part 1:
+                    System.out.println("Processing level: " + level);
+                    List<Map<String, Object>> data = executeQueries(connection, level, jobId, dlId);
+                    
+                    // TODO - seems level is not caputures in any of the data and hence in insert table. Verify!!
+                    // TODO - Ditto for below few parts. Should be moved out of the loop?
+                    insertIntoELTExpressionTemp(connection, data);
+
+                    // part 2:
+                    String columnExpression = fetchColumnExpressions(connection, jobId, dlId, level);
+
+                    // part 3:
+                    String expressions = updateColumnExpression(connection, columnExpression);
+
+                    //part 4:
+                    StringBuilder javaDataTypeBuilder = new StringBuilder();
+                    String columnArguments = performInMemoryJoin(connection, null);
+                    String javaDataType = javaDataTypeBuilder.toString();
+
+                    // part 5:
+                    String componentExpression = "expression";
+                    String derivedValue= getValueNamesFromJobPropertiesInfo(conn, componentExpression);
+
+                    // part 6:
+                    processDerivedExpressions(connection, derivedValue, columnArguments, javaDataType, level, expressions, jobId, dlId);
+
+                }
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
+
+        // Value Expression
+        // Left outer Join to get the data to be stored in "ELT_Expression_Temp"
+        public List<Map<String, Object>> executeQueries(Connection connection, String level, String jobId, String dlId) throws SQLException {
+            // Query 1: Main Set
+            String query1 = "SELECT DISTINCT Column_Name, Column_Arguments, Column_Expression " +
+                            "FROM ELT_DL_Derived_Column_Info " +
+                            "WHERE Expression_Type='JAVA' AND Level=? AND Job_Id=? AND DL_Id=?";
+    
+            // Query 2: Lookup Set
+            String query2 = "SELECT DISTINCT Column_Name_Alias, LOWER(SUBSTRING_INDEX(Data_Type, '(', 1)) AS Data_Type " +
+                            "FROM (" +
+                            "  SELECT DISTINCT Column_Name_Alias, Data_Type " +
+                            "  FROM ELT_DL_Driving_Table_Info " +
+                            "  WHERE Job_Id=? AND DL_Id=? " +
+                            "  UNION ALL " +
+                            "  SELECT DISTINCT Column_Name_Alias, Data_Type " +
+                            "  FROM ELT_DL_Lookup_Table_Info " +
+                            "  WHERE Job_Id=? AND DL_Id=? " +
+                            "  UNION ALL " +
+                            "  SELECT DISTINCT Column_Name AS Column_Name_Alias, Data_Type " +
+                            "  FROM ELT_DL_Derived_Column_Info " +
+                            "  WHERE Job_Id=? AND DL_Id=?" +
+                            ") AS lookup";
+    
+            // Execute Query 1
+            List<Map<String, Object>> mainResults = new ArrayList<>();
+            try (PreparedStatement stmt1 = connection.prepareStatement(query1)) {
+                stmt1.setString(1, level);
+                stmt1.setString(2, jobId);
+                stmt1.setString(3, dlId);
+                ResultSet rs1 = stmt1.executeQuery();
+    
+                while (rs1.next()) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("Column_Name", rs1.getString("Column_Name"));
+                    row.put("Column_Arguments", rs1.getString("Column_Arguments"));
+                    row.put("Column_Expression", rs1.getString("Column_Expression"));
+                    mainResults.add(row);
+                }
+            }
+    
+            // Execute Query 2 and build lookup map
+            Map<String, String> lookupMap = new HashMap<>();
+            try (PreparedStatement stmt2 = connection.prepareStatement(query2)) {
+                stmt2.setString(1, jobId);
+                stmt2.setString(2, dlId);
+                stmt2.setString(3, jobId);
+                stmt2.setString(4, dlId);
+                stmt2.setString(5, jobId);
+                stmt2.setString(6, dlId);
+                ResultSet rs2 = stmt2.executeQuery();
+    
+                while (rs2.next()) {
+                    // "Column_Name_Alias" is the key and "Data_Type" is the value.
+                    lookupMap.put(rs2.getString("Column_Name_Alias"), rs2.getString("Data_Type"));
+                }
+            }
+    
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+    
+            // Perform left outer join
+            for (Map<String, Object> mainRow : mainResults) {
+                String columnArguments = (String) mainRow.get("Column_Arguments");
+                String dataType = lookupMap.getOrDefault(columnArguments, null); // Lookup Data_Type using Column_Arguments
+    
+                int length = (columnArguments != null) ? columnArguments.length() : 0;
+    
+                Map<String, Object> resultRow = new HashMap<>();
+                resultRow.put("Column_Name", mainRow.get("Column_Name"));
+                resultRow.put("Column_Arguments", columnArguments);
+                resultRow.put("Column_Expression", mainRow.get("Column_Expression"));
+                resultRow.put("Data_Type", dataType);
+                resultRow.put("Lengths", length);
+    
+                finalResults.add(resultRow);
+            }
+            return finalResults;
+        }
+        // Value Expression part 1
+        public void insertIntoELTExpressionTemp(Connection connection, List<Map<String, Object>> data) throws SQLException {
+            String insertSQL = "INSERT INTO ELT_Expression_Temp (Column_Name, Column_Arguments, Column_Expression, Data_Type, Lengths) " +
+                               "VALUES (?, ?, ?, ?, ?)";
+            try (PreparedStatement stmt = connection.prepareStatement(insertSQL)) {
+                for (Map<String, Object> row : data) {
+                    String columnName = (String) row.get("Column_Name");
+                    String columnArguments = (String) row.get("Column_Arguments");
+                    String columnExpression = (String) row.get("Column_Expression");
+                    String dataType = (String) row.get("Data_Type");
+                    Integer lengths = (Integer) row.get("Lengths");
+    
+                    stmt.setString(1, columnName);
+                    stmt.setString(2, columnArguments);
+                    stmt.setString(3, columnExpression);
+                    stmt.setString(4, dataType);
+                    stmt.setInt(5, lengths);
+    
+                    stmt.addBatch();
+                }
+                stmt.executeBatch();
+            }
+        }
+
+        // Value Expression part 2
+        public String fetchColumnExpressions(Connection connection, String jobId, String dlId, String level) throws SQLException {
+            
+            final String SELECT_COLUMN_EXPRESSION_QUERY = 
+            "SELECT DISTINCT CONCAT('\"', `Column_Expression`, '\"') " +
+            "FROM `ELT_DL_Derived_Column_Info` " +
+            "WHERE Expression_Type='JAVA' " +
+            "AND Job_Id=? " +
+            "AND DL_Id=? " +
+            "AND Level=?";
+
+            StringBuilder columnExpressionList = new StringBuilder();
+            StringJoiner joiner = new StringJoiner(",");
+            try (PreparedStatement statement = connection.prepareStatement(SELECT_COLUMN_EXPRESSION_QUERY)) {
+                statement.setString(1, jobId);
+                statement.setString(2, dlId);
+                statement.setString(3, level);
+
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String columnExpression = resultSet.getString(1);
+                        joiner.add(columnExpression);
+                    }
+                }
+            }
+
+            columnExpressionList.append(joiner.toString());
+            return columnExpressionList.toString();
+        }
+
+        // Value Expression part 3
+        public String updateColumnExpression(Connection connection, String columnExpression) throws SQLException {
+            final String SELECT_EXPRESSION_QUERY = 
+                "SELECT `ELT_Expression_Temp`.`Id`, " +
+                "`ELT_Expression_Temp`.`Column_Name`, " +
+                "`ELT_Expression_Temp`.`Column_Arguments`, " +
+                "`ELT_Expression_Temp`.`Column_Expression`, " +
+                "`Lengths`, " +
+                "Data_Type " +
+                "FROM `ELT_Expression_Temp` ORDER BY Lengths DESC";
+            String finalExpression = columnExpression;
+            try (PreparedStatement statement = connection.prepareStatement(SELECT_EXPRESSION_QUERY);
+                 ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    int id = resultSet.getInt("Id");
+                    String columnArguments = resultSet.getString("Column_Arguments");
+                    finalExpression = finalExpression.replace(columnArguments, "\\$" + (id - 1));
+                }
+            }
+            return finalExpression;
+        }
+
+        // Value Expression part 4
+        public String performInMemoryJoin(Connection connection, StringBuilder javaDataTypeBuilder) throws SQLException {
+            String mainQuery = "SELECT `ELT_Expression_Temp`.`Id`, " +
+                               "`ELT_Expression_Temp`.`Column_Name`, " +
+                               "`ELT_Expression_Temp`.`Column_Arguments`, " +
+                               "`ELT_Expression_Temp`.`Column_Expression`, " +
+                               "`Lengths`, Data_Type " +
+                               "FROM `ELT_Expression_Temp` ORDER BY Id";
+    
+            String lookupQuery = "SELECT DISTINCT LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS IL_Data_Type, " +
+                                 "`ELT_Datatype_Conversions`.`Java_Data_Type` " +
+                                 "FROM `ELT_Datatype_Conversions`";
+    
+            StringBuilder columnArgumentsBuilder = new StringBuilder();
+    
+            // Map to store lookup data IL_Data_Type -> Java_Data_Type
+            PreparedStatement lookupStmt = connection.prepareStatement(lookupQuery);
+            ResultSet lookupRs = lookupStmt.executeQuery();
+    
+            // Use a HashMap to store lookup results (IL_Data_Type -> Java_Data_Type)
+            HashMap<String, String> lookupMap = new HashMap<>();
+            while (lookupRs.next()) {
+                String ilDataType = lookupRs.getString("IL_Data_Type");
+                String javaDataType = lookupRs.getString("Java_Data_Type");
+                lookupMap.put(ilDataType, javaDataType);
+            }
+            PreparedStatement mainStmt = connection.prepareStatement(mainQuery);
+            ResultSet mainRs = mainStmt.executeQuery();
+            while (mainRs.next()) {
+                String dataType = mainRs.getString("Data_Type").toLowerCase();
+                String columnArguments = mainRs.getString("Column_Arguments");
+    
+                String javaDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO: what should be default value
+    
+                if (javaDataTypeBuilder.length() > 0) {
+                    javaDataTypeBuilder.append(",");
+                }
+                javaDataTypeBuilder.append(javaDataType);
+    
+                if (columnArgumentsBuilder.length() > 0) {
+                    columnArgumentsBuilder.append(",");
+                }
+                columnArgumentsBuilder.append(columnArguments);
+            }
+            return columnArgumentsBuilder.toString();
+        }
+        // Value Expression part 6
+        public String processDerivedExpressions(Connection connection, String derivedValue, String columnArguments, String javaDataTypeInput, String level, String expression, String jobId, String dlId) throws SQLException {
+            // Main query: Job_Properties_info
+            String mainQuery = "SELECT DISTINCT Column_Name, LOWER(SUBSTRING_INDEX(Data_Type, '(', 1)) AS Data_Type " +
+                    "FROM ELT_DL_Derived_Column_Info WHERE Expression_Type='JAVA' " +
+                    "AND Level='" + level + "' AND Job_Id='" + jobId + "' AND DL_Id='" + dlId + "'";
+    
+            // Lookup query: Datatypes
+            String lookupQuery = "SELECT DISTINCT LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS IL_Data_Type, Java_Data_Type " +
+                    "FROM ELT_Datatype_Conversions";
+    
+            // HashMap for lookup data: IL_Data_Type -> Java_Data_Type
+            Map<String, String> lookupMap = new HashMap<>();
+            PreparedStatement lookupStmt = connection.prepareStatement(lookupQuery);
+            ResultSet lookupRs = lookupStmt.executeQuery();
+            while (lookupRs.next()) {
+                String ilDataType = lookupRs.getString("IL_Data_Type");
+                String javaDataType = lookupRs.getString("Java_Data_Type");
+                lookupMap.put(ilDataType, javaDataType); // Add to lookup map
+            }
+    
+            // Execute the main query
+            PreparedStatement mainStmt = connection.prepareStatement(mainQuery);
+            ResultSet mainRs = mainStmt.executeQuery();
+            String finalDerivedValue = null;
+    
+            while (mainRs.next()) {
+                String columnName = mainRs.getString("Column_Name");
+                String dataType = mainRs.getString("Data_Type").toLowerCase();
+                String sourceDataType = lookupMap.getOrDefault(dataType, "Unknown");
+    
+                String expressions = derivedValue.replace("${Dynamic_Expression_Name.expressions}", 
+                            "Expression_" + level + ".expressions=" + expression.replace("$", "\\\\\\$"));
+    
+                String fieldNames = expressions.replace("${Dynamic_Expression_Name.field.names}",
+                            "Expression_" + level + ".field.names=" + columnName.replace("$", "\\\\\\$"));
+    
+                String argumentFields = fieldNames.replace("${Dynamic_Expression_Name.argument.fields}", 
+                            "Expression_" + level + ".argument.fields=" + columnArguments.replace("$", "\\\\\\$"));
+    
+                String argumentTypes = argumentFields.replace("${Dynamic_Expression_Name.argument.types}", 
+                            "Expression_" + level + ".argument.types=" + javaDataTypeInput);
+    
+                String returnTypes = argumentTypes.replace("${Dynamic_Expression_Name.return.types}", 
+                            "Expression_" + level + ".return.types=" + sourceDataType);
+    
+                // Concatenate returnTypes into final expression
+                finalDerivedValue = finalDerivedValue == null ? returnTypes : finalDerivedValue + "\n" + returnTypes;
+            }
+            return finalDerivedValue;
         }
 
         // Value SQL Expression
@@ -2085,6 +2404,7 @@ public class DataMartStructureScriptGenerator {
                 "SELECT concat('`', Column_Name_Alias, '`') " +
                 "FROM ELT_DL_Lookup_Table_Info " +
                 "WHERE DL_Id = ? AND Job_Id = ?";
+
 
     }
 
