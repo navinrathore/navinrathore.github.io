@@ -764,6 +764,9 @@ public class DataMartStructureScriptGenerator {
             // Job 7 Expression
 
             // Job 8 Sql_Expression
+            
+            String componentSQLExpression = "'executesql'";
+            String MappingSQLExpressionValue = componentSQLExpressionValue(componentSQLExpression); // TODO name of output
 
             // Job 9 remit
             String componentRemit = "'empty_remit'";
@@ -797,6 +800,78 @@ public class DataMartStructureScriptGenerator {
             return status ? Status.SUCCESS : Status.FAILURE;
         }
 
+        // Value SQL Expression
+        private String componentSQLExpressionValue(String component) {
+            String executeSQLExpressionValue = "";
+            try {
+                String executeSqlValue = getValueNamesFromJobPropertiesInfo(conn, component);
+                String queryColumns = getQueryColumnNames(conn, jobId, dlId);
+                executeSQLExpressionValue = fetchAndProcessColumnInfoForSQLExpression(conn, executeSqlValue, queryColumns, dlId, jobId); 
+                // TODO queryColumns is updated inside aabove fn. and is an output        
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return executeSQLExpressionValue;
+        }
+
+        //  Function to execute the query and group results by Level
+        public String fetchAndProcessColumnInfoForSQLExpression(Connection connection, String executeSqlValue, String queryColumns, String dlId, String jobId) throws SQLException {
+            // SQL Query to fetch levels and columns
+            String sqlQuery = "SELECT `ELT_DL_Derived_Column_Info`.Level, " +
+                            "Column_Name AS Level_Columns, " +
+                            "CASE WHEN Expression_Type = 'SQL' THEN CONCAT('(', Column_Expression, ') AS `', Column_Name, '`') ELSE Column_Name END AS Columns " +
+                            "FROM ELT_DL_Derived_Column_Info " +
+                            "WHERE DL_Id = ? AND Job_Id = ?";
+
+            StringBuilder finalValue = new StringBuilder();
+
+            try (PreparedStatement statement = connection.prepareStatement(sqlQuery)) {
+                statement.setString(1, dlId);
+                statement.setString(2, jobId);
+
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    String lastComponent = null;
+                    while (resultSet.next()) {
+                        String level = resultSet.getString("Level");
+                        String columns = resultSet.getString("Columns");
+                        String levelColumns = resultSet.getString("Level_Columns"); // Output
+
+                        String sourceAlias = executeSqlValue.replace("${Dynamic_Name.source.alias.names}", "ExecuteSql_" + level + ".source.alias.names=Joined_Output_" + level);
+                        String dynamicQuery = "SELECT " + String.join(",", queryColumns) + ", " + columns + " FROM Joined_Output_" + level;
+                        String query = sourceAlias.replace("${Dynamic_Name.query}", "ExecuteSql_" + level + ".query=" + dynamicQuery.replace("$", "\\\\\\$"));
+
+                        // Append the query to Final_Value
+                        if (finalValue.length() == 0) {
+                            finalValue.append(query);
+                        } else {
+                            finalValue.append("\n").append(query);
+                        }
+                        lastComponent = "ExecuteSql_" + level; // Output
+                        queryColumns = queryColumns + "," + levelColumns; // Output
+                    }
+                    return finalValue.toString();
+                }
+            }
+        }
+        // Value SQL Expression Method to get column names
+        public String getQueryColumnNames(Connection connection, String dlId, String jobId) throws SQLException {
+            String query = SQLQueries.SELECT_COLUMN_NAME_ALIASES;
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                statement.setString(1, dlId);
+                statement.setString(2, jobId);
+                statement.setString(3, dlId);
+                statement.setString(4, jobId);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    List<String> queryColumns = new ArrayList<>();
+                    while (resultSet.next()) {
+                        String columnName = resultSet.getString(1);
+                        queryColumns.add(columnName);
+                    }
+                    return String.join(", ", queryColumns);;
+                }
+            }
+        }
         // remit
         private String componentRemitValue(String component) {
             String mappingRemitValue = "";
@@ -2001,7 +2076,16 @@ public class DataMartStructureScriptGenerator {
                 "  AND fgi.Group_By_Id <> '0' " +
                 "  AND fgi.DL_Id = ? " +
                 "  AND fgi.Job_Id = ?";
-                
+        //value SQL Expression
+        public static final String SELECT_COLUMN_NAME_ALIASES = 
+            "SELECT concat('`', Column_Name_Alias, '`') " +
+                "FROM ELT_DL_Driving_Table_Info " +
+                "WHERE DL_Id = ? AND Job_Id = ? " +
+                "UNION ALL " +
+                "SELECT concat('`', Column_Name_Alias, '`') " +
+                "FROM ELT_DL_Lookup_Table_Info " +
+                "WHERE DL_Id = ? AND Job_Id = ?";
+
     }
 
     
