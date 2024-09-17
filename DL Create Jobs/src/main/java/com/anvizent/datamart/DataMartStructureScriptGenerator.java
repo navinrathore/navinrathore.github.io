@@ -516,7 +516,7 @@ public class DataMartStructureScriptGenerator {
 
                 while (rs.next()) {
                     String tableName = rs.getString("Table_Name");
-                    String joinTableName = rs.getString("Join_Table_Name");
+                    String joinTableName = rs.getString("Join_Table_Name"); // TOD: Recheck the name
                     String tableNameAlias = rs.getString("Table_Name_Alias");
                     String joinTableAlias = rs.getString("Join_Table_Alias");
                     String joinName = rs.getString("Join_Name");
@@ -751,8 +751,14 @@ public class DataMartStructureScriptGenerator {
             // Job 2 SourceExecutesql
 
             // Job 3 lkp/join
+            String componentJoin = "join";
+            String joinValue = componentJoinValue(componentJoin); // Output
 
             // Job 4 Recoercing
+            // WORK IN PROGRESS
+            String componentEmptyRecoercing = "empty_recoercing";
+            String XXXX = componentRecoercing(componentEmptyRecoercing);
+            //String propsEmptyRecoercing = fetchAndFormatProperties(conn, componentEmptyRecoercing);
 
             // Job 5 NullReplacement
             String tgtPwd = ""; // TBD: TODO use input, replace literal $
@@ -1274,6 +1280,123 @@ public class DataMartStructureScriptGenerator {
                 }
             }
             return mappingRenameValue;
+        }
+
+        // Value 3. lkp/Join
+        private String componentJoinValue(String component) {
+            try {
+                String joinValue = getValueNamesFromJobPropertiesInfo(conn, component);
+                String tmpTable = dlName + dlId + jobId;
+                joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId, dlId);            
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return joinValue;
+        }
+
+        public String joinTablesAndFetchDerivedValues(Connection connection, String joinValue, String tmpTable, String jobId, String dlId) throws SQLException {
+            String sqlQuery = "SELECT " +
+                    "    main.DL_Id, " +
+                    "    main.Job_Id, " +
+                    "    CONCAT(main.Table_Name_Alias, '_', main.Join_Table_Alias) AS Join_Name, " +
+                    "    GROUP_CONCAT(main.Column_Name_Alias) AS Left_Hand_Fields, " +
+                    "    GROUP_CONCAT(main.Join_Column_Alias) AS Right_Hand_Fields, " +
+                    "    main.Table_Name_Alias, " +
+                    "    main.Join_Table_Alias, " +
+                    "    lookup2.Final_Table_Name AS Final_Table_Name_2, " +
+                    "    lookup2.property AS property_2, " +
+                    "    lookup3.Final_Table_Name AS Final_Table_Name_3, " +
+                    "    lookup3.property AS property_3 " +
+                    "FROM ( " +
+                    "    SELECT " +
+                    "        DL_Id, " +
+                    "        Job_Id, " +
+                    "        Table_Name_Alias, " +
+                    "        Join_Table_Alias, " +
+                    "        Column_Name_Alias, " +
+                    "        Join_Column_Alias " +
+                    "    FROM ELT_DL_Join_Mapping_Info " +
+                    "    WHERE Job_Id = ? " +  // placeholder for Job_Id
+                    "      AND DL_Id = ? " +   // placeholder for DL_Id
+                    "    GROUP BY Table_Name_Alias, Join_Table_Alias " +
+                    "    ORDER BY Join_Level " +
+                    ") AS main " +
+                    "LEFT JOIN ( " +
+                    "    SELECT " +
+                    "        LOWER(SUBSTRING_INDEX(table_name, '(', 1)) AS table_name, " +
+                    "        Final_Table_Name, " +
+                    "        property " +
+                    "    FROM " + tmpTable +
+                    "    WHERE property != 'db' " +
+                    ") AS lookup2 " +
+                    "ON main.Table_Name_Alias = lookup2.table_name " +
+                    "LEFT JOIN ( " +
+                    "    SELECT " +
+                    "        LOWER(SUBSTRING_INDEX(table_name, '(', 1)) AS table_name, " +
+                    "        Final_Table_Name, " +
+                    "        property " +
+                    "    FROM " + tmpTable +  // Dynamic table name
+                    "    WHERE property != 'db' " +
+                    ") AS lookup3 " +
+                    "ON main.Join_Table_Alias = lookup3.table_name " +
+                    "GROUP BY main.Table_Name_Alias, main.Join_Table_Alias;";
+    
+            try (PreparedStatement pstmt = connection.prepareStatement(sqlQuery)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+    
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    StringBuilder finalJoinValue = new StringBuilder();
+                    while (rs.next()) {
+                        // String joinName = rs.getString("Join_Name");
+                        String tableNameAlias = rs.getString("Table_Name_Alias");
+                        String joinTableAlias = rs.getString("Join_Table_Alias");
+                        String leftHandFields = rs.getString("Left_Hand_Fields");
+                        String rightHandFields = rs.getString("Right_Hand_Fields");
+                        String finalTableName2 = rs.getString("Final_Table_Name_2");
+                        String property2 = rs.getString("property_2");
+                        String finalTableName3 = rs.getString("Final_Table_Name_3");
+                        String property3 = rs.getString("property_3");
+
+                        // Map - set1
+                        String tablename = (property2 == null) ? tableNameAlias : finalTableName2 + "_ExecuteSql";
+                        String jointablename = (property3 == null) ? joinTableAlias : finalTableName3 + "_ExecuteSql";
+                        String joinName = tablename + "_" + jointablename;
+                        joinName = joinName.replace(" ", "_");
+
+                        // Map - set2
+                        // TODO These below expressions have to be reviewed 
+                        String joinType = joinValue.replace("${Dynamic_Join_Name.join.type}", 
+                        joinName.replace("$", "\\$") + ".join.type=LEFT_OUTER_JOIN");
+
+                        String leftFields = joinType.replace("${Dynamic_Join_Name.left.hand.side.fields}", 
+                        joinName.replace("$", "\\$") + ".left.hand.side.fields=" + leftHandFields.replace("$", "\\$"));
+
+                        String rightFields = leftFields.replace("${Dynamic_Join_Name.right.hand.side.fields}", 
+                        joinName.replace("$", "\\$") + ".right.hand.side.fields=" + rightHandFields.replace("$", "\\$"));
+
+                        if (finalJoinValue.length() > 0) {
+                            finalJoinValue.append("\n");
+                        }
+                        finalJoinValue.append(rightFields).append("\n");
+                    }
+                    return finalJoinValue.toString();
+                }
+            }
+        }
+
+        // Value 3. Recoercing
+        private String componentRecoercing(String component) {
+            try {
+                String emptyRecoercingValue = getValueNamesFromJobPropertiesInfo(conn, component);
+
+            
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return joinValue;
         }
 
         private String componentNullReplacementValue(String component) {
