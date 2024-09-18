@@ -769,10 +769,8 @@ public class DataMartStructureScriptGenerator {
             String emptyValueScript = componentNullReplacementValue(componentNullReplacement); 
 
             // Job 6 FilterValue
-            // WORK IN PROGRESS
             String componentFilterGroupBy = "executesqlfiltergroupby";
-            String XXXXX = componentFilterGroupBy(componentEmptyRecoercing);
-
+            componentFilterGroupBy(componentEmptyRecoercing); // Two output values inside
 
             // Job 7 Expression
             String componentExpression = "'expression'";
@@ -1405,6 +1403,100 @@ public class DataMartStructureScriptGenerator {
             //     e.printStackTrace();
             // }
             return "joinValue";
+        }
+        // Value 4. Recoercing
+        public Map<String, Map<String, Object>> executeJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
+            // TODO: Table_Name, Source_Name, Precision_Val and Scale_Val should be reviews in case of error
+            String query = "SELECT DISTINCT " +
+                           "m.DL_Id, " +
+                           "'' AS Table_Name, " +
+                           "'' AS Source_Name, " +
+                           "m.DL_Column_Names, " +
+                           "m.Constraints, " +
+                           "m.DL_Data_Types, " +
+                           "j.Join_Table, " +
+                           "j.Join_Column_Alias, " +
+                           "j.DL_Id, " +
+                           "j.Job_Id " +
+                           "SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(m.DL_Data_Types, '(', -1), ')', 1), ',', 1) AS Precision_Val, " +
+                           "SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(m.DL_Data_Types, '(', -1), ')', 1), ',', -1) AS Scale_Val " +
+                           "FROM ELT_DL_Mapping_Info_Saved m " +
+                           "INNER JOIN ELT_DL_Join_Mapping_Info j " +
+                           "ON m.DL_Id = j.DL_Id " +
+                           "AND m.Job_Id = j.Job_Id " +
+                           "AND m.DL_Column_Names = j.Join_Column_Alias " +
+                           "WHERE m.DL_Id = ? " +
+                           "AND m.Job_Id = ? " +
+                           "AND m.DL_Column_Names NOT IN ( " +
+                           "SELECT DISTINCT Column_Alias_Name " +
+                           "FROM ELT_DL_Derived_Column_Info " +
+                           "WHERE DL_ID = ? AND Job_Id = ?)";
+    
+            Map<String, String> lookupMap = getDataTypeConversions(conn);
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setString(1, dlId);
+                pstmt.setString(2, jobId);
+                pstmt.setString(3, dlId);
+                pstmt.setString(4, jobId);
+    
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Join_Column_Alias");
+                        Map<String, Object> row = new HashMap<>();
+                        row.put("DL_Id", rs.getString("DL_Id"));
+                        row.put("DL_Column_Names", rs.getString("DL_Column_Names"));
+                        row.put("Constraints", rs.getString("Constraints"));
+                        row.put("DL_Data_Types", rs.getString("DL_Data_Types"));
+                        row.put("Join_Table", rs.getString("Join_Table"));
+                        row.put("Join_Column_Alias", rs.getString("Join_Column_Alias"));
+                        // TODO check that all the keys are there in the sql table or resultset
+                        String dataType = rs.getString("Data_Type").toLowerCase();  //
+                        boolean isDecimalType = dataType.contains("decimal") ||
+                                                dataType.contains("double") ||
+                                                dataType.contains("float") ||
+                                                dataType.contains("numeric") ||
+                                                dataType.contains("real");
+
+                        String precisionVal = isDecimalType ? rs.getString("Precision_Val") : "";
+                        String scaleVal = isDecimalType ? rs.getString("Scale_Val") : "";
+                        row.put("Precision_Val", precisionVal);
+                        row.put("Scale_Val", scaleVal);
+                        // from ELT_Datatype_Convesions
+                        String javaDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO: what should be default value
+                        row.put("Java_Data_Type", javaDataType);
+
+                        // from Map 6
+                        row.put("recoerce_to_format", dataType.contains("date")?"yyyy-MM-dd":"");
+                        row.put("recoerce_to_type", javaDataType);
+                        row.put("recoerce_decimal_precisions", precisionVal);
+                        row.put("recoerce_decimal_scales", scaleVal);
+
+                        resultMap.put(key, row);
+                    }
+                }
+            }
+            return resultMap;
+        }
+        // value 4;   Recoercing
+        // TODO there is similar copy of it. check and see if one of them can be can be removed. (executeDataTypeConversionsQuery)
+        public Map<String, String> getDataTypeConversions(Connection conn) throws SQLException {
+            String query = "SELECT "
+                    + "`ELT_Datatype_Conversions`.`Source_Data_Type`, "
+                    + "LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS IL_Data_Type, "
+                    + "`ELT_Datatype_Conversions`.`Java_Data_Type` "
+                    + "FROM `ELT_Datatype_Conversions`";
+            
+            Map<String, String> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = conn.prepareStatement(query);
+                ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String ilDataType = rs.getString("IL_Data_Type"); // TODO check the key
+                    String javaDataType = rs.getString("Java_Data_Type");
+                    resultMap.put(ilDataType, javaDataType);
+                }
+            }
+            return resultMap;
         }
 
         // Value 6. filterGroupByValue
