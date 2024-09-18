@@ -747,8 +747,10 @@ public class DataMartStructureScriptGenerator {
 
 //######################################
             // Job 1 Source
+            // WORK IN PROGRESS
 
             // Job 2 SourceExecutesql
+            // WORK IN PROGRESS
 
             // Job 3 lkp/join
             String componentJoin = "join";
@@ -767,6 +769,10 @@ public class DataMartStructureScriptGenerator {
             String emptyValueScript = componentNullReplacementValue(componentNullReplacement); 
 
             // Job 6 FilterValue
+            // WORK IN PROGRESS
+            String componentFilterGroupBy = "executesqlfiltergroupby";
+            String XXXXX = componentFilterGroupBy(componentEmptyRecoercing);
+
 
             // Job 7 Expression
             String componentExpression = "'expression'";
@@ -787,6 +793,8 @@ public class DataMartStructureScriptGenerator {
             String MappingRetainValue = componentRenameValue(componentRename);
 
             // Job 11 Sink
+            // WORK IN PROGRESS
+
 //######################################
 
             //config filename
@@ -1386,17 +1394,316 @@ public class DataMartStructureScriptGenerator {
             }
         }
 
-        // Value 3. Recoercing
+        // Value 4. Recoercing
         private String componentRecoercing(String component) {
-            try {
+           // try {
                 String emptyRecoercingValue = getValueNamesFromJobPropertiesInfo(conn, component);
 
             
+            // } catch (SQLException e) {
+            //     // TODO Auto-generated catch block
+            //     e.printStackTrace();
+            // }
+            return "joinValue";
+        }
+
+        // Value 6. filterGroupByValue
+        private String componentFilterGroupBy(String component) {
+            try {
+                String filterGroupByValue = getValueNamesFromJobPropertiesInfo(conn, component);
+                //step 1
+                String settingsPosition = "'Join_Columns'";
+                ResultSet rs = executeSelectFromEltDlFilterGroupByInfo(conn, settingsPosition, dlId, jobId);
+                // Step 2a, 2b
+                Map<String, AggregationData> mapGroupByData = executeSelectGroupByInfo(conn, dlId, jobId);
+                Map<String, Map<String, Object>> mapFilterData = executeFilterGroupByInfoQuery(conn, dlId, jobId);
+
+                // Step 2
+                StringBuilder scriptJoinFilterGroupbyBuilder =  new StringBuilder();
+                while (rs.next()) {
+                    // Step 3a: Extract data from ResultSet
+                    String dlIdValue = rs.getString("DL_Id");
+                    String jobIdValue = rs.getString("Job_Id");
+                    String groupByIdValue = rs.getString("Group_By_Id");
+                    String filterIdValue = rs.getString("Filter_Id");
+                    String flowValue = rs.getString("Flow");
+
+                    String key = dlIdValue + "-" + jobIdValue;
+
+                    AggregationData groupByData = mapGroupByData.get(key);
+                    Map<String, Object> filterData = mapFilterData.get(key);
+
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("DL_Id", dlIdValue);
+                    row.put("Job_Id", jobIdValue);
+                    row.put("Group_By_Id", groupByIdValue);
+                    row.put("Filter_Id", filterIdValue);
+                    row.put("Flow", flowValue);
+
+                    if (filterData != null) {
+                        row.put("Filter_Condition", filterData.get("Filter_Condition"));
+                    }
+
+                    if (groupByData != null) {
+                        row.put("Group_By_Data", groupByData);
+                    }
+
+                    String scriptFilterGroupby = processFilterGroupBy(filterGroupByValue, row);
+
+                    if (scriptJoinFilterGroupbyBuilder.length() > 0) {
+                        scriptJoinFilterGroupbyBuilder.append(", ");
+                    }
+                    scriptJoinFilterGroupbyBuilder.append(scriptFilterGroupby);
+                }
+                return scriptJoinFilterGroupbyBuilder.toString();            
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
             }
-            return joinValue;
+            return null;
+        }
+
+        public String processFilterGroupBy(String filterGroupby, Map<String, Object> row) {
+
+            // String dlIdValue = (String) row.get("DL_Id");
+            // String jobIdValue = (String) row.get("Job_Id");
+            // String groupByIdValue = (String) row.get("Group_By_Id");
+            // String filterIdValue = (String) row.get("Filter_Id");
+            // String flowValue = (String) row.get("Flow");
+            // String filterConditionValue = (String) row.get("Filter_Condition");  // From mapFilterData
+            // AggregationData groupByData = (AggregationData) row.get("Group_By_Data");  // From mapGroupByData
+
+            long dlIdValue = (long) row.get("DL_Id");
+            long jobIdValue = (long) row.get("Job_Id");
+            long groupByIdValue = (long) row.get("Group_By_Id");
+            long filterIdValue = (long) row.get("Filter_Id");
+            String flowValue = (String) row.get("Flow");
+            String filterConditionValue = (String) row.get("Filter_Condition");
+            AggregationData groupByData = (AggregationData) row.get("Group_By_Data");
+            String groupbycolumns = groupByData.getGroupbycolumns().toString();
+            String allcolumn = groupByData.getAllcolumn().toString();
+
+            String key = dlIdValue + "-" + jobIdValue;
+
+            String whereCondition = "";
+            if (filterIdValue != 0 && groupByIdValue == 0) {
+                whereCondition = " where " + filterConditionValue;
+            } else if (filterIdValue != 0 && groupByIdValue > 0 && "F".equals(flowValue)) {
+                whereCondition = " where " + filterConditionValue + " Group by " + groupbycolumns;
+            } else if (filterIdValue != 0 && groupByIdValue > 0 && "G".equals(flowValue)) {
+                whereCondition = " Group by " + groupbycolumns + " having " + filterConditionValue;
+            } else if (filterIdValue == 0 && groupByIdValue > 0) {
+                whereCondition = " Group by " + groupbycolumns;
+            }
+
+            String columns = groupByIdValue != 0 ? allcolumn : " * ";
+            String statement = "select " + columns + " from Join_FilterGroupby " + whereCondition;
+            String aliasName = filterGroupby.replace("${Dynamic_FilterGroupby_Name.source.alias.names}",
+                    "Join_Aggregation.source.alias.names=Join_FilterGroupby");
+            String query = aliasName.replace("${Dynamic_FilterGroupby_Name.query}",
+                    "Join_Aggregation.query=" + statement);
+
+            return query;
+        }
+
+        public ResultSet executeSelectFromEltDlFilterGroupByInfo(Connection connection, String settingsPosition, String dlId, String jobId) throws SQLException {
+            String query = "SELECT " +
+                           "`ELT_DL_FilterGroupBy_Info`.`Job_Id`, " +
+                           "`ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
+                           "`ELT_DL_FilterGroupBy_Info`.`Group_By_Id`, " +
+                           "`ELT_DL_FilterGroupBy_Info`.`Filter_Id`, " +
+                           "`ELT_DL_FilterGroupBy_Info`.`Flow` " +
+                           "FROM `ELT_DL_FilterGroupBy_Info` " +
+                           "WHERE Settings_Position = ? AND DL_Id = ? AND Job_Id = ?";
+        
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, settingsPosition);
+            preparedStatement.setString(2, dlId);
+            preparedStatement.setString(3, jobId);
+        
+            return preparedStatement.executeQuery();
+        }
+
+        public Map<String, AggregationData> executeSelectGroupByInfo(Connection connection, String dlId, String jobId) throws SQLException {
+            String query = "SELECT a.DL_Id, a.Job_Id, a.Group_By_Id, " +
+                    "b.Table_Name_Alias, b.Column_Name, b.Column_Name_Alias, " +
+                    "b.Aggregation, b.Flag " +
+                    "FROM ELT_DL_FilterGroupBy_Info a " +
+                    "INNER JOIN ELT_DL_Group_By_Info b " +
+                    "ON a.Group_By_Id = b.Group_By_Id " +
+                    "WHERE a.Settings_Position = 'Join_Columns' AND a.DL_Id = ? AND a.Job_Id = ?";
+
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, dlId);
+            preparedStatement.setString(2, jobId);
+
+            ResultSet resultSet = preparedStatement.executeQuery();
+
+            // Map to aggregate based on dlId, jobId, groupId
+            Map<String, AggregationData> aggregationMap = new HashMap<>();
+
+            StringBuilder allcolumnBuilder = new StringBuilder();
+            StringBuilder groupbycolumns = new StringBuilder();
+            while (resultSet.next()) {
+                // String dlId = resultSet.getString("DL_Id");
+                // String jobId = resultSet.getString("Job_Id");
+                String groupId = resultSet.getString("Group_Id");
+
+                String aggregation = resultSet.getString("Aggregation");
+                String columnNameAlias = resultSet.getString("Column_Name_Alias");
+                int flag = resultSet.getInt("Flag");
+
+                String finalAggregation = aggregation.equals("Random") ? "First"
+                        : aggregation.equals("GroupBy") ? "" : aggregation;
+
+                String allcolumn;
+                if (finalAggregation.equals("Distinct_Count")) {
+                    allcolumn = "count(distinct `" + columnNameAlias + "`) as `" + columnNameAlias + "`";
+                } else if (finalAggregation.equals("Stddev_Samp")) {
+                    allcolumn = "case when Stddev_Samp(`" + columnNameAlias + "`)='NaN' then null else Stddev_Samp(`"
+                            + columnNameAlias + "`) end as `" + columnNameAlias + "`";
+                } else if (finalAggregation.equals("Var_Samp")) {
+                    allcolumn = "case when Var_Samp(`" + columnNameAlias + "`)='NaN' then null else Var_Samp(`"
+                            + columnNameAlias + "`) end as `" + columnNameAlias + "`";
+                } else {
+                    allcolumn = finalAggregation + "(`" + columnNameAlias + "`) as `" + columnNameAlias + "`";
+                }
+
+                String key = dlId + "-" + jobId + "-" + groupId;
+                // Retrieve or create the AggregationData object
+                // TODO: ctr should have all fields default
+                AggregationData data = aggregationMap.getOrDefault(key, new AggregationData(dlId, jobId, groupId));
+                
+                if (data.allcolumn.length() > 0) {
+                    data.allcolumn.append(", ");
+                }
+                data.allcolumn.append(allcolumn);  // 'allcolumn' is appended as part of aggregation
+                
+                // if (allcolumnBuilder.length() > 0) {
+                //     allcolumnBuilder.append(", ");
+                // }
+                // allcolumnBuilder.append(allcolumn);
+
+                // Processing groupbycolumns based on flag value
+                // TODO ensure that the last groupbycolumns is appended.
+                if (flag == 0) {
+                    if (data.groupbycolumns.length() == 0) {
+                        data.groupbycolumns.append(columnNameAlias);
+                    } else {
+                        // Add/insert in the beginning followed by a comma
+                        data.groupbycolumns.insert(0, columnNameAlias + ",");
+                    }
+                }
+
+                // if (flag == 0) {
+                //     if (groupbycolumns.length() == 0) {
+                //         groupbycolumns.append(columnNameAlias);
+                //     } else {
+                //         // Add/insert in the beginning followed by a comma
+                //         groupbycolumns.insert(0, columnNameAlias + ",");
+                //     }
+                // }
+
+                aggregationMap.put(key, data);
+            }
+
+            // TODO: Sample code to extract the data. Not needed at this place.
+            // AggregationData result = aggregationMap.get(dlId + "-" + jobId + "-" + groupId);
+            // String finalAllColumns = result.allcolumn.toString();
+            // String finalGroupByColumns = result.groupbycolumns.toString();
+            // Old Code. Irrevant here
+            // String finalAllColumns = allcolumnBuilder.toString();
+            // String finalGroupByColumns = groupbycolumns.length() > 0 ? groupbycolumns.toString() : null;
+
+            // Chagne the Key as that expected at destination. TODO: Check why do we need groupId in the key in abvoe code
+            aggregationMap = updateAggregationMapKeys(aggregationMap);
+
+            return aggregationMap;
+        }
+        // Values are the same. Just update the keys with a part of keys. There could be conflict.  TODO: check and avoid this function
+        public Map<String, AggregationData> updateAggregationMapKeys(Map<String, AggregationData> aggregationMap) {
+            Map<String, AggregationData> newMap = new HashMap<>();
+            for (Map.Entry<String, AggregationData> entry : aggregationMap.entrySet()) {
+                AggregationData data = entry.getValue();
+                String newKey = data.getDlId() + "-" + data.getJobId();
+                newMap.put(newKey, data);
+            }
+            return newMap;
+        }
+
+        // Value 6; filterGroupBy - filter Step 2b
+        public Map<String, Map<String, Object>> executeFilterGroupByInfoQuery(Connection conn, String dlId, String jobId) throws SQLException {
+            String query = "SELECT a.DL_Id, a.Job_Id, a.Filter_Id, b.Filter_Condition " +
+                           "FROM ELT_DL_FilterGroupBy_Info a " +
+                           "INNER JOIN ELT_DL_Filter_Info b " +
+                           "ON a.Filter_Id = b.Filter_Id " +
+                           "AND a.Settings_Position = 'Join_Columns' " +
+                           "AND a.DL_Id = ? " +
+                           "AND a.Job_Id = ?";
+        
+            PreparedStatement pstmt = conn.prepareStatement(query);
+            pstmt.setString(1, dlId);
+            pstmt.setString(2, jobId);
+        
+            ResultSet rs = pstmt.executeQuery();
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            while (rs.next()) {
+                String dlIdValue = rs.getString("DL_Id");
+                String jobIdValue = rs.getString("Job_Id");
+                String filterId = rs.getString("Filter_Id");
+                String filterCondition = rs.getString("Filter_Condition");
+        
+                String key = dlIdValue + "-" + jobIdValue;
+        
+                Map<String, Object> valueMap = new HashMap<>();
+                valueMap.put("Filter_Id", filterId);
+                valueMap.put("Filter_Condition", filterCondition);
+        
+                resultMap.put(key, valueMap);
+            }
+            return resultMap;
+        }
+
+        class AggregationData {
+            String dlId;
+            String jobId;
+            String groupId; // = resultSet.getString("Group_Id");
+            StringBuilder allcolumn;
+            StringBuilder groupbycolumns;
+            
+            public AggregationData(String dlId, String jobId, String groupId) {
+                this.dlId = dlId;
+                this.jobId = jobId;
+                this.groupId = groupId;
+                this.allcolumn = new StringBuilder();
+                this.groupbycolumns = new StringBuilder();
+            }
+
+            //TODO: Perhaps not in use
+            public AggregationData() {
+                allcolumn = new StringBuilder();
+                groupbycolumns = new StringBuilder();
+            }
+
+            public String getDlId() {
+                return dlId;
+            }
+
+            public String getJobId() {
+                return jobId;
+            }
+
+            public StringBuilder getAllcolumn() {
+                return allcolumn;
+            }
+
+            public StringBuilder getGroupbycolumns() {
+                return groupbycolumns;
+            }
+
+            public String getGroupId() {
+                return groupId;
+            }
         }
 
         private String componentNullReplacementValue(String component) {
