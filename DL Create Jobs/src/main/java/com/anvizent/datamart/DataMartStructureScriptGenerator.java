@@ -1406,7 +1406,7 @@ public class DataMartStructureScriptGenerator {
         }
         // Value 4. Recoercing
         public Map<String, Map<String, Object>> executeJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
-            // TODO: Table_Name, Source_Name, Precision_Val and Scale_Val should be reviews in case of error
+            // TODO: Table_Name, Source_Name, `Column_Name_Alias`, Precision_Val and Scale_Val should be reviews in case of error
             String query = "SELECT DISTINCT " +
                            "m.DL_Id, " +
                            "'' AS Table_Name, " +
@@ -1441,8 +1441,11 @@ public class DataMartStructureScriptGenerator {
                 pstmt.setString(4, jobId);
     
                 try (ResultSet rs = pstmt.executeQuery()) {
+                    // Map to aggregate based on dlId, jobId
+                    Map<String, RecoercingAggregationData> aggregationMap = new HashMap<>();
+
                     while (rs.next()) {
-                        String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Join_Column_Alias");
+                        //String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Join_Column_Alias");
                         Map<String, Object> row = new HashMap<>();
                         row.put("DL_Id", rs.getString("DL_Id"));
                         row.put("DL_Column_Names", rs.getString("DL_Column_Names"));
@@ -1450,6 +1453,11 @@ public class DataMartStructureScriptGenerator {
                         row.put("DL_Data_Types", rs.getString("DL_Data_Types"));
                         row.put("Join_Table", rs.getString("Join_Table"));
                         row.put("Join_Column_Alias", rs.getString("Join_Column_Alias"));
+                        // Below 3 have to be reviewed if they exists and what values
+                        row.put("Table_Name", rs.getString("Table_Name"));
+                        row.put("Source_Name", rs.getString("Source_Name"));
+                        //row.put("Column_Name_Alias", rs.getString("Column_Name_Alias"));
+
                         // TODO check that all the keys are there in the sql table or resultset
                         String dataType = rs.getString("Data_Type").toLowerCase();  //
                         boolean isDecimalType = dataType.contains("decimal") ||
@@ -1464,6 +1472,7 @@ public class DataMartStructureScriptGenerator {
                         row.put("Scale_Val", scaleVal);
                         // from ELT_Datatype_Convesions
                         String javaDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO: what should be default value
+                        // TODO: Inner join means javaDataType is "Unknown", continue
                         row.put("Java_Data_Type", javaDataType);
 
                         // from Map 6
@@ -1471,6 +1480,24 @@ public class DataMartStructureScriptGenerator {
                         row.put("recoerce_to_type", javaDataType);
                         row.put("recoerce_decimal_precisions", precisionVal);
                         row.put("recoerce_decimal_scales", scaleVal);
+
+                        // Aggregate on key = Dl_Id + Job_Id
+                        String key = dlId + "-" + jobId;
+                        // Retrieve or create the AggregationData object
+                        RecoercingAggregationData data = aggregationMap.getOrDefault(key, new RecoercingAggregationData(dlId, jobId, groupId));
+                        data.Table_Name.append(data.Table_Name.length() > 0 ? ", " : "").append(rs.getString("Table_Name"));
+                        data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias"));
+                        data.Constraints.append(data.Constraints.length() > 0 ? ", " : "").append(rs.getString("Constraints"));
+                        data.Source_Name.append(data.Source_Name.length() > 0 ? ", " : "").append(rs.getString("Source_Name"));
+                        data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(rs.getString("Data_Type"));
+                        data.recoerce_to_format.append(data.recoerce_to_format.length() > 0 ? ", " : "").append(rs.getString("Data_Type").toLowerCase().contains("date")?"yyyy-MM-dd":"");
+                        data.recoerce_to_type.append(data.recoerce_to_type.length() > 0 ? ", " : "").append(javaDataType);
+                        data.recoerce_decimal_precisions.append(data.recoerce_decimal_precisions.length() > 0 ? ", " : "").append(precisionVal);
+                        data.recoerce_decimal_scales.append(data.recoerce_decimal_scales.length() > 0 ? ", " : "").append(scaleVal);
+
+
+
+                        aggregationMap.put(key, data);
 
                         resultMap.put(key, row);
                     }
@@ -1773,6 +1800,34 @@ public class DataMartStructureScriptGenerator {
                 resultMap.put(key, valueMap);
             }
             return resultMap;
+        }
+     
+        class RecoercingAggregationData {
+            String dlId;
+            String jobId;
+            StringBuilder Table_Name;
+            StringBuilder Column_Name_Alias;
+            StringBuilder Constraints;
+            StringBuilder Source_Name;
+            StringBuilder Data_Type;
+            StringBuilder recoerce_to_format;
+            StringBuilder recoerce_to_type;
+            StringBuilder recoerce_decimal_precisions;
+            StringBuilder recoerce_decimal_scales;
+
+            public RecoercingAggregationData(String dlId, String jobId) {
+                this.dlId = dlId;
+                this.jobId = jobId;
+                this.Table_Name = new StringBuilder();
+                this.Column_Name_Alias = new StringBuilder();
+                this.Constraints = new StringBuilder();
+                this.Source_Name = new StringBuilder();
+                this.Data_Type = new StringBuilder();
+                this.recoerce_to_format = new StringBuilder();
+                this.recoerce_to_type = new StringBuilder();
+                this.recoerce_decimal_precisions = new StringBuilder();
+                this.recoerce_decimal_scales = new StringBuilder();
+            }
         }
 
         class AggregationData {
