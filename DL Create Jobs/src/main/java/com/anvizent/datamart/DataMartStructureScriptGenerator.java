@@ -1410,68 +1410,67 @@ public class DataMartStructureScriptGenerator {
         // Value 6. filterGroupByValue
         private String componentFilterGroupBy(String component) {
             try {
+                // Part 1
                 String filterGroupByValue = getValueNamesFromJobPropertiesInfo(conn, component);
-                //step 1
+                // Part 2
                 String settingsPosition = "'Join_Columns'";
-                ResultSet rs = executeSelectFromEltDlFilterGroupByInfo(conn, settingsPosition, dlId, jobId);
-                // Step 2a, 2b
-                Map<String, AggregationData> mapGroupByData = executeSelectGroupByInfo(conn, dlId, jobId);
-                Map<String, Map<String, Object>> mapFilterData = executeFilterGroupByInfoQuery(conn, dlId, jobId);
-
-                // Step 2
-                StringBuilder scriptJoinFilterGroupbyBuilder =  new StringBuilder();
-                while (rs.next()) {
-                    // Step 3a: Extract data from ResultSet
-                    String dlIdValue = rs.getString("DL_Id");
-                    String jobIdValue = rs.getString("Job_Id");
-                    String groupByIdValue = rs.getString("Group_By_Id");
-                    String filterIdValue = rs.getString("Filter_Id");
-                    String flowValue = rs.getString("Flow");
-
-                    String key = dlIdValue + "-" + jobIdValue;
-
-                    AggregationData groupByData = mapGroupByData.get(key);
-                    Map<String, Object> filterData = mapFilterData.get(key);
-
-                    Map<String, Object> row = new HashMap<>();
-                    row.put("DL_Id", dlIdValue);
-                    row.put("Job_Id", jobIdValue);
-                    row.put("Group_By_Id", groupByIdValue);
-                    row.put("Filter_Id", filterIdValue);
-                    row.put("Flow", flowValue);
-
-                    if (filterData != null) {
-                        row.put("Filter_Condition", filterData.get("Filter_Condition"));
-                    }
-
-                    if (groupByData != null) {
-                        row.put("Group_By_Data", groupByData);
-                    }
-
-                    String scriptFilterGroupby = processFilterGroupBy(filterGroupByValue, row);
-
-                    if (scriptJoinFilterGroupbyBuilder.length() > 0) {
-                        scriptJoinFilterGroupbyBuilder.append(", ");
-                    }
-                    scriptJoinFilterGroupbyBuilder.append(scriptFilterGroupby);
-                }
-                return scriptJoinFilterGroupbyBuilder.toString();            
+                String scriptJoinFilterGroupby = getScriptFilterGroupByForSettingPosition(filterGroupByValue, settingsPosition); // output
+                // Part 3
+                settingsPosition = "'Derived_Columns'";
+                String scriptDerivedFilterGroupby = getScriptFilterGroupByForSettingPosition(filterGroupByValue, settingsPosition);  // Output          
+                // TODO: Part2 and part 3 are similar. A. settingsPosition is different. B. Internal final processing is different
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
             }
-            return null;
+            return "";
         }
 
-        public String processFilterGroupBy(String filterGroupby, Map<String, Object> row) {
+        private String getScriptFilterGroupByForSettingPosition(String filterGroupByValue, String settingsPosition)
+                throws SQLException {
+            ResultSet rs = executeSelectFromEltDlFilterGroupByInfo(conn, settingsPosition, dlId, jobId);
+            //  step 2a, 2b
+            Map<String, AggregationData> mapGroupByData = executeSelectGroupByInfo(conn, settingsPosition, dlId, jobId);
+            Map<String, Map<String, Object>> mapFilterData = executeFilterGroupByInfoQuery(conn, dlId, jobId, settingsPosition);
+            // Step 2
+            StringBuilder scriptJoinFilterGroupbyBuilder =  new StringBuilder();
+            while (rs.next()) {
+                String dlIdValue = rs.getString("DL_Id");
+                String jobIdValue = rs.getString("Job_Id");
+                String groupByIdValue = rs.getString("Group_By_Id");
+                String filterIdValue = rs.getString("Filter_Id");
+                String flowValue = rs.getString("Flow");
 
-            // String dlIdValue = (String) row.get("DL_Id");
-            // String jobIdValue = (String) row.get("Job_Id");
-            // String groupByIdValue = (String) row.get("Group_By_Id");
-            // String filterIdValue = (String) row.get("Filter_Id");
-            // String flowValue = (String) row.get("Flow");
-            // String filterConditionValue = (String) row.get("Filter_Condition");  // From mapFilterData
-            // AggregationData groupByData = (AggregationData) row.get("Group_By_Data");  // From mapGroupByData
+                String key = dlIdValue + "-" + jobIdValue;
+
+                AggregationData groupByData = mapGroupByData.get(key);
+                Map<String, Object> filterData = mapFilterData.get(key);
+
+                Map<String, Object> row = new HashMap<>();
+                row.put("DL_Id", dlIdValue);
+                row.put("Job_Id", jobIdValue);
+                row.put("Group_By_Id", groupByIdValue);
+                row.put("Filter_Id", filterIdValue);
+                row.put("Flow", flowValue);
+
+                if (filterData != null) {
+                    row.put("Filter_Condition", filterData.get("Filter_Condition"));
+                }
+                if (groupByData != null) {
+                    row.put("Group_By_Data", groupByData);
+                }
+
+                String scriptFilterGroupby = processFilterGroupBy(filterGroupByValue, row, settingsPosition);
+
+                if (scriptJoinFilterGroupbyBuilder.length() > 0) {
+                    scriptJoinFilterGroupbyBuilder.append(", ");
+                }
+                scriptJoinFilterGroupbyBuilder.append(scriptFilterGroupby);
+            }
+            return scriptJoinFilterGroupbyBuilder.toString();
+        }
+
+        public String processFilterGroupBy(String filterGroupby, Map<String, Object> row, String settingsPosition) {
 
             long dlIdValue = (long) row.get("DL_Id");
             long jobIdValue = (long) row.get("Job_Id");
@@ -1482,8 +1481,6 @@ public class DataMartStructureScriptGenerator {
             AggregationData groupByData = (AggregationData) row.get("Group_By_Data");
             String groupbycolumns = groupByData.getGroupbycolumns().toString();
             String allcolumn = groupByData.getAllcolumn().toString();
-
-            String key = dlIdValue + "-" + jobIdValue;
 
             String whereCondition = "";
             if (filterIdValue != 0 && groupByIdValue == 0) {
@@ -1497,11 +1494,31 @@ public class DataMartStructureScriptGenerator {
             }
 
             String columns = groupByIdValue != 0 ? allcolumn : " * ";
-            String statement = "select " + columns + " from Join_FilterGroupby " + whereCondition;
-            String aliasName = filterGroupby.replace("${Dynamic_FilterGroupby_Name.source.alias.names}",
-                    "Join_Aggregation.source.alias.names=Join_FilterGroupby");
-            String query = aliasName.replace("${Dynamic_FilterGroupby_Name.query}",
-                    "Join_Aggregation.query=" + statement);
+            String query = buildQueryForSettingPosition(filterGroupby, whereCondition, columns, settingsPosition);
+
+            return query;
+        }
+
+        private String buildQueryForSettingPosition(String filterGroupby, String whereCondition, String columns, String settingsPosition) {
+            String statement;
+            String aliasName;
+            String query;
+            if ("'Join_Columns'".equals(settingsPosition)) {
+                statement = "select " + columns + " from Join_FilterGroupby " + whereCondition;
+                aliasName = filterGroupby.replace("${Dynamic_FilterGroupby_Name.source.alias.names}",
+                        "Join_Aggregation.source.alias.names=Join_FilterGroupby");
+                query = aliasName.replace("${Dynamic_FilterGroupby_Name.query}",
+                        "Join_Aggregation.query=" + statement);
+            } else if ("'Derived_Columns'".equals(settingsPosition)) {
+                statement = "select " + columns + " from Derived_FilterGroupby " + whereCondition;
+                aliasName = filterGroupby.replace("${Dynamic_FilterGroupby_Name.source.alias.names}",
+                        "Derived_Aggregation.source.alias.names=Derived_FilterGroupby");
+                query = aliasName.replace("${Dynamic_FilterGroupby_Name.query}",
+                        "Derived_Aggregation.query=" + statement);
+            } else {
+                // Throw an exception for undefined Setting_Position
+                throw new IllegalArgumentException("Setting_Position is not defined: " + settingsPosition);
+            }
 
             return query;
         }
@@ -1524,26 +1541,27 @@ public class DataMartStructureScriptGenerator {
             return preparedStatement.executeQuery();
         }
 
-        public Map<String, AggregationData> executeSelectGroupByInfo(Connection connection, String dlId, String jobId) throws SQLException {
+        public Map<String, AggregationData> executeSelectGroupByInfo(Connection connection, String settingPosition, String dlId, String jobId) throws SQLException {
             String query = "SELECT a.DL_Id, a.Job_Id, a.Group_By_Id, " +
                     "b.Table_Name_Alias, b.Column_Name, b.Column_Name_Alias, " +
                     "b.Aggregation, b.Flag " +
                     "FROM ELT_DL_FilterGroupBy_Info a " +
                     "INNER JOIN ELT_DL_Group_By_Info b " +
                     "ON a.Group_By_Id = b.Group_By_Id " +
-                    "WHERE a.Settings_Position = 'Join_Columns' AND a.DL_Id = ? AND a.Job_Id = ?";
+                    "WHERE a.Settings_Position = ? AND a.DL_Id = ? AND a.Job_Id = ?";
 
             PreparedStatement preparedStatement = connection.prepareStatement(query);
-            preparedStatement.setString(1, dlId);
-            preparedStatement.setString(2, jobId);
+            preparedStatement.setString(1, settingPosition);
+            preparedStatement.setString(2, dlId);
+            preparedStatement.setString(3, jobId);
 
             ResultSet resultSet = preparedStatement.executeQuery();
 
             // Map to aggregate based on dlId, jobId, groupId
             Map<String, AggregationData> aggregationMap = new HashMap<>();
 
-            StringBuilder allcolumnBuilder = new StringBuilder();
-            StringBuilder groupbycolumns = new StringBuilder();
+            // StringBuilder allcolumnBuilder = new StringBuilder();
+            // StringBuilder groupbycolumns = new StringBuilder();
             while (resultSet.next()) {
                 // String dlId = resultSet.getString("DL_Id");
                 // String jobId = resultSet.getString("Job_Id");
@@ -1632,18 +1650,19 @@ public class DataMartStructureScriptGenerator {
         }
 
         // Value 6; filterGroupBy - filter Step 2b
-        public Map<String, Map<String, Object>> executeFilterGroupByInfoQuery(Connection conn, String dlId, String jobId) throws SQLException {
+        public Map<String, Map<String, Object>> executeFilterGroupByInfoQuery(Connection conn, String dlId, String jobId, String settingPosition) throws SQLException {
             String query = "SELECT a.DL_Id, a.Job_Id, a.Filter_Id, b.Filter_Condition " +
                            "FROM ELT_DL_FilterGroupBy_Info a " +
                            "INNER JOIN ELT_DL_Filter_Info b " +
                            "ON a.Filter_Id = b.Filter_Id " +
-                           "AND a.Settings_Position = 'Join_Columns' " +
+                           "AND a.Settings_Position = ? " +
                            "AND a.DL_Id = ? " +
                            "AND a.Job_Id = ?";
         
             PreparedStatement pstmt = conn.prepareStatement(query);
-            pstmt.setString(1, dlId);
-            pstmt.setString(2, jobId);
+            pstmt.setString(1, settingPosition);
+            pstmt.setString(2, dlId);
+            pstmt.setString(3, jobId);
         
             ResultSet rs = pstmt.executeQuery();
             Map<String, Map<String, Object>> resultMap = new HashMap<>();
