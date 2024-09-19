@@ -738,6 +738,8 @@ public class DataMartStructureScriptGenerator {
     }
 
     public class DataMartValueScriptGenerator {
+        private static final String COMPONENT_EMPTY_RENAME = "'empty_rename'";
+
         public DataMartValueScriptGenerator() {
          }
 
@@ -757,9 +759,8 @@ public class DataMartStructureScriptGenerator {
             String joinValue = componentJoinValue(componentJoin); // Output
 
             // Job 4 Recoercing
-            // WORK IN PROGRESS
             String componentEmptyRecoercing = "empty_recoercing";
-            String XXXX = componentRecoercing(componentEmptyRecoercing);
+            String XXXX = componentRecoercing(componentEmptyRecoercing); // Output
             //String propsEmptyRecoercing = fetchAndFormatProperties(conn, componentEmptyRecoercing);
 
             // Job 5 NullReplacement
@@ -787,10 +788,12 @@ public class DataMartStructureScriptGenerator {
             String MappingRemitValue = componentRemitValue(componentRemit);
 
             // Job 10 Rename
-            String componentRename = "'empty_rename'";
-            String MappingRetainValue = componentRenameValue(componentRename);
+            String MappingRetainValue = componentRenameValue(COMPONENT_EMPTY_RENAME);
 
             // Job 11 Sink
+            String componentSink = "'sqlsink'";
+            componentSinkValue(componentSink);
+
             // WORK IN PROGRESS
 
 //######################################
@@ -1254,7 +1257,7 @@ public class DataMartStructureScriptGenerator {
             }
             return mappingRenameValue; //TODO
         }
-
+        
         // Rename
         //public static List<Map<String, String>> fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
         public String fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
@@ -1288,17 +1291,322 @@ public class DataMartStructureScriptGenerator {
             return mappingRenameValue;
         }
 
+        // Value Sink
+        private String componentSinkValue(String component) {
+            //String mappingSinkValue = "";
+            try {
+                String sinkValue = getValueNamesFromJobPropertiesInfo(conn, component);
+                Map<String, JoinAggregationData> mappingJoinValue = executeJoinedQuery(conn, dlId, jobId);
+                Map<String, SinkAggregationData> mappingCleansingValue = executeInnerJoinQuery(conn, dlId, jobId); 
+                sinkValue = executeAndJoinSinkingAggregation(conn, dlId, jobId, sinkValue, mappingJoinValue, mappingCleansingValue); // Output        
+                return sinkValue;
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return "";
+        }
+ 
+        private String executeAndJoinSinkingAggregation(Connection conn, String dlId, String jobId, String sinkValue,
+                Map<String, JoinAggregationData> mappingJoinValue, Map<String, SinkAggregationData> mappingCleansingValue) {
+
+            // Define the main query
+            String mainQuery = "SELECT Table_Name, Column_Name, Column_Name_Alias, Constraints, DL_Id, Job_Id " +
+                    "FROM ELT_DL_Driving_Table_Info " +
+                    "WHERE Job_Id = '" + jobId + "' AND DL_Id = '" + dlId + "'";
+
+            String finalSinkValue = "";
+            String keyFieldsValues = null;
+            try (PreparedStatement pstmt = conn.prepareStatement(mainQuery)) {
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    // Get the main query values
+                    String tableName = rs.getString("Table_Name");
+                    String columnName = rs.getString("Column_Name");
+                    String columnNameAlias = rs.getString("Column_Name_Alias");
+                    String constraints = rs.getString("Constraints");
+                    // String dlId = rs.getString("DL_Id");
+                    // String jobId = rs.getString("Job_Id");
+
+                    // Key for joining the in-memory maps
+                    String key = dlId + "-" + jobId;
+                    // Retrieve values from mappingJoinValue
+                    JoinAggregationData mapJoinData = mappingJoinValue.get(key);
+                    // Retrieve values from mappingCleansingValue
+                    SinkAggregationData mapCleansingData = mappingCleansingValue.get(key);
+
+                    // Check if Column_Name_Alias is empty
+                    //String emptyValue = columnNameAlias == null ? null : "EMPTY";
+
+                    //String dateFormats = mapCleansingData != null && mapCleansingData.getDataType().contains("date") ? "yyyy-MM-dd" : "";
+
+                    // Perform string replacements (similar to StringHandling.EREPLACE)
+                    Context context = null; // TODO FIX it get the value
+                    sinkValue = replaceSinkValues(sinkValue, mapJoinData, mapCleansingData, context, columnNameAlias, keyFieldsValues, constraints);
+
+                    // Append date format replacement at the end
+                    //finalSinkValue = sinkValue.replace("${date.formats}", "date.formats=" + dateFormats);
+                }
+                rs.close();
+                pstmt.close();
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return finalSinkValue;
+        }
+
+        // Helper function to replace sink values based on the mappings
+        // TODO: Context - Target DB how to get the value
+        private String replaceSinkValues(String sinkValue, JoinAggregationData mapJoinData, SinkAggregationData mapCleansingData, Context context, String columnNameAlias,
+                String keyFieldsValues, String constraints) {
+
+            String url = sinkValue.replace("${tgt.jdbc.url}", "tgt.jdbc.url=jdbc:mysql://" + context.getTgtHost() + ":"
+                    + context.getTgtPort() + "/" + context.getTgtDbName());
+            String driver = url.replace("${tgt.jdbc.driver}", "tgt.jdbc.driver=com.mysql.jdbc.Driver");
+            String username = driver.replace("${tgt.db.user}", "tgt.db.user=" + context.getTgtUser());
+            String password = username.replace("${tgt.db.password}", "tgt.db.password=" + context.getTgtPassword());
+            String targetTable = password.replace("${target.table}", "target.table=" + context.getDlName());
+
+            // Handle key fields values based on constraints
+            // TODO: Check the keyFieldsValues is sort of StringBuilder. Is that intended?
+            if ("PK".equals(constraints) || "SK".equals(constraints)) {
+                keyFieldsValues = keyFieldsValues == null ? columnNameAlias : keyFieldsValues + "," + columnNameAlias;
+            }
+
+            String keyFields = targetTable.replace("${key.fields}", "key.fields=" + keyFieldsValues);
+            String keyColumns = keyFields.replace("${key.columns}", "key.columns=" + keyFieldsValues);
+            String returnFields = keyColumns.replace("${return.fields}", "return.fields=Source_Hash_Value");
+
+            // If mapJoinData and mapCleansingData are not null, use their values to replace the respective fields
+            String batchSize = null;
+            if (mapJoinData != null) {
+                String joinColumn = mapJoinData.getJoinColumn();
+                String retainFields = returnFields.replace("${retain.fields}", "retain.fields=" + joinColumn);
+                String insertConstantColumns = retainFields.replace("${insert.constant.columns}", "insert.constant.columns=");
+                String insertConstantValues = insertConstantColumns.replace("${insert.constant.store.values}", "insert.constant.store.values=");
+                String insertConstantTypes = insertConstantValues.replace("${insert.constant.store.values}", "insert.constant.store.values=");
+
+                String updateConstantColumns = insertConstantTypes.replace("${update.constant.columns}", "update.constant.columns=");
+                String updateConstantValues = updateConstantColumns.replace("${update.constant.columns}", "update.constant.columns=");
+                String updateConstantTypes = updateConstantValues.replace("${update.constant.store.types}", "update.constant.store.types=");
+
+                String batchType = updateConstantTypes.replace("${batch.type}", "batch.type=BATCH_BY_SIZE");
+                batchSize = batchType.replace("${batch.size}", "batch.size=25000");
+            }
+
+            if (mapCleansingData != null && batchSize != null) {
+                String cleansingFields = batchSize.replace("${cleansing.fields}", "cleansing.fields=" + mapCleansingData.getColumnNameAlias());
+                String cleansingValidation = cleansingFields.replace("${cleansing.validation}", "cleansing.validation=" + mapCleansingData.getCleansingValidations());
+                String cleansingValues = cleansingValidation.replace("${cleansing.values}", "cleansing.values=" + mapCleansingData.getCleansingValue());
+                String dateFormats = cleansingValues.replace("${date.formats}", "date.formats=" + mapCleansingData.getDateFormats());
+                sinkValue = dateFormats;
+            }
+            return sinkValue;
+        }
+
+        // Context class to hold the Input values - APP_DB, Target_DB and so on
+        // TODO: Is there any alternative
+        class Context {
+            private String jobId;
+            private String dlId;
+            private String tgtHost;
+            private String tgtPort;
+            private String tgtDbName;
+            private String tgtUser;
+            private String tgtPassword;
+            private String dlName;
+            private String sinkValue;
+
+            public Context() {
+            }
+
+            public String getJobId() {
+                return jobId;
+            }
+
+            public String getDlId() {
+                return dlId;
+            }
+
+            public String getTgtHost() {
+                return tgtHost;
+            }
+
+            public String getTgtPort() {
+                return tgtPort;
+            }
+
+            public String getTgtDbName() {
+                return tgtDbName;
+            }
+
+            public String getTgtUser() {
+                return tgtUser;
+            }
+
+            public String getTgtPassword() {
+                return tgtPassword;
+            }
+
+            public String getDlName() {
+                return dlName;
+            }
+
+            public String getSinkValue() {
+                return sinkValue;
+            }
+        }
+        // Value Sink
+        public Map<String, JoinAggregationData> executeJoinedQuery(Connection conn, String dlId, String jobId) throws SQLException {
+            String query = "SELECT DISTINCT m.DL_Name AS Join_Table, " +
+                           "m.DL_Column_Names AS Join_Column, " +
+                           "m.DL_Id, " +
+                           "m.Job_Id " +
+                           "FROM ELT_DL_Mapping_Info_Saved m " +
+                           "INNER JOIN ELT_DL_Join_Mapping_Info j " +
+                           "ON m.DL_Id = j.DL_Id " +
+                           "AND m.Job_Id = j.Job_Id " +
+                           "AND m.DL_Name = j.Join_Table " +
+                           "WHERE m.DL_Id = ? AND m.Job_Id = ?";
+        
+            PreparedStatement pstmt = conn.prepareStatement(query);
+            pstmt.setString(1, dlId);
+            pstmt.setString(2, jobId);
+            ResultSet rs = pstmt.executeQuery();
+            Map<String, Object> resultMap = new HashMap<>();
+            Map<String, JoinAggregationData> joinAggregationMap = new HashMap<>();
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                row.put("Join_Table", rs.getString("Join_Table"));
+                row.put("Join_Column", rs.getString("Join_Column"));
+                row.put("DL_Id", rs.getString("DL_Id"));
+                row.put("Job_Id", rs.getString("Job_Id"));
+        
+                // Assuming DL_Id and Job_Id combination is the unique key
+                String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id");
+                JoinAggregationData data = joinAggregationMap.getOrDefault(key, new JoinAggregationData(dlId, jobId));
+
+                data.joinColumn.append(data.joinColumn.length() > 0 ? ", " : "").append(rs.getString("Join_Column"));
+                data.joinTable.append(data.joinTable.length() > 0 ? ", " : "").append(rs.getString("Join_Table"));
+                joinAggregationMap.put(key, data);
+
+                resultMap.put(key, row);
+            }
+            rs.close();
+            pstmt.close();
+            return joinAggregationMap;
+        }
+        // Value Sink
+        public Map<String, SinkAggregationData> executeInnerJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
+            String query = "SELECT DISTINCT main.Table_Name, " +
+                           "main.Column_Name_Alias AS Column_Alias_Name, " +
+                           "main.Constraints, " +
+                           "main.Source_Table_Name AS Source_Name, " +
+                           "LOWER(SUBSTRING_INDEX(Data_Type, '(', 1)) AS Data_Type, " +
+                           "main.DL_Id, " +
+                           "main.Job_Id " +
+                           "FROM ( " +
+                           "  SELECT DISTINCT Table_Name, Column_Name_Alias, LOWER(SUBSTRING_INDEX(Data_Type, '(', 1)), DL_Id, Job_Id " +
+                           "  FROM ELT_DL_Driving_Table_Info WHERE DL_Id = ? AND Job_Id = ? " +
+                           "  UNION ALL " +
+                           "  SELECT DISTINCT Table_Name, Column_Name_Alias, '', '', LOWER(SUBSTRING_INDEX(Data_Type, '(', 1)), DL_Id, Job_Id " +
+                           "  FROM ELT_DL_Lookup_Table_Info WHERE DL_Id = ? AND Job_Id = ? " +
+                           "  UNION ALL " +
+                           "  SELECT DISTINCT 'Derived_Column' AS Table_Name, Column_Alias_Name, '', '', LOWER(SUBSTRING_INDEX(Data_Type, '(', 1)), DL_Id, Job_Id " +
+                           "  FROM ELT_DL_Derived_Column_Info WHERE DL_Id = ? AND Job_Id = ? " +
+                           ") AS main " +
+                           "INNER JOIN ELT_DL_Join_Mapping_Info emit " +
+                           "ON main.Table_Name = emit.Join_Table " +
+                           "AND main.Column_Name_Alias = emit.Join_Column_Alias " +
+                           "AND main.DL_Id = emit.DL_Id " +
+                           "AND main.Job_Id = emit.Job_Id " +
+                           "WHERE emit.Job_Id = ? AND emit.DL_Id = ?";
+        
+            PreparedStatement pstmt = conn.prepareStatement(query);
+            pstmt.setString(1, dlId);
+            pstmt.setString(2, jobId);
+            pstmt.setString(3, dlId);
+            pstmt.setString(4, jobId);
+            pstmt.setString(5, dlId);
+            pstmt.setString(6, jobId);
+            pstmt.setString(7, jobId); // Set Job_Id parameter for emit
+            pstmt.setString(8, dlId);  // Set DL_Id parameter for emit
+        
+            ResultSet rs = pstmt.executeQuery();
+            Map<String, String> conversionsMap = getDataTypeConversionsMapToCleansingValue(conn); // dataType -> Cleansing
+            Map<String, Object> resultMap = new HashMap<>();
+            // Map to aggregate based on dlId, jobId
+            Map<String, SinkAggregationData> sinkAggregationMap = new HashMap<>();
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                row.put("Table_Name", rs.getString("Table_Name"));
+                row.put("Column_Alias_Name", rs.getString("Column_Alias_Name"));
+                row.put("Data_Type", rs.getString("Data_Type"));
+                row.put("DL_Id", rs.getString("DL_Id"));
+                row.put("Job_Id", rs.getString("Job_Id"));
+        
+                String dataType = rs.getString("Data_Type");
+                String cleansingValue = conversionsMap.getOrDefault(dataType, "DefaultCleansingValue");
+
+                // Aggregate on key = Dl_Id + Job_Id
+                // String key = dlId + "-" + jobId;
+                String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id");
+                SinkAggregationData data = sinkAggregationMap.getOrDefault(key, new SinkAggregationData(dlId, jobId));
+                data.Table_Name.append(data.Table_Name.length() > 0 ? ", " : "").append(rs.getString("Table_Name"));
+                data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias"));
+                data.Constraints.append(data.Constraints.length() > 0 ? ", " : "").append(rs.getString("Constraints"));
+                data.Source_Name.append(data.Source_Name.length() > 0 ? ", " : "").append(rs.getString("Source_Name"));
+                data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(rs.getString("Data_Type"));
+                // Specific fields
+                data.Cleansing_Value.append(data.Cleansing_Value.length() > 0 ? ", " : "").append(rs.getString(cleansingValue));  
+                data.cleansing_Validations.append(data.cleansing_Validations.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias")==null?null:"EMPTY");
+                data.date_formats.append(data.date_formats.length() > 0 ? ", " : "").append(rs.getString("Data_Type").toLowerCase().contains("date")?"yyyy-MM-dd":"");
+
+                sinkAggregationMap.put(key, data);
+                resultMap.put(key, row);
+            }
+            rs.close();
+            pstmt.close();
+            return sinkAggregationMap;
+        }
+        // Value Sink
+        public Map<String, String> getDataTypeConversionsMapToCleansingValue(Connection conn) throws SQLException {
+            String query = "SELECT " +
+                    "ELT_Datatype_Conversions.Id, " +
+                    "ELT_Datatype_Conversions.Source_Data_Type, " +
+                    "LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS IL_Data_Type, " +
+                    "ELT_Datatype_Conversions.Java_Data_Type, " +
+                    "Cleansing_Value " +
+                    "FROM ELT_Datatype_Conversions";
+
+            PreparedStatement pstmt = conn.prepareStatement(query);
+            ResultSet rs = pstmt.executeQuery();
+
+            // key: IL_Data_Type, value: Cleansing_Value)
+            Map<String, String> dbResultMap = new HashMap<>();
+            while (rs.next()) {
+                String ilDataType = rs.getString("IL_Data_Type");
+                String cleansingValue = rs.getString("Cleansing_Value");
+                dbResultMap.put(ilDataType, cleansingValue);
+            }
+            rs.close();
+            pstmt.close();
+            return dbResultMap;
+        }
+
         // Value 3. lkp/Join
         private String componentJoinValue(String component) {
             try {
                 String joinValue = getValueNamesFromJobPropertiesInfo(conn, component);
                 String tmpTable = dlName + dlId + jobId;
-                joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId, dlId);            
+                joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId, dlId);  
+                return joinValue;         
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
             }
-            return joinValue;
+            return "";
         }
 
         public String joinTablesAndFetchDerivedValues(Connection connection, String joinValue, String tmpTable, String jobId, String dlId) throws SQLException {
@@ -1419,7 +1727,7 @@ public class DataMartStructureScriptGenerator {
 
                         String key = dlIdValue + "-" + jobIdValue;
 
-                        RecoercingAggregationData recoercingData = recoercingMap.getOrDefault(key, new RecoercingAggregationData());
+                        RecoercingAggregationData recoercingData = recoercingMap.getOrDefault(key, new RecoercingAggregationData(dlIdValue, jobIdValue));
                             
                         // Perform the replacements sequentially
                         recoercingValue = recoercingValue
@@ -1465,7 +1773,7 @@ public class DataMartStructureScriptGenerator {
                            "FROM ELT_DL_Derived_Column_Info " +
                            "WHERE DL_ID = ? AND Job_Id = ?)";
     
-            Map<String, String> lookupMap = getDataTypeConversions(conn);
+            Map<String, String> lookupMap = getDataTypeConversionsMapToJavaDataType(conn);
             Map<String, Map<String, Object>> resultMap = new HashMap<>();
             // Map to aggregate based on dlId, jobId
             Map<String, RecoercingAggregationData> aggregationMap = new HashMap<>();
@@ -1503,7 +1811,7 @@ public class DataMartStructureScriptGenerator {
                         row.put("Precision_Val", precisionVal);
                         row.put("Scale_Val", scaleVal);
                         // from ELT_Datatype_Convesions
-                        String javaDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO: what should be default value
+                        String javaDataType = lookupMap.getOrDefault(dataType, "UnknownDataType"); // TODO: what should be default value
                         // TODO: Inner join means javaDataType is "Unknown", continue
                         row.put("Java_Data_Type", javaDataType);
 
@@ -1516,7 +1824,7 @@ public class DataMartStructureScriptGenerator {
                         // Aggregate on key = Dl_Id + Job_Id
                         String key = dlId + "-" + jobId;
                         // Retrieve or create the AggregationData object. make a list of data.
-                        RecoercingAggregationData data = aggregationMap.getOrDefault(key, new RecoercingAggregationData(dlId, jobId, groupId));
+                        RecoercingAggregationData data = aggregationMap.getOrDefault(key, new RecoercingAggregationData(dlId, jobId));
                         data.Table_Name.append(data.Table_Name.length() > 0 ? ", " : "").append(rs.getString("Table_Name"));
                         data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias"));
                         data.Constraints.append(data.Constraints.length() > 0 ? ", " : "").append(rs.getString("Constraints"));
@@ -1538,7 +1846,8 @@ public class DataMartStructureScriptGenerator {
         }
         // value 4;   Recoercing
         // TODO there is similar copy of it. check and see if one of them can be can be removed. (executeDataTypeConversionsQuery)
-        public Map<String, String> getDataTypeConversions(Connection conn) throws SQLException {
+        // (getDataTypeConversionsMapToCleansingValue) - they have different value for the key in map
+        public Map<String, String> getDataTypeConversionsMapToJavaDataType(Connection conn) throws SQLException {
             String query = "SELECT "
                     + "`ELT_Datatype_Conversions`.`Source_Data_Type`, "
                     + "LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS IL_Data_Type, "
@@ -1833,6 +2142,71 @@ public class DataMartStructureScriptGenerator {
             return resultMap;
         }
      
+        class JoinAggregationData {
+            String dlId;
+            String jobId;
+            StringBuilder joinTable;
+            StringBuilder joinColumn;
+   
+            public String getJoinTable() {
+                return joinTable.toString();
+            }
+
+            public String getJoinColumn() {
+                return joinColumn.toString();
+            }
+
+            public JoinAggregationData(String dlId, String jobId) {
+                this.dlId = dlId;
+                this.jobId = jobId;
+                this.joinTable = new StringBuilder();
+                this.joinColumn = new StringBuilder();
+            }
+        }
+
+        class SinkAggregationData {
+            String dlId;
+            String jobId;
+            StringBuilder Table_Name;
+            StringBuilder Column_Name_Alias;
+            StringBuilder Constraints;
+            StringBuilder Source_Name;
+            StringBuilder Data_Type;
+            
+
+            StringBuilder Cleansing_Value;
+            StringBuilder cleansing_Validations;
+            StringBuilder date_formats;
+
+            public String getDataType() {
+                return Data_Type.toString();
+            }
+            public String getColumnNameAlias() {
+                return Column_Name_Alias.toString();
+            }
+            public String getCleansingValue() {
+                return Cleansing_Value.toString();
+            }
+            public String getCleansingValidations() {
+                return cleansing_Validations.toString();
+            }
+            public String getDateFormats() {
+                return date_formats.toString();
+            }
+            public SinkAggregationData(String dlId, String jobId) {
+                this.dlId = dlId;
+                this.jobId = jobId;
+                this.Table_Name = new StringBuilder();
+                this.Column_Name_Alias = new StringBuilder();
+                this.Constraints = new StringBuilder();
+                this.Source_Name = new StringBuilder();
+                this.Data_Type = new StringBuilder();
+                this.Cleansing_Value = new StringBuilder();
+                this.cleansing_Validations = new StringBuilder();
+                this.date_formats = new StringBuilder();
+            }
+        }
+
         class RecoercingAggregationData {
             String dlId;
             String jobId;
@@ -2021,7 +2395,7 @@ public class DataMartStructureScriptGenerator {
             return joinedResults;
         }
 
-        // value function
+        // value General function
         public String getValueNamesFromJobPropertiesInfo(Connection conn, String component) {
             String query = SQLQueries.SELECT_VALUE_NAMES_FROM_ELT_JOB_PROPERTIES_INFO;
             StringBuilder script = new StringBuilder();
