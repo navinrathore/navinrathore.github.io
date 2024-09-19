@@ -794,8 +794,6 @@ public class DataMartStructureScriptGenerator {
             String componentSink = "'sqlsink'";
             componentSinkValue(componentSink);
 
-            // WORK IN PROGRESS
-
 //######################################
 
             //config filename
