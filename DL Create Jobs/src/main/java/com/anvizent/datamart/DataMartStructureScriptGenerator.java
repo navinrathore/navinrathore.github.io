@@ -1394,18 +1394,51 @@ public class DataMartStructureScriptGenerator {
 
         // Value 4. Recoercing
         private String componentRecoercing(String component) {
-           // try {
+           try {
                 String emptyRecoercingValue = getValueNamesFromJobPropertiesInfo(conn, component);
-
-            
-            // } catch (SQLException e) {
-            //     // TODO Auto-generated catch block
-            //     e.printStackTrace();
-            // }
+                Map<String, RecoercingAggregationData> recoercingMap = executeJoinQuery(conn, dlId, jobId);
+                emptyRecoercingValue = executeAndJoinRecoercingAggregation(conn, dlId, jobId, emptyRecoercingValue, recoercingMap); // Output
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
             return "joinValue";
         }
         // Value 4. Recoercing
-        public Map<String, Map<String, Object>> executeJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
+        public String executeAndJoinRecoercingAggregation(Connection conn, String dlId, String jobId, String recoercingValue, Map<String, RecoercingAggregationData> recoercingMap) throws SQLException {
+            String query = "SELECT DL_Id, Job_Id FROM ELT_DL_Driving_Table_Info WHERE Job_Id = ? AND DL_Id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    // Map<String, RecoercingAggregationData> resultMap = new HashMap<>(); // TODO Not needed anymore
+                    while (rs.next()) {
+                        String dlIdValue = rs.getString("DL_Id");
+                        String jobIdValue = rs.getString("Job_Id");
+
+                        String key = dlIdValue + "-" + jobIdValue;
+
+                        RecoercingAggregationData recoercingData = recoercingMap.getOrDefault(key, new RecoercingAggregationData());
+                            
+                        // Perform the replacements sequentially
+                        recoercingValue = recoercingValue
+                                .replace("${recoerce.to.format}", "recoerce.to.format=" + recoercingData.getRecoerceToFormat())
+                                .replace("${recoerce.to.type}", "recoerce.to.type=" + recoercingData.getRecoerceToType())
+                                .replace("${recoerce.decimal.precisions}",
+                                        "recoerce.decimal.precisions=" + recoercingData.getRecoerceDecimalPrecisions())
+                                .replace("${recoerce.decimal.scales}",
+                                        "recoerce.decimal.scales=" + recoercingData.getRecoerceDecimalScales())
+                                .replace("${recoerce.fields}", "recoerce.fields=" + recoercingData.getColumnNameAlias());
+                            
+                        // resultMap.put(key, recoercingData); Not Needed anymore
+                    }
+                    return recoercingValue;
+                }
+            }
+        }
+        // Value 4. Recoercing
+        public Map<String, RecoercingAggregationData> executeJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
             // TODO: Table_Name, Source_Name, `Column_Name_Alias`, Precision_Val and Scale_Val should be reviews in case of error
             String query = "SELECT DISTINCT " +
                            "m.DL_Id, " +
@@ -1434,6 +1467,8 @@ public class DataMartStructureScriptGenerator {
     
             Map<String, String> lookupMap = getDataTypeConversions(conn);
             Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            // Map to aggregate based on dlId, jobId
+            Map<String, RecoercingAggregationData> aggregationMap = new HashMap<>();
             try (PreparedStatement pstmt = conn.prepareStatement(query)) {
                 pstmt.setString(1, dlId);
                 pstmt.setString(2, jobId);
@@ -1441,9 +1476,6 @@ public class DataMartStructureScriptGenerator {
                 pstmt.setString(4, jobId);
     
                 try (ResultSet rs = pstmt.executeQuery()) {
-                    // Map to aggregate based on dlId, jobId
-                    Map<String, RecoercingAggregationData> aggregationMap = new HashMap<>();
-
                     while (rs.next()) {
                         //String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Join_Column_Alias");
                         Map<String, Object> row = new HashMap<>();
@@ -1483,7 +1515,7 @@ public class DataMartStructureScriptGenerator {
 
                         // Aggregate on key = Dl_Id + Job_Id
                         String key = dlId + "-" + jobId;
-                        // Retrieve or create the AggregationData object
+                        // Retrieve or create the AggregationData object. make a list of data.
                         RecoercingAggregationData data = aggregationMap.getOrDefault(key, new RecoercingAggregationData(dlId, jobId, groupId));
                         data.Table_Name.append(data.Table_Name.length() > 0 ? ", " : "").append(rs.getString("Table_Name"));
                         data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias"));
@@ -1495,15 +1527,14 @@ public class DataMartStructureScriptGenerator {
                         data.recoerce_decimal_precisions.append(data.recoerce_decimal_precisions.length() > 0 ? ", " : "").append(precisionVal);
                         data.recoerce_decimal_scales.append(data.recoerce_decimal_scales.length() > 0 ? ", " : "").append(scaleVal);
 
-
-
                         aggregationMap.put(key, data);
 
                         resultMap.put(key, row);
+                        // TODO resultMap and row can be removed.
                     }
                 }
             }
-            return resultMap;
+            return aggregationMap;
         }
         // value 4;   Recoercing
         // TODO there is similar copy of it. check and see if one of them can be can be removed. (executeDataTypeConversionsQuery)
@@ -1806,14 +1837,33 @@ public class DataMartStructureScriptGenerator {
             String dlId;
             String jobId;
             StringBuilder Table_Name;
-            StringBuilder Column_Name_Alias;
             StringBuilder Constraints;
             StringBuilder Source_Name;
             StringBuilder Data_Type;
+            StringBuilder Column_Name_Alias;
+
+            public String getColumnNameAlias() {
+                return Column_Name_Alias.toString();
+            }
             StringBuilder recoerce_to_format;
-            StringBuilder recoerce_to_type;
+            public String getRecoerceToFormat() {
+                return recoerce_to_format.toString();
+            }
+
+            StringBuilder recoerce_to_type;           
+            public String getRecoerceToType() {
+                return recoerce_to_type.toString();
+            }
+
             StringBuilder recoerce_decimal_precisions;
+            public String getRecoerceDecimalPrecisions() {
+                return recoerce_decimal_precisions.toString();
+            }
+
             StringBuilder recoerce_decimal_scales;
+            public String getRecoerceDecimalScales() {
+                return recoerce_decimal_scales.toString();
+            }
 
             public RecoercingAggregationData(String dlId, String jobId) {
                 this.dlId = dlId;
