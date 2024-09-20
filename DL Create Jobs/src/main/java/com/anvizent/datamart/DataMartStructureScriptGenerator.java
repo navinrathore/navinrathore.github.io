@@ -750,6 +750,8 @@ public class DataMartStructureScriptGenerator {
 //######################################
             // Job 1 Source
             // WORK IN PROGRESS
+            String componentSource = "'partitionsourcesql_dl','sourcesql'"; // Multiple component
+            String sourceValue = componentSourceValue(componentSource); // Output
 
             // Job 2 SourceExecutesql
             // WORK IN PROGRESS
@@ -1593,6 +1595,300 @@ public class DataMartStructureScriptGenerator {
             return dbResultMap;
         }
 
+        // Value 1. Source
+        private String componentSourceValue(String component) {
+            try {
+                String sourceValue = getValueNamesFromJobPropertiesInfo(conn, component); // component contains multiple values
+                Map<String, SourceAggregationData> sourceData = performLeftOuterJoin(jobId, dlId, conn);
+                String tmpTable = dlName + dlId + jobId;
+                
+                
+                //String querySelectFromTmpTable = SQLQueries.buildQueryForTable(tmpTable);
+
+
+                String drivingAndLookupTableQuery = buildDrivingAndLookupTableQuery();
+                joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId, dlId);
+                return joinValue;
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return "";
+        }
+
+        public Map<String, SourceAggregationData> performLeftOuterJoin(String jobId, String dlId, Connection connection) throws SQLException {        
+            Map<String, Map<String, String>> lookupTableMap = getLookupTableData(jobId, dlId, connection);
+            String mainQuery = buildDrivingAndLookupTableQuery();
+            Map<String, SourceAggregationData> sourceAggregationMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(mainQuery)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+                pstmt.setString(3, jobId);
+                pstmt.setString(4, dlId);
+        
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    String columnNameWithAlias = "`" + rs.getString("Column_Name") + "` as `" + rs.getString("Column_Name_Alias") + "`";
+                    String tableNameAliasOriginal = rs.getString("Table_Name_Alias");
+                    String tableNameAliasReplaced = tableNameAliasOriginal.replace(" ", "_");
+
+                    // TODO Key requires one additional paramter check specification. but I guess it is redundant
+                    String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + tableNameAliasReplaced;
+                    String tableName = rs.getString("Table_Name");
+
+                    Map<String, String> lookupValues = lookupTableMap.getOrDefault(key, null); // TODO: what should be default value
+
+                    SourceAggregationData data = sourceAggregationMap.getOrDefault(key, new SourceAggregationData(dlId, jobId, tableName, tableNameAliasReplaced));
+        
+                    // TODO: Should data getter functions be used??
+                    // lookupValuesalues from main table
+                    data.Column_Name.append(data.Column_Name.length() > 0 ? ", " : "").append(rs.getString("Column_Name"));
+                    data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias"));
+                    data.Column_Name_with_Alias.append(data.Column_Name_with_Alias.length() > 0 ? ", " : "").append(columnNameWithAlias);
+                    data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(rs.getString("Data_Type"));
+                    // Values from lookup table
+                    if (lookupValues != null) {
+                        data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Flow"))); 
+                        data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Filter_Id")));  
+                        data.Group_By_Id.append(data.Group_By_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Group_By_Id")));  
+                    }
+                    sourceAggregationMap.put(key, data);
+                }
+            }
+            return sourceAggregationMap;
+        }
+        
+        public String executeMainQuery(String jobId, String dlId, Connection connection) throws SQLException {
+            StringBuilder result = new StringBuilder();
+            String mainQuery = buildDrivingAndLookupTableQuery();
+            try (PreparedStatement pstmt = connection.prepareStatement(mainQuery)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+                pstmt.setString(3, jobId);
+                pstmt.setString(4, dlId);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    String dlIdValue = rs.getString("DL_Id");
+                    String jobIdValue = rs.getString("Job_Id");
+                    String tableName = rs.getString("Table_Name");
+                    String tableAlias = rs.getString("Table_Name_Alias");
+                    String columnName = rs.getString("Column_Name");
+                    String columnAlias = rs.getString("Column_Name_Alias");
+                    
+                    String columnNameWithAlias = "`" + columnName + "` as `" + columnAlias + "`";
+        
+                    String tableAliasReplaced = tableAlias.replace(" ", "_");
+        
+                    // Append the result to StringBuilder for demonstration (could be processed further)
+                    result.append("Column: ").append(columnNameWithAlias)
+                          .append(", Table Alias: ").append(tableAliasReplaced)
+                          .append("\n");
+                }
+            }
+            return result.toString();
+        }
+        
+        public Map<String, Map<String, String>> getLookupTableData(String jobId, String dlId, Connection connection) throws SQLException {
+            Map<String, Map<String, String>> lookupTableMap = new HashMap<>();
+            String lookupQuery = "SELECT " +
+                    "`DL_Id`, `Job_Id`, `Table_Name`, `Table_Name_Alias`, " +
+                    "`Flow`, `Filter_Id`, `Group_By_Id` " +
+                    "FROM `ELT_DL_FilterGroupBy_Info` " +
+                    "WHERE Job_Id = ? AND DL_Id = ? AND Settings_Position IN ('Lookup_Table', 'Driving_Table')";
+        
+            try (PreparedStatement pstmt = connection.prepareStatement(lookupQuery)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+        
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + rs.getString("Table_Name_Alias");
+                    Map<String, String> lookupValues = new HashMap<>();
+                    lookupValues.put("Flow", rs.getString("Flow"));
+                    lookupValues.put("Filter_Id", rs.getString("Filter_Id"));
+                    lookupValues.put("Group_By_Id", rs.getString("Group_By_Id"));
+        
+                    lookupTableMap.put(key, lookupValues);
+                }
+            }
+            return lookupTableMap;
+        }        
+        
+        // Used in components Source and SourceExecutesql
+        public String buildDrivingAndLookupTableQuery() {
+            String query = "SELECT DISTINCT " +
+                           "Job_Id, " +
+                           "DL_Id, " +
+                           "Table_Name, " +
+                           "Table_Name AS Table_Name_Alias, " +
+                           "Column_Name, " +
+                           "Column_Name_Alias, " +
+                           "Data_Type " +
+                           "FROM ELT_DL_Driving_Table_Info " +
+                           "WHERE Job_Id = ? AND DL_Id = ? " +
+                           "UNION ALL " +
+                           "SELECT DISTINCT " +
+                           "Job_Id, " +
+                           "DL_Id, " +
+                           "Table_Name, " +
+                           "Table_Name_Alias, " +
+                           "Column_Name, " +
+                           "Column_Name_Alias, " +
+                           "Data_Type " +
+                           "FROM ELT_DL_Lookup_Table_Info " +
+                           "WHERE Job_Id = ? AND DL_Id = ?";
+        
+            return query;
+        }
+
+        public Map<String, Map<String, String>> getLookupTableInfoData(String jobId, String dlId, Connection connection) throws SQLException {
+            Map<String, Map<String, String>> lookupTableMap = new HashMap<>();
+            String lookupQuery = "SELECT DISTINCT " +
+                    "DL_Id, Job_Id, Table_Name, Table_Name_Alias, Column_Name, Column_Name_Alias " +
+                    "FROM ELT_DL_Lookup_Table_Info " +
+                    "WHERE Job_Id = ? AND DL_Id = ?";
+        
+            try (PreparedStatement pstmt = connection.prepareStatement(lookupQuery)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id");
+                        Map<String, String> rowMap = new HashMap<>();
+                        rowMap.put("Table_Name", rs.getString("Table_Name"));
+                        rowMap.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));
+                        rowMap.put("Column_Name", rs.getString("Column_Name"));
+                        rowMap.put("Column_Name_Alias", rs.getString("Column_Name_Alias"));
+        
+                        lookupTableMap.put(key, rowMap);
+                    }
+                }
+            }
+            return lookupTableMap;
+        }
+        public Map<String, Map<String, String>> getDrivingTableInfoData(String jobId, String dlId, Connection connection) throws SQLException {
+            Map<String, Map<String, String>> drivingTableMap = new HashMap<>();
+            String drivingQuery = "SELECT DISTINCT " +
+                    "DL_Id, Job_Id, Table_Name, Table_Name AS Table_Name_Alias, Column_Name, Column_Name_Alias " +
+                    "FROM ELT_DL_Driving_Table_Info " +
+                    "WHERE Job_Id = ? AND DL_Id = ?";
+        
+            try (PreparedStatement pstmt = connection.prepareStatement(drivingQuery)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id");
+        
+                        Map<String, String> rowMap = new HashMap<>();
+                        rowMap.put("Table_Name", rs.getString("Table_Name"));
+                        rowMap.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));  // Same as Table_Name
+                        rowMap.put("Column_Name", rs.getString("Column_Name"));
+                        rowMap.put("Column_Name_Alias", rs.getString("Column_Name_Alias"));
+        
+                        drivingTableMap.put(key, rowMap);
+                    }
+                }
+            }
+            return drivingTableMap;
+        }
+        
+        public Map<String, Map<String, String>> getTmpTableData(Connection connection, String tmpTable) throws SQLException {
+            String query = SQLQueries.buildQueryForTable(tmpTable);
+            Map<String, Map<String, String>> tmpTableData = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String tableName = rs.getString("table_name");
+                    Map<String, String> rowData = new HashMap<>();
+                    rowData.put("table_name", tableName);
+                    rowData.put("Final_Table_Name", rs.getString("Final_Table_Name"));
+                    rowData.put("property", rs.getString("property"));
+        
+                    tmpTableData.put(tableName, rowData);
+                }
+            }
+            return tmpTableData;
+        }
+        // value Source main processing
+        public void executeMainQueryAndJoin(Connection connection, String jobId, String dlId) throws SQLException {
+            Map<String, Map<String, String>> drivingTableDataMap = getDrivingTableInfoData(jobId, dlId, connection);
+            Map<String, Map<String, String>> lookupTableDataMap = getLookupTableInfoData(jobId, dlId, connection);
+            // TODO: tmpTable shoul;d be defined somewhere else??
+            String tmpTable = dlName + dlId + jobId;
+            Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(connection, tmpTable);
+        
+            // Prepare the main query and execute
+            try (PreparedStatement pstmt = connection.prepareStatement(SQLQueries.SOURCE_MAIN_QUERY)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+        
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String dlIdResult = rs.getString("DL_Id");
+                        String jobIdResult = rs.getString("Job_Id");
+                        String tableName = rs.getString("Table_Name");
+                        String tableNameAlias = rs.getString("Table_Name_Alias");
+                        String columnName = rs.getString("Column_Name");
+        
+                        //Create keys for DrivingTable, LookupTable and Temp Table
+                        String drivingKey = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + columnName;
+                        String lookupKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
+                        String queryTableKey = tableNameAlias;
+        
+                        // TODO ImpPoint 1
+                        // Perform left outer join with the driving table data
+                        Map<String, String> drivingData = drivingTableDataMap.getOrDefault(drivingKey, new HashMap<>());
+                        // Perform left outer join with the lookup table data
+                        Map<String, String> lookupData = lookupTableDataMap.getOrDefault(lookupKey, new HashMap<>());
+                        // Perform left outer join with the temp table data
+                        Map<String, String> tmpData = tmpTableDataMap.getOrDefault(queryTableKey, new HashMap<>());
+        
+                        // Example process for final result; this can be expanded or modified
+                        System.out.println("Main Query Result:");
+                        System.out.println("DL_Id: " + dlIdResult);
+                        System.out.println("Job_Id: " + jobIdResult);
+                        System.out.println("Table_Name: " + tableName);
+                        System.out.println("Table_Name_Alias: " + tableNameAlias);
+                        System.out.println("Column_Name: " + columnName);
+        
+                        // Join the data from the other sources (e.g., drivingData, lookupData, queryTableData)
+                        // For example, log the joins or use the data in further processing
+                        System.out.println("Driving Table Data: " + drivingData);
+                        System.out.println("Lookup Table Data: " + lookupData);
+                        System.out.println("Query Table Data: " + tmpData);
+
+                        // Map 5 
+                        String aggregation = tmpData.get("property") == null ? " " : rs.getString("Aggregation");
+                        String nxtColumn = (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name_Alias") : drivingData.get("Column_Name_Alias"));
+                        String aggregationColumns = (rs.getBoolean("Flag") ? 
+                            rs.getString("Aggregation").equals("Distinct_Count") ? 
+                            "count(distinct `" + rs.getString("Column_Name") + "`) as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation").equals("Stddev_Samp") ? 
+                            "case when Stddev_Samp(`" + rs.getString("Column_Name") + "`)='NaN' then null else Stddev_Samp(`" + rs.getString("Column_Name") + "`) end as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation").equals("Var_Samp") ? 
+                            "case when Var_Samp(`" + rs.getString("Column_Name") + "`)='NaN' then null else Var_Samp(`" + rs.getString("Column_Name") + "`) end as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation") + "(`" + rs.getString("Column_Name") + "`) as `" + nxtColumn + "`" : null);
+                        String aggregationColumnsWithAlias = (rs.getBoolean("Flag") ? 
+                            aggregation + "(`" + rs.getString("Column_Name") + "`) as `" + (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name_Alias") : drivingData.get("Column_Name_Alias")) + "`" : null);
+                        String groupByColumns = (rs.getBoolean("Flag") == false ? "`" + rs.getString("Column_Name") + "`" : null);
+                        String groupByColumnsAlias = (rs.getBoolean("Flag") == false ? 
+                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name_Alias") + "`" : "`" + drivingData.get("Column_Name_Alias") + "`") : null);
+                        String groupByColumnsWithAlias = (rs.getBoolean("Flag") == false ? 
+                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "` as `" + lookupData.get("Column_Name_Alias") + "`" : "`" + drivingData.get("Column_Name") + "` as `" + drivingData.get("Column_Name_Alias") + "`") : null);
+                        String havingAggColAlias = (rs.getBoolean("Flag") ? 
+                            aggregation + "(`" + rs.getString("Column_Name") + "`) as `" + (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name") : drivingData.get("Column_Name")) + "`" : null);
+                        String havingGrpByColumns = (rs.getBoolean("Flag") == false ? "`" + rs.getString("Column_Name") + "`" : null);
+                        String havingGrpByColumnsAlias = (rs.getBoolean("Flag") == false ? 
+                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "`" : "`" + drivingData.get("Column_Name") + "`") : null);
+                        String havingGrpByColumnsWithAlias = (rs.getBoolean("Flag") == false ? 
+                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "` as `" + lookupData.get("Column_Name") + "`" : "`" + drivingData.get("Column_Name") + "` as `" + drivingData.get("Column_Name") + "`") : null);
+                        
+                    }
+                }
+            }
+        }
+        
         // Value 3. lkp/Join
         private String componentJoinValue(String component) {
             try {
@@ -2159,6 +2455,36 @@ public class DataMartStructureScriptGenerator {
                 this.jobId = jobId;
                 this.joinTable = new StringBuilder();
                 this.joinColumn = new StringBuilder();
+            }
+        }
+
+        
+        class SourceAggregationData {
+            String dlId;
+            String jobId;
+            String Table_Name;
+            String Table_Name_Alias;
+
+            StringBuilder Column_Name;
+            StringBuilder Column_Name_Alias;
+            StringBuilder Column_Name_with_Alias;
+            StringBuilder Data_Type;
+            StringBuilder Flow;            
+            StringBuilder Filter_Id;
+            StringBuilder Group_By_Id;
+            public SourceAggregationData(String dlId, String jobId, String Table_Name, String Table_Name_Alias) {
+                this.dlId = dlId;
+                this.jobId = jobId;
+                this.Table_Name = Table_Name;
+                this.Table_Name_Alias = Table_Name_Alias;
+
+                this.Column_Name = new StringBuilder();
+                this.Column_Name_Alias = new StringBuilder();
+                this.Column_Name_with_Alias = new StringBuilder();
+                this.Data_Type = new StringBuilder();
+                this.Flow = new StringBuilder();
+                this.Filter_Id = new StringBuilder();
+                this.Group_By_Id = new StringBuilder();
             }
         }
 
@@ -3314,6 +3640,14 @@ public class DataMartStructureScriptGenerator {
                     table3 + ".`property` " +
                     "FROM " + table3 + " WHERE " + table3 + ".`property` != 'db'";
         }
+        // Value Source - Selction from tmp table
+        public static String buildQueryForTable(String table) {
+            return "SELECT " +
+                    table + ".`table_name`, " +
+                    table + ".`Final_Table_Name`, " +
+                    table + ".`property` " +
+                    "FROM " + table + " WHERE " + table + ".`property` = 'db'";
+        }
         // TBD: refer above. May be deleted
         // Full Join Query: Joining ELT_DL_Join_Mapping_Info with tables in Query 2 and Query 3
         public static String buildFullJoinQuery(String table2, String table3) {
@@ -3427,6 +3761,21 @@ public class DataMartStructureScriptGenerator {
                 "SELECT concat('`', Column_Name_Alias, '`') " +
                 "FROM ELT_DL_Lookup_Table_Info " +
                 "WHERE DL_Id = ? AND Job_Id = ?";
+        // Value Source 
+        public static final String SOURCE_MAIN_QUERY = "SELECT DISTINCT " +
+            "ELT_DL_FilterGroupBy_Info.DL_Id, " +
+            "ELT_DL_FilterGroupBy_Info.Job_Id, " +
+            "ELT_DL_FilterGroupBy_Info.Settings_Position, " +
+            "ELT_DL_FilterGroupBy_Info.Table_Name, " +
+            "ELT_DL_FilterGroupBy_Info.Table_Name_Alias, " +
+            "ELT_DL_FilterGroupBy_Info.Group_By_Id, " +
+            "ELT_DL_FilterGroupBy_Info.Flow, " +
+            "ELT_DL_Group_By_Info.Column_Name, " +
+            "CASE WHEN ELT_DL_Group_By_Info.Aggregation = 'random' THEN '' ELSE ELT_DL_Group_By_Info.Aggregation END AS Aggregation, " +
+            "ELT_DL_Group_By_Info.Flag " +
+            "FROM ELT_DL_FilterGroupBy_Info " +
+            "INNER JOIN ELT_DL_Group_By_Info ON ELT_DL_FilterGroupBy_Info.Group_By_Id = ELT_DL_Group_By_Info.Group_By_Id " +
+            "WHERE Job_Id = ? AND DL_Id = ? AND Settings_Position IN ('Lookup_Table', 'Driving_Table')";
 
 
     }
