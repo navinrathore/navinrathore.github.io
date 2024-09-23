@@ -753,7 +753,8 @@ public class DataMartStructureScriptGenerator {
             String finalSource = componentSourceValue(componentSource); // Output
 
             // Job 2 SourceExecutesql
-            // WORK IN PROGRESS
+            String componentExecuteSqlSource = "'executesql_source'";
+            String finalSourceExecuteSql = componentSourceExecuteSqlValue(componentExecuteSqlSource); // Output
 
             // Job 3 lkp/join
             String componentJoin = "join";
@@ -1169,7 +1170,7 @@ public class DataMartStructureScriptGenerator {
                 statement.setString(2, jobId);
 
                 try (ResultSet resultSet = statement.executeQuery()) {
-                    String lastComponent = null;
+                    String lastComponent = "";
                     while (resultSet.next()) {
                         String level = resultSet.getString("Level");
                         String columns = resultSet.getString("Columns");
@@ -1206,7 +1207,7 @@ public class DataMartStructureScriptGenerator {
                         String columnName = resultSet.getString(1);
                         queryColumns.add(columnName);
                     }
-                    return String.join(", ", queryColumns);;
+                    return String.join(", ", queryColumns);
                 }
             }
         }
@@ -1605,8 +1606,7 @@ public class DataMartStructureScriptGenerator {
                 Map<String, SourceFilterByAggregationData> filterGroupByInfoData = getFilterGroupByInfoData(conn, jobId, dlId);
 
                 String tmpTable = dlName + dlId + jobId;
-                Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable);
-
+                Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, true); //`property` = 'db'
 
 
                 sourceValue = performJoinWithLookupData(sourceValue, mainData, groupByInfoData, filterGroupByInfoData, tmpTableDataMap, jobId, dlId);
@@ -1626,6 +1626,231 @@ public class DataMartStructureScriptGenerator {
             return "";
         }
 
+        // Value 2. SourceExecutesql entry point
+        private String componentSourceExecuteSqlValue(String component) {
+            try {
+                String sourceValue = getValueNamesFromJobPropertiesInfo(conn, component); // component contains multiple
+                                                                                          // values
+
+
+
+                //Map<String, SourceAggregationData> sourceData = performLeftOuterJoin(jobId, dlId, conn);
+
+                //Map<String, SourceAggregationData> mainData = performLeftOuterJoin(jobId, dlId, conn);
+                
+                Map<String, SourceGroupByAggregationData> groupByExecuteSqlInfoData = getGroupByInfoDataSourceExecuteSql(conn, jobId, dlId);
+                // Identical input Queries with the Source subcomponent
+                Map<String, SourceFilterByAggregationData> filterGroupByInfoData = getFilterGroupByInfoData(conn, jobId,
+                        dlId);
+
+                String tmpTable = dlName + dlId + jobId;
+                Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, false);
+                
+                // TODO jobId, dlId are long here
+                Map<String, Map<String, Object>> filtergroupByMap = getFilterGroupByInfo(conn, Long.valueOf(jobId), Long.valueOf(dlId));
+
+
+                Map<String, SourceAggregationData> mainData = executeQueryAndProcessData(conn, groupByExecuteSqlInfoData, filterGroupByInfoData, tmpTableDataMap, filtergroupByMap, Long.valueOf(jobId), Long.valueOf(dlId));
+
+                
+                String finalSourceExecuteSql = getFinalSourceExecuteSqlScript(sourceValue, mainData, filterGroupByInfoData, groupByExecuteSqlInfoData, Long.valueOf(jobId), Long.valueOf(dlId));
+
+                // String querySelectFromTmpTable = SQLQueries.buildQueryForTable(tmpTable);
+
+                // String drivingAndLookupTableQuery = buildDrivingAndLookupTableQuery();
+                // joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId,
+                // dlId);
+                // return joinValue;
+                return finalSourceExecuteSql;
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return "";
+        }
+
+        public String getFinalSourceExecuteSqlScript(
+            String sourceValue, 
+            Map<String, SourceAggregationData> mainData, 
+            Map<String, SourceFilterByAggregationData> filterGroupByInfoData, 
+            Map<String, SourceGroupByAggregationData> groupByExecuteSqlInfoData, 
+            Long jobId, Long dlId
+        ) {
+            StringBuilder finalSource = new StringBuilder();
+            
+            // Iterate over the mainData entries
+            for (Map.Entry<String, SourceAggregationData> entry : mainData.entrySet()) {
+                String key = entry.getKey();
+                SourceAggregationData row4 = entry.getValue();
+                String dlIdValue = row4.getDlId();
+                String jobIdValue = row4.getJobId();
+                String tableName = row4.getTableName();
+                String tableNameAlias = row4.getTableNameAlias();
+
+                // Retrieve corresponding filter and groupBy data using getOrDefault
+                SourceFilterByAggregationData filter = filterGroupByInfoData.getOrDefault(key, new SourceFilterByAggregationData(dlIdValue, jobIdValue, tableName, tableNameAlias));
+                SourceGroupByAggregationData groupBy = groupByExecuteSqlInfoData.getOrDefault(key, new SourceGroupByAggregationData(Long.valueOf(dlIdValue), Long.valueOf(jobIdValue), tableName, tableNameAlias));
+
+                // Add Java statements based on the mappings
+                // String Var_source_values = sourceValue; // Comes from the parameters
+                String flow = row4.getFlow() == null ? "" : row4.getFlow();
+                        tableNameAlias = row4.getFinalTableName() + "_ExecuteSql";
+                String fromTable = row4.getFinalTableName() + "_excsql";
+                String whereCondition = " ";
+                String havingCondition = (filter.getFilterCondition() != null) ? " having " + filter.getFilterCondition() : "";
+                String groupByCondition = (groupBy.getGroupByColumns() != null && flow.equals("G")) ?
+                    " group by " + groupBy.getHavingGroupByColumns() :
+                    (groupBy.getGroupByColumns() != null ? " group by " + groupBy.getGroupByColumns() : "");
+
+                String sqlQuery = row4.getFlow() == null ?
+                    ("Select " + row4.getColumnNameWithAlias() + " from `" + row4.getTableName() + "`") :
+                    row4.getFlow().equals("G") ? 
+                        ("Select " + groupBy.getHavingGroupByColumnsWithAlias() + groupBy.getHavingAggColAlias() + 
+                        " from `" + row4.getTableName() + "` " + groupByCondition + " " + havingCondition) :
+                    (row4.getGroupById() == 0 ? 
+                        "Select " + row4.getColumnNameWithAlias() + " from `" + row4.getTableName() + "` " + whereCondition :
+                        "Select " + groupBy.getGroupByColumnsAlias() + groupBy.getAggregationColumnsWithAlias() + 
+                        " from `" + row4.getTableName() + "` " + whereCondition + " " + groupByCondition);
+
+                String partitionQuery = row4.getFlow() == null ?
+                    ("Select " + row4.getColumnNameWithAlias() + " from `" + fromTable + "` ") :
+                    row4.getFlow().equals("G") ?
+                        (groupBy.getAggregationColumnsWithAlias() == null || groupBy.getAggregationColumnsWithAlias().isEmpty() ?
+                            ("Select " + groupBy.getHavingGroupByColumnsWithAlias() + " from `" + fromTable + "` " + groupByCondition + " " + havingCondition) :
+                            ("Select " + groupBy.getHavingGroupByColumnsWithAlias() + "," + groupBy.getHavingAggColAlias() + 
+                            " from `" + fromTable + "` " + groupByCondition + " " + havingCondition)) :
+                    (row4.getGroupById() == 0 ?
+                        "Select " + row4.getColumnNameWithAlias() + " from `" + fromTable + "` " + whereCondition :
+                        (groupBy.getAggregationColumnsWithAlias() == null || groupBy.getAggregationColumnsWithAlias().isEmpty() ?
+                            "Select " + groupBy.getGroupByColumnsWithAlias() + " from `" + fromTable + "` " + whereCondition + groupByCondition :
+                            "Select " + groupBy.getGroupByColumnsWithAlias() + "," + groupBy.getAggregationColumnsWithAlias() + 
+                            " from `" + fromTable + "` " + whereCondition + groupByCondition));
+
+                String partitionSqlQuery = row4.getFinalTableName() + ".query=" + partitionQuery;
+                String sourceSqlQuery = tableNameAlias + ".sourcesql.query=" + sqlQuery;
+
+                // TODO target DB Name etc. 
+                // replace them appropriately
+                String tgtHost = "", tgtport = "", tgtDbName = "", tgtUser = "", tgtPassword = "";
+            
+                String url = sourceValue.replace("${TableName.src.jdbc.url}", 
+tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + ":" + tgtport + "/" + tgtDbName);
+
+                String driver = url.replace("${TableName.src.jdbc.driver}", 
+                    tableNameAlias.replace("$", "\\$") + ".src.jdbc.driver=com.mysql.jdbc.Driver");
+
+                String user = driver.replace("${TableName.src.db.user}", 
+                    tableNameAlias.replace("$", "\\$") + ".src.db.user=" + tgtUser);
+
+                String password = user.replace("${TableName.src.db.password}", 
+                    tableNameAlias.replace("$", "\\$") + ".src.db.password=" + 
+                    tgtPassword.replace("$", "\\$"));
+                    // ((String)globalMap.get("tgt_pwd")).replace("$", "\\$"));
+
+
+                String partitionSize = password.replace("${TableName.partition.size}", 
+                    tableNameAlias.replace("$", "\\$") + ".partition.size=");
+
+                String dynamicPartitionQuery = partitionSize.replace("${DynamicName.query}", 
+                    partitionSqlQuery.replace("$", "\\$"));
+
+                String sourceIsQuery = dynamicPartitionQuery.replace("${TableName.source.is.query}", 
+                    tableNameAlias.replace("$", "\\$") + ".source.is.query=TRUE");
+
+                String upperBound = sourceIsQuery.replace("${TableName.partition.upper.bound}", 
+                    tableNameAlias.replace("$", "\\$") + ".partition.upper.bound=");
+
+                String noOfPartitions = upperBound.replace("${TableName.number.of.partitions}", 
+                    tableNameAlias.replace("$", "\\$") + ".number.of.partitions=");
+
+                String dynamicSourceSqlQuery = noOfPartitions.replace("Dynamic_SourceSql_Query", 
+                    sourceSqlQuery.replace("$", "\\$"));
+
+                // Append to final result
+                if (finalSource.length() == 0) {
+                    finalSource.append(dynamicSourceSqlQuery);
+                } else {
+                    finalSource.append("\n").append(dynamicSourceSqlQuery).append("\n");
+                }
+            }
+
+            return finalSource.toString();
+        }
+
+        public Map<String, SourceAggregationData> executeQueryAndProcessData(Connection conn, 
+                                       Map<String, SourceGroupByAggregationData> groupByExecuteSqlInfoData, 
+                                       Map<String, SourceFilterByAggregationData> filterGroupByInfoData, 
+                                       Map<String, Map<String, String>> tmpTableDataMap, 
+                                       Map<String, Map<String, Object>> filtergroupByMap,
+                                       Long jobId, Long dlId) throws SQLException {
+            String query = SQLQueries.SELECT_FROM_DRIVING_LOOKUP_TABLE_INFO;
+
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setLong(1, jobId);
+                pstmt.setLong(2, dlId);
+                pstmt.setLong(3, jobId);
+                pstmt.setLong(4, dlId);
+
+                Map<String, SourceAggregationData> sourceAggregationMap = new HashMap<>();
+
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        
+                        // Example: Accessing values from ResultSet
+                        String jobIdResult = rs.getString("Job_Id");
+                        String dlIdResult = rs.getString("DL_Id");
+                        String tableName = rs.getString("Table_Name");
+                        String columnName = rs.getString("Column_Name");
+                        String tableNameAlias = rs.getString("Table_Name_Alias");
+                        String columnNameAlias = rs.getString("Column_Name_Alias");
+                        String dataType = rs.getString("Data_Type");
+
+                        
+
+                        String keyForTmptableDataMap = tableNameAlias;
+                        // Lookup in tmpTableDataMap
+                        Map<String, String> tmpTableData = tmpTableDataMap.getOrDefault(keyForTmptableDataMap, new HashMap<>());//TODO instead of null blank value object must be return
+                        String finalTableName  = tmpTableData.get("Final_Table_Name"); // TODO check for nullness
+                        
+                        // Key also include finalTableName. But is not benefecial or doesn't matter.
+                        //String keyMain = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias + "-" + finalTableName;
+                        String keyMain = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
+
+                        Map<String, Object> filterGroupData = filtergroupByMap.getOrDefault(keyMain, new HashMap<>());//TODO instead of null blank value object must be return
+                        String columnNameWithAlias = "`"+ columnNameAlias +"` as `"+  columnNameAlias +"`";
+                        tableNameAlias = tableNameAlias.replace(" ","_"); 
+
+                        SourceAggregationData data = sourceAggregationMap.getOrDefault(keyMain, new SourceAggregationData(String.valueOf(dlId), String.valueOf(jobId), tableName, tableNameAlias));
+                        
+                        data.Column_Name.append(data.Column_Name.length() > 0 ? ", " : "").append(columnName);
+                        data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(columnNameAlias);
+                        data.Column_Name_with_Alias.append(data.Column_Name_with_Alias.length() > 0 ? ", " : "").append(columnNameWithAlias);
+                        data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(dataType);
+                        data.Final_Table_Name = finalTableName; // TODO check it is just part of the key not the data. so list of it not required
+                        // Values from lookup table
+                        if (filtergroupByMap != null) {
+                            // TODO Using last values only
+                            data.Flow = (String) filterGroupData.get("Flow");
+                            data.Filter_Id = (Long) filterGroupData.get("Filter_Id");
+                            data.Group_By_Id = (Long) filterGroupData.get("Group_By_Id");
+                            // data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Flow"))); 
+                            // data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Filter_Id")));  
+                            // data.Group_By_Id.append(data.Group_By_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Group_By_Id")));  
+                        }
+                        sourceAggregationMap.put(keyMain, data); 
+
+                        // Use the provided maps (e.g., groupByExecuteSqlInfoData, filterGroupByInfoData, etc.)
+                        // for further processing based on your logic.
+                        
+                        // Example usage:
+                        // String key = jobIdResult + "-" + dlIdResult + "-" + tableName + "-" + columnName;
+                        // Check or update tmpTableDataMap, groupByExecuteSqlInfoData, filterGroupByInfoData, etc.
+                    }
+                }
+                return sourceAggregationMap;
+            }
+        }
+
         public String performJoinWithLookupData(
                 String sourceValues,
                 Map<String, SourceAggregationData> mainData,
@@ -1643,11 +1868,11 @@ public class DataMartStructureScriptGenerator {
                 SourceAggregationData mainRecord = mainEntry.getValue();
 
                 // Lookup in groupByInfoData
-                SourceGroupByAggregationData groupBy = groupByInfoData.getOrDefault(key, null);
+                SourceGroupByAggregationData groupBy = groupByInfoData.getOrDefault(key, null); // TODO no null value
                 // Lookup in filterGroupByInfoData
-                SourceFilterByAggregationData filter = filterGroupByInfoData.getOrDefault(key, null);
+                SourceFilterByAggregationData filter = filterGroupByInfoData.getOrDefault(key, null);  // TODO no null
                 // Lookup in tmpTableDataMap
-                Map<String, String> tmpTableData = tmpTableDataMap.getOrDefault(key, null);
+                Map<String, String> tmpTableData = tmpTableDataMap.getOrDefault(key, null); //TODO instead of null blank value object must be return
 
                 // Create an AggregatedResult object to hold the joined data
                 //AggregatedResult aggregatedResult = new AggregatedResult();
@@ -1856,7 +2081,7 @@ public class DataMartStructureScriptGenerator {
                 ResultSet rs = pstmt.executeQuery();
                 while (rs.next()) {
                     String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + rs.getString("Table_Name_Alias");
-                    Map<String, String> lookupValues = new HashMap<>();
+                    Map<String, Object> lookupValues = new HashMap<>();
                     lookupValues.put("Flow", rs.getString("Flow"));
                     lookupValues.put("Filter_Id", rs.getString("Filter_Id"));
                     lookupValues.put("Group_By_Id", rs.getString("Group_By_Id"));
@@ -1946,8 +2171,13 @@ public class DataMartStructureScriptGenerator {
             return drivingTableMap;
         }
         
-        public Map<String, Map<String, String>> getTmpTableData(Connection connection, String tmpTable) throws SQLException {
-            String query = SQLQueries.buildQueryForTable(tmpTable);
+        public Map<String, Map<String, String>> getTmpTableData(Connection connection, String tmpTable, boolean propertyDB) throws SQLException {
+            String query = "";
+            if (propertyDB == true ) {
+                query = SQLQueries.buildQueryForTableForDB(tmpTable); // `property` = 'db'
+            } else {
+                query = SQLQueries.buildQueryForTableForNonDB(tmpTable); // `property` != 'db'
+            }
             Map<String, Map<String, String>> tmpTableData = new HashMap<>();
             try (PreparedStatement pstmt = connection.prepareStatement(query);
                 ResultSet rs = pstmt.executeQuery()) {
@@ -1963,14 +2193,229 @@ public class DataMartStructureScriptGenerator {
             }
             return tmpTableData;
         }
+
+        // Value SourceExecuteSql GroupBy filter
+        // TODO GOOD datatype
+        public Map<String, Map<String, Object>> getFilterGroupByInfo(Connection conn, Long jobId, Long dlId) throws SQLException {
+            Map<String, Map<String, Object>> filterGroupByInfoMap = new HashMap<>();
+            String query = SQLQueries.SELECT_FROM_FILTER_GROUP_BY_INFO;
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setLong(1, jobId);
+                pstmt.setLong(2, dlId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String key = rs.getLong("DL_Id") + "-" + rs.getLong("Job_Id") + "-" +
+                                     rs.getString("Table_Name") + "-" + rs.getString("Table_Name_Alias");
+        
+                        Map<String, Object> valueMap = new HashMap<>();
+                        valueMap.put("Filter_Id", rs.getLong("Filter_Id"));
+                        valueMap.put("Group_By_Id", rs.getLong("Group_By_Id"));
+                        valueMap.put("Flow", rs.getString("Flow"));
+                        filterGroupByInfoMap.put(key, valueMap);
+                    }
+                }
+            }
+            return filterGroupByInfoMap;
+        }
+        
+        // Value SourceExecuteSql GroupBy 
+        public Map<String, SourceGroupByAggregationData> getGroupByInfoDataSourceExecuteSql(Connection connection, String jobId,
+                String dlId) throws SQLException {
+            // CHECK: Same queries as of Source
+            Map<String, Map<String, String>> drivingTableDataMap = getDrivingTableInfoData(jobId, dlId, connection);
+            Map<String, Map<String, String>> lookupTableDataMap = getLookupTableInfoData(jobId, dlId, connection);
+            // Data from lookup and Driving tables union'ed
+            Map<String, Map<String, String>> lookupAndDrivingTableDataMap = getDistinctFromDrivingLookupTableInfo(connection, jobId, dlId);
+
+            // Prepare the main query and execute
+            try (PreparedStatement pstmt = connection.prepareStatement(SQLQueries.SELECT_DISTINCT_FROM_FILTER_GROUP_BY_INFO)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+                Map<String, SourceGroupByAggregationData> sourceGroupByExecuteSqlAggregationMap = new HashMap<>();
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        Long dlIdResult = rs.getLong("DL_Id");
+                        Long jobIdResult = rs.getLong("Job_Id");
+                        String tableName = rs.getString("Table_Name");
+                        String tableNameAlias = rs.getString("Table_Name_Alias");
+                        String columnName = rs.getString("Column_Name");
+                        String flow = rs.getString("Flow");
+
+                        // Create keys for DrivingTable, LookupTable and comnined data
+                        String drivingKey = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + columnName;
+                        String lookupKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
+                        String queryTableKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
+
+                        // TODO ImpPoint 1
+                        // Perform left outer join with the driving table data
+                        Map<String, String> drivingData = drivingTableDataMap.getOrDefault(drivingKey, new HashMap<>());
+                        // Perform left outer join with the lookup table data
+                        Map<String, String> lookupData = lookupTableDataMap.getOrDefault(lookupKey, new HashMap<>());
+                        // Perform left outer join with the Union'ed tables data
+                        Map<String, String> lookupAndDrivingData = lookupAndDrivingTableDataMap.getOrDefault(queryTableKey, new HashMap<>());
+
+                        System.out.println("Main Query Result:");
+                        System.out.println("DL_Id: " + dlIdResult);
+                        System.out.println("Job_Id: " + jobIdResult);
+                        System.out.println("Table_Name: " + tableName);
+                        System.out.println("Table_Name_Alias: " + tableNameAlias);
+                        System.out.println("Column_Name: " + columnName);
+
+                        // Join the data from the other sources (e.g., drivingData, lookupData,
+                        // queryTableData)
+                        // For example, log the joins or use the data in further processing
+                        System.out.println("Driving Table Data: " + drivingData);
+                        System.out.println("Lookup Table Data: " + lookupData);
+                        System.out.println("Query Table Data: " + lookupAndDrivingData);
+                        // Key to put data into output
+                        String key = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
+
+                        // Aggregation_Columns (corresponding to Var.Aggregation_Columns in Talend)
+                        String aggregationColumns = (rs.getString("Flag").equals("true")) ? 
+                            rs.getString("Aggregation") + "(`" + lookupAndDrivingData.get(rs.getString("Column_Name_Alias")) + "`)" 
+                            : null;
+
+                        // nxt_column (corresponding to Var.nxt_column)
+                        String nxtColumn = (lookupData.get(rs.getString("Column_Name")) == null) ? 
+                            drivingData.get(rs.getString("Column_Name_Alias")) 
+                            : lookupData.get(rs.getString("Column_Name_Alias"));
+
+                        // Aggregation_Columns_with_Alias (corresponding to Var.Aggregation_Columns_with_Alias)
+                        String aggregationColumnsWithAlias = rs.getString("Flag").equals("true") ? 
+                            rs.getString("Aggregation").equals("Distinct_Count") ? 
+                                "count(distinct `" + nxtColumn + "`) as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation").equals("Stddev_Samp") ? 
+                                "case when Stddev_Samp(`" + nxtColumn + "`)='NaN' then null else Stddev_Samp(`" + nxtColumn + "`) end as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation").equals("Var_Samp") ? 
+                                "case when Var_Samp(`" + nxtColumn + "`)='NaN' then null else Var_Samp(`" + nxtColumn + "`) end as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation") + "(`" + nxtColumn + "`) as `" + nxtColumn + "`" : null;
+
+                        // Group_By_Columns (corresponding to Var.Group_By_Columns)
+                        String groupByColumns = rs.getBoolean("Flag") == false ? 
+                            "`" + lookupAndDrivingData.get(rs.getString("Column_Name_Alias")) + "`" 
+                            : null;
+
+                        // Group_By_Columns_Alias (corresponding to Var.Group_By_Columns_Alias)
+                        String groupByColumnsAlias = rs.getBoolean("Flag") == false ? 
+                            (lookupData.get(rs.getString("Column_Name_Alias")) == null ? 
+                                "`" + drivingData.get(rs.getString("Column_Name_Alias")) + "`" : 
+                                "`" + lookupData.get(rs.getString("Column_Name_Alias")) + "`") 
+                            : null;
+
+                        // Group_By_Columns_With_Alias (corresponding to Var.Group_By_Columns_With_Alias)
+                        String groupByColumnsWithAlias = rs.getBoolean("Flag") == false ? 
+                            (lookupData.get(rs.getString("Column_Name_Alias")) == null ? 
+                                "`" + drivingData.get(rs.getString("Column_Name_Alias")) + "` as `" + drivingData.get(rs.getString("Column_Name_Alias")) + "`" : 
+                                "`" + lookupData.get(rs.getString("Column_Name_Alias")) + "` as `" + lookupData.get(rs.getString("Column_Name_Alias")) + "`") 
+                            : null;
+
+                        // Having_nxt_column (corresponding to Var.Having_nxt_column)
+                        String havingNxtColumn = (lookupData.get(rs.getString("Column_Name")) == null) ? 
+                            drivingData.get(rs.getString("Column_Name")) 
+                            : lookupData.get(rs.getString("Column_Name"));
+
+                        // Having_Aggregation_Columns_with_Alias (corresponding to Var.Having_Aggregation_Columns_with_Alias)
+                        String havingAggregationColumnsWithAlias = rs.getBoolean("Flag") == true ? 
+                            rs.getString("Aggregation").equals("Distinct_Count") ? 
+                                "count(distinct `" + havingNxtColumn + "`) as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation").equals("Stddev_Samp") ? 
+                                "case when Stddev_Samp(`" + havingNxtColumn + "`)='NaN' then null else Stddev_Samp(`" + havingNxtColumn + "`) end as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation").equals("Var_Samp") ? 
+                                "case when Var_Samp(`" + havingNxtColumn + "`)='NaN' then null else Var_Samp(`" + havingNxtColumn + "`) end as `" + nxtColumn + "`" :
+                            rs.getString("Aggregation") + "(`" + havingNxtColumn + "`) as `" + nxtColumn + "`" 
+                            : null;
+
+                        // Having_Group_By_Columns (corresponding to Var.Having_Group_By_Columns)
+                        String havingGroupByColumns = rs.getBoolean("Flag") == false ? 
+                            "`" + lookupAndDrivingData.get(rs.getString("Column_Name")) + "`" 
+                            : null;
+
+                        // Having_Group_By_Columns_Alias (corresponding to Var.Having_Group_By_Columns_Alias)
+                        String havingGroupByColumnsAlias = rs.getBoolean("Flag") == false ? 
+                            (lookupData.get(rs.getString("Column_Name_Alias")) == null ? 
+                                "`" + drivingData.get(rs.getString("Column_Name")) + "` as `" + drivingData.get(rs.getString("Column_Name_Alias")) + "`" : 
+                                "`" + lookupData.get(rs.getString("Column_Name")) + "` as `" + lookupData.get(rs.getString("Column_Name_Alias")) + "`") 
+                            : null;
+
+                        // Having_Group_By_Columns_With_Alias (corresponding to Var.Having_Group_By_Columns_With_Alias)
+                        String havingGroupByColumnsWithAlias = rs.getBoolean("Flag") == false ? 
+                            (lookupData.get(rs.getString("Column_Name_Alias")) == null ? 
+                                "`" + drivingData.get(rs.getString("Column_Name")) + "` as `" + drivingData.get(rs.getString("Column_Name_Alias")) + "`" : 
+                                "`" + lookupData.get(rs.getString("Column_Name")) + "` as `" + lookupData.get(rs.getString("Column_Name_Alias")) + "`") 
+                            : null;
+                        
+                        SourceGroupByAggregationData data = sourceGroupByExecuteSqlAggregationMap.getOrDefault(key,
+                            new SourceGroupByAggregationData(dlIdResult, jobIdResult, tableName, tableNameAlias));
+                        // Similar to another component
+                        data.Aggregation_Columns.append(data.Aggregation_Columns.length() > 0 ? ", " : "")
+                                .append(aggregationColumns);
+                        data.Group_By_Columns.append(data.Group_By_Columns.length() > 0 ? ", " : "")
+                                .append(groupByColumns);
+                        // Flow 
+                        data.Flow = flow;
+                        data.Aggregation_Columns_with_Alias
+                                .append(data.Aggregation_Columns_with_Alias.length() > 0 ? ", " : "")
+                                .append(aggregationColumnsWithAlias);
+                        data.Group_By_Columns_Alias.append(data.Group_By_Columns_Alias.length() > 0 ? ", " : "")
+                                .append(groupByColumnsAlias);
+                        data.Group_By_Columns_With_Alias
+                                .append(data.Group_By_Columns_With_Alias.length() > 0 ? ", " : "")
+                                .append(groupByColumnsWithAlias);
+                        data.Having_Agg_Col_Alias.append(data.Having_Agg_Col_Alias.length() > 0 ? ", " : "")
+                                .append(havingAggregationColumnsWithAlias);
+                        data.Having_Grpby_Columns.append(data.Having_Grpby_Columns.length() > 0 ? ", " : "")
+                                .append(havingGroupByColumns);
+                        data.Having_Grpby_Columns_Alias.append(data.Having_Grpby_Columns_Alias.length() > 0 ? ", " : "")
+                                .append(havingGroupByColumnsAlias);
+                        data.Having_Grpby_Columns_with_Alias
+                                .append(data.Having_Grpby_Columns_with_Alias.length() > 0 ? ", " : "")
+                                .append(havingGroupByColumnsWithAlias);
+                        
+                        sourceGroupByExecuteSqlAggregationMap.put(key, data);
+                    }
+                }
+                return sourceGroupByExecuteSqlAggregationMap;
+            }
+        }
+        // Value SourceExecuteSql GroupBy 
+        public Map<String, Map<String, String>> getDistinctFromDrivingLookupTableInfo(Connection conn, String jobId, String dlId) throws SQLException {
+            Map<String, Map<String, String>> resultMap = new HashMap<>();
+            String query = SQLQueries.SELECT_DISTINCT_FROM_DRIVING_LOOKUP_TABLE_INFO;
+        
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setString(1, jobId);
+                pstmt.setString(2, dlId);
+                pstmt.setString(3, jobId);
+                pstmt.setString(4, dlId);
+        
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String key = rs.getString("Job_Id") + "-" + rs.getString("DL_Id") + "-" + rs.getString("Table_Name") + "-" + rs.getString("Column_Name");
+                        Map<String, String> rowData = new HashMap<>();
+                        rowData.put("Job_Id", rs.getString("Job_Id"));
+                        rowData.put("DL_Id", rs.getString("DL_Id"));
+                        rowData.put("Table_Name", rs.getString("Table_Name"));
+                        rowData.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));
+                        rowData.put("Column_Name", rs.getString("Column_Name"));
+                        rowData.put("Column_Name_Alias", rs.getString("Column_Name_Alias"));
+                        rowData.put("Data_Type", rs.getString("Data_Type"));
+                        
+                        resultMap.put(key, rowData);
+                    }
+                }
+            }
+            return resultMap;
+        }        
+
         // value Source main processing
-        public Map<String, SourceGroupByAggregationData> getGroupByInfoData(Connection connection, String jobId, String dlId) throws SQLException {
+        public Map<String, SourceGroupByAggregationData> getGroupByInfoData(Connection connection, String jobId,
+                String dlId) throws SQLException {
             Map<String, Map<String, String>> drivingTableDataMap = getDrivingTableInfoData(jobId, dlId, connection);
             Map<String, Map<String, String>> lookupTableDataMap = getLookupTableInfoData(jobId, dlId, connection);
             // TODO: tmpTable shoul;d be defined somewhere else??
             String tmpTable = dlName + dlId + jobId;
-            Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(connection, tmpTable);
-        
+            Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(connection, tmpTable, true); //`property` = 'db'
+
             // Prepare the main query and execute
             try (PreparedStatement pstmt = connection.prepareStatement(SQLQueries.SOURCE_MAIN_QUERY)) {
                 pstmt.setString(1, jobId);
@@ -1978,18 +2423,18 @@ public class DataMartStructureScriptGenerator {
                 Map<String, SourceGroupByAggregationData> sourceGroupByAggregationMap = new HashMap<>();
                 try (ResultSet rs = pstmt.executeQuery()) {
                     while (rs.next()) {
-                        String dlIdResult = rs.getString("DL_Id");
-                        String jobIdResult = rs.getString("Job_Id");
+                        Long dlIdResult = rs.getLong("DL_Id");
+                        Long jobIdResult = rs.getLong("Job_Id");
                         String tableName = rs.getString("Table_Name");
                         String tableNameAlias = rs.getString("Table_Name_Alias");
                         String columnName = rs.getString("Column_Name");
                         String flow = rs.getString("Flow");
-        
-                        //Create keys for DrivingTable, LookupTable and Temp Table
+
+                        // Create keys for DrivingTable, LookupTable and Temp Table
                         String drivingKey = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + columnName;
                         String lookupKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
                         String queryTableKey = tableNameAlias;
-        
+
                         // TODO ImpPoint 1
                         // Perform left outer join with the driving table data
                         Map<String, String> drivingData = drivingTableDataMap.getOrDefault(drivingKey, new HashMap<>());
@@ -1997,7 +2442,7 @@ public class DataMartStructureScriptGenerator {
                         Map<String, String> lookupData = lookupTableDataMap.getOrDefault(lookupKey, new HashMap<>());
                         // Perform left outer join with the temp table data
                         Map<String, String> tmpData = tmpTableDataMap.getOrDefault(queryTableKey, new HashMap<>());
-        
+
                         // Example process for final result; this can be expanded or modified
                         System.out.println("Main Query Result:");
                         System.out.println("DL_Id: " + dlIdResult);
@@ -2005,58 +2450,111 @@ public class DataMartStructureScriptGenerator {
                         System.out.println("Table_Name: " + tableName);
                         System.out.println("Table_Name_Alias: " + tableNameAlias);
                         System.out.println("Column_Name: " + columnName);
-        
-                        // Join the data from the other sources (e.g., drivingData, lookupData, queryTableData)
+
+                        // Join the data from the other sources (e.g., drivingData, lookupData,
+                        // queryTableData)
                         // For example, log the joins or use the data in further processing
                         System.out.println("Driving Table Data: " + drivingData);
                         System.out.println("Lookup Table Data: " + lookupData);
                         System.out.println("Query Table Data: " + tmpData);
                         String key = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
 
-                        // Map 5 
+                        // Map 5
                         String aggregation = tmpData.get("property") == null ? " " : rs.getString("Aggregation");
-                        String nxtColumn = (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name_Alias") : drivingData.get("Column_Name_Alias"));
-                        String aggregationColumns = (rs.getBoolean("Flag") ? 
-                            rs.getString("Aggregation").equals("Distinct_Count") ? 
-                            "count(distinct `" + rs.getString("Column_Name") + "`) as `" + nxtColumn + "`" :
-                            rs.getString("Aggregation").equals("Stddev_Samp") ? 
-                            "case when Stddev_Samp(`" + rs.getString("Column_Name") + "`)='NaN' then null else Stddev_Samp(`" + rs.getString("Column_Name") + "`) end as `" + nxtColumn + "`" :
-                            rs.getString("Aggregation").equals("Var_Samp") ? 
-                            "case when Var_Samp(`" + rs.getString("Column_Name") + "`)='NaN' then null else Var_Samp(`" + rs.getString("Column_Name") + "`) end as `" + nxtColumn + "`" :
-                            rs.getString("Aggregation") + "(`" + rs.getString("Column_Name") + "`) as `" + nxtColumn + "`" : null);
-                        String aggregationColumnsWithAlias = (rs.getBoolean("Flag") ? 
-                            aggregation + "(`" + rs.getString("Column_Name") + "`) as `" + (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name_Alias") : drivingData.get("Column_Name_Alias")) + "`" : null);
-                        String groupByColumns = (rs.getBoolean("Flag") == false ? "`" + rs.getString("Column_Name") + "`" : null);
-                        String groupByColumnsAlias = (rs.getBoolean("Flag") == false ? 
-                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name_Alias") + "`" : "`" + drivingData.get("Column_Name_Alias") + "`") : null);
-                        String groupByColumnsWithAlias = (rs.getBoolean("Flag") == false ? 
-                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "` as `" + lookupData.get("Column_Name_Alias") + "`" : "`" + drivingData.get("Column_Name") + "` as `" + drivingData.get("Column_Name_Alias") + "`") : null);
-                        String havingAggColAlias = (rs.getBoolean("Flag") ? 
-                            aggregation + "(`" + rs.getString("Column_Name") + "`) as `" + (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name") : drivingData.get("Column_Name")) + "`" : null);
-                        String havingGrpByColumns = (rs.getBoolean("Flag") == false ? "`" + rs.getString("Column_Name") + "`" : null);
-                        String havingGrpByColumnsAlias = (rs.getBoolean("Flag") == false ? 
-                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "`" : "`" + drivingData.get("Column_Name") + "`") : null);
-                        String havingGrpByColumnsWithAlias = (rs.getBoolean("Flag") == false ? 
-                            (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "` as `" + lookupData.get("Column_Name") + "`" : "`" + drivingData.get("Column_Name") + "` as `" + drivingData.get("Column_Name") + "`") : null);
-                    
-                        SourceGroupByAggregationData data = sourceGroupByAggregationMap.getOrDefault(key, new SourceGroupByAggregationData(dlId, jobId, tableName, tableNameAlias));
+                        String nxtColumn = (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name_Alias")
+                                : drivingData.get("Column_Name_Alias"));
+                        String aggregationColumns = (rs.getBoolean("Flag")
+                                ? rs.getString("Aggregation").equals("Distinct_Count")
+                                        ? "count(distinct `" + rs.getString("Column_Name") + "`) as `" + nxtColumn + "`"
+                                        : rs.getString("Aggregation").equals("Stddev_Samp")
+                                                ? "case when Stddev_Samp(`" + rs.getString("Column_Name")
+                                                        + "`)='NaN' then null else Stddev_Samp(`"
+                                                        + rs.getString("Column_Name") + "`) end as `" + nxtColumn + "`"
+                                                : rs.getString("Aggregation").equals("Var_Samp")
+                                                        ? "case when Var_Samp(`" + rs.getString("Column_Name")
+                                                                + "`)='NaN' then null else Var_Samp(`"
+                                                                + rs.getString("Column_Name") + "`) end as `"
+                                                                + nxtColumn + "`"
+                                                        : rs.getString("Aggregation") + "(`"
+                                                                + rs.getString("Column_Name") + "`) as `" + nxtColumn
+                                                                + "`"
+                                : null);
+                        String aggregationColumnsWithAlias = (rs.getBoolean("Flag")
+                                ? aggregation + "(`" + rs.getString("Column_Name") + "`) as `"
+                                        + (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name_Alias")
+                                                : drivingData.get("Column_Name_Alias"))
+                                        + "`"
+                                : null);
+                        String groupByColumns = (rs.getBoolean("Flag") == false
+                                ? "`" + rs.getString("Column_Name") + "`"
+                                : null);
+                        String groupByColumnsAlias = (rs.getBoolean("Flag") == false
+                                ? (drivingData.get("Column_Name") == null
+                                        ? "`" + lookupData.get("Column_Name_Alias") + "`"
+                                        : "`" + drivingData.get("Column_Name_Alias") + "`")
+                                : null);
+                        String groupByColumnsWithAlias = (rs.getBoolean("Flag") == false
+                                ? (drivingData.get("Column_Name") == null
+                                        ? "`" + lookupData.get("Column_Name") + "` as `"
+                                                + lookupData.get("Column_Name_Alias") + "`"
+                                        : "`" + drivingData.get("Column_Name") + "` as `"
+                                                + drivingData.get("Column_Name_Alias") + "`")
+                                : null);
+                        String havingAggColAlias = (rs.getBoolean("Flag")
+                                ? aggregation + "(`" + rs.getString("Column_Name") + "`) as `"
+                                        + (drivingData.get("Column_Name") == null ? lookupData.get("Column_Name")
+                                                : drivingData.get("Column_Name"))
+                                        + "`"
+                                : null);
+                        String havingGrpByColumns = (rs.getBoolean("Flag") == false
+                                ? "`" + rs.getString("Column_Name") + "`"
+                                : null);
+                        String havingGrpByColumnsAlias = (rs.getBoolean("Flag") == false
+                                ? (drivingData.get("Column_Name") == null ? "`" + lookupData.get("Column_Name") + "`"
+                                        : "`" + drivingData.get("Column_Name") + "`")
+                                : null);
+                        String havingGrpByColumnsWithAlias = (rs.getBoolean("Flag") == false
+                                ? (drivingData.get("Column_Name") == null
+                                        ? "`" + lookupData.get("Column_Name") + "` as `" + lookupData.get("Column_Name")
+                                                + "`"
+                                        : "`" + drivingData.get("Column_Name") + "` as `"
+                                                + drivingData.get("Column_Name") + "`")
+                                : null);
 
-                        data.Aggregation_Columns.append(data.Aggregation_Columns.length() > 0 ? ", " : "").append(aggregationColumns);
-                        data.Group_By_Columns.append(data.Group_By_Columns.length() > 0 ? ", " : "").append(groupByColumns);
-                        data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(flow);
-                        data.Aggregation_Columns_with_Alias.append(data.Aggregation_Columns_with_Alias.length() > 0 ? ", " : "").append(aggregationColumnsWithAlias);
-                        data.Group_By_Columns_Alias.append(data.Group_By_Columns_Alias.length() > 0 ? ", " : "").append(groupByColumnsAlias);
-                        data.Group_By_Columns_With_Alias.append(data.Group_By_Columns_With_Alias.length() > 0 ? ", " : "").append(groupByColumnsWithAlias);
-                        data.Having_Agg_Col_Alias.append(data.Having_Agg_Col_Alias.length() > 0 ? ", " : "").append(havingAggColAlias);
-                        data.Having_Grpby_Columns.append(data.Having_Grpby_Columns.length() > 0 ? ", " : "").append(havingGrpByColumns);
-                        data.Having_Grpby_Columns_Alias.append(data.Having_Grpby_Columns_Alias.length() > 0 ? ", " : "").append(havingGrpByColumnsAlias);
-                        data.Having_Grpby_Columns_with_Alias.append(data.Having_Grpby_Columns_with_Alias.length() > 0 ? ", " : "").append(havingGrpByColumnsWithAlias);
+                        SourceGroupByAggregationData data = sourceGroupByAggregationMap.getOrDefault(key,
+                                new SourceGroupByAggregationData(dlIdResult, jobIdResult, tableName, tableNameAlias));
+
+                        data.Aggregation_Columns.append(data.Aggregation_Columns.length() > 0 ? ", " : "")
+                                .append(aggregationColumns);
+                        data.Group_By_Columns.append(data.Group_By_Columns.length() > 0 ? ", " : "")
+                                .append(groupByColumns);
+                        data.Flow = flow; // TODO Flow is Last value
+                        data.Aggregation_Columns_with_Alias
+                                .append(data.Aggregation_Columns_with_Alias.length() > 0 ? ", " : "")
+                                .append(aggregationColumnsWithAlias);
+                        data.Group_By_Columns_Alias.append(data.Group_By_Columns_Alias.length() > 0 ? ", " : "")
+                                .append(groupByColumnsAlias);
+                        data.Group_By_Columns_With_Alias
+                                .append(data.Group_By_Columns_With_Alias.length() > 0 ? ", " : "")
+                                .append(groupByColumnsWithAlias);
+                        data.Having_Agg_Col_Alias.append(data.Having_Agg_Col_Alias.length() > 0 ? ", " : "")
+                                .append(havingAggColAlias);
+                        data.Having_Grpby_Columns.append(data.Having_Grpby_Columns.length() > 0 ? ", " : "")
+                                .append(havingGrpByColumns);
+                        data.Having_Grpby_Columns_Alias.append(data.Having_Grpby_Columns_Alias.length() > 0 ? ", " : "")
+                                .append(havingGrpByColumnsAlias);
+                        data.Having_Grpby_Columns_with_Alias
+                                .append(data.Having_Grpby_Columns_with_Alias.length() > 0 ? ", " : "")
+                                .append(havingGrpByColumnsWithAlias);
 
                         // Values from lookup table
                         // if (lookupValues != null) {
-                        //     data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Flow"))); 
-                        //     data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Filter_Id")));  
-                        //     data.Group_By_Id.append(data.Group_By_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Group_By_Id")));  
+                        // data.Flow.append(data.Flow.length() > 0 ? ", " :
+                        // "").append(lookupValues.get(rs.getString("Flow")));
+                        // data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " :
+                        // "").append(lookupValues.get(rs.getString("Filter_Id")));
+                        // data.Group_By_Id.append(data.Group_By_Id.length() > 0 ? ", " :
+                        // "").append(lookupValues.get(rs.getString("Group_By_Id")));
                         // }
                         sourceGroupByAggregationMap.put(key, data);
                     }
@@ -2064,7 +2562,7 @@ public class DataMartStructureScriptGenerator {
                 return sourceGroupByAggregationMap;
             }
         }
-        
+                
         public Map<String, SourceFilterByAggregationData> getFilterGroupByInfoData(Connection conn, String jobId, String dlId) throws SQLException {
             Map<String, Map<String, String>> resultMap = new HashMap<>();
             
@@ -2082,7 +2580,7 @@ public class DataMartStructureScriptGenerator {
                         String tableName = rs.getString("Table_Name");
                         String tableNameAlias = rs.getString("Table_Name_Alias");
 
-                        String filterId = rs.getString("Filter_Id");
+                        Long filterId = rs.getLong("Filter_Id");
                         String flow = rs.getString("Flow");
                         String filterCondition = rs.getString("Filter_Condition");
                         String filterColumns = rs.getString("Filter_Columns");
@@ -2102,10 +2600,16 @@ public class DataMartStructureScriptGenerator {
 
                         SourceFilterByAggregationData data = sourceFilterByAggregationMap.getOrDefault(key, new SourceFilterByAggregationData(dlId, jobId, tableName, tableNameAlias));
 
-                        data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " : "").append(filterId);
-                        data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(flow);
-                        data.Filter_Condition.append(data.Filter_Condition.length() > 0 ? ", " : "").append(filterCondition);
-                        data.Filter_Columns.append(data.Filter_Columns.length() > 0 ? ", " : "").append(filterColumns);
+                        data.Filter_Id = filterId; // Long
+                        data.Flow = flow; // String
+                        data.Filter_Condition = filterCondition;
+                        data.Filter_Columns = filterColumns;
+
+
+                        // data.Filter_Id = .append(data.Filter_Id.length() > 0 ? ", " : "").append(filterId);
+                        // data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(flow);
+                        // data.Filter_Condition.append(data.Filter_Condition.length() > 0 ? ", " : "").append(filterCondition);
+                        // data.Filter_Columns.append(data.Filter_Columns.length() > 0 ? ", " : "").append(filterColumns);
 
                         sourceFilterByAggregationMap.put(key, data);
 
@@ -2693,6 +3197,8 @@ public class DataMartStructureScriptGenerator {
             String Table_Name;
             String Table_Name_Alias;
 
+            String Final_Table_Name;
+
             public String getDlId() {
                 return dlId;
             }
@@ -2704,6 +3210,9 @@ public class DataMartStructureScriptGenerator {
             }
             public String getTableNameAlias() {
                 return Table_Name_Alias;
+            }
+            public String getFinalTableName() {
+                return Final_Table_Name;
             }
             StringBuilder Column_Name;
             StringBuilder Column_Name_Alias;
@@ -2736,14 +3245,14 @@ public class DataMartStructureScriptGenerator {
         }
 
         class SourceGroupByAggregationData {
-            String dlId;
-            String jobId;
+            Long dlId;
+            Long jobId;
             String Table_Name;
             String Table_Name_Alias;
 
             StringBuilder Aggregation_Columns;
             StringBuilder Group_By_Columns;
-            StringBuilder Flow;
+            String Flow;
             StringBuilder Aggregation_Columns_with_Alias;
             StringBuilder Group_By_Columns_Alias;            
             StringBuilder Group_By_Columns_With_Alias;
@@ -2761,7 +3270,7 @@ public class DataMartStructureScriptGenerator {
             }
 
             public String getFlow() {
-                return Flow.toString();
+                return Flow;
             }
 
             public String getAggregationColumnsWithAlias() {
@@ -2780,7 +3289,7 @@ public class DataMartStructureScriptGenerator {
                 return Having_Agg_Col_Alias.toString();
             }
 
-            public String getHavingGrpbyColumns() {
+            public String getHavingGroupByColumns() {
                 return Having_Grpby_Columns.toString();
             }
 
@@ -2792,7 +3301,7 @@ public class DataMartStructureScriptGenerator {
                 return Having_Grpby_Columns_with_Alias.toString();
             }
 
-            public SourceGroupByAggregationData(String dlId, String jobId, String Table_Name, String Table_Name_Alias) {
+            public SourceGroupByAggregationData(Long dlId, Long jobId, String Table_Name, String Table_Name_Alias) {
                 this.dlId = dlId;
                 this.jobId = jobId;
                 this.Table_Name = Table_Name;
@@ -2800,7 +3309,7 @@ public class DataMartStructureScriptGenerator {
 
                 this.Aggregation_Columns = new StringBuilder();
                 this.Group_By_Columns = new StringBuilder();
-                this.Flow = new StringBuilder();
+                //this.Flow = new StringBuilder();
                 this.Aggregation_Columns_with_Alias = new StringBuilder();
                 this.Group_By_Columns_Alias = new StringBuilder();
                 this.Group_By_Columns_With_Alias = new StringBuilder();
@@ -2812,29 +3321,29 @@ public class DataMartStructureScriptGenerator {
         }
 
         class SourceFilterByAggregationData {
-            String dlId;
+            String dlId; // TODO they are LONG
             String jobId;
             String Table_Name;
             String Table_Name_Alias;
 
-            StringBuilder Filter_Id;
-            StringBuilder Flow;
-            StringBuilder Filter_Condition;
-            StringBuilder Filter_Columns;
+            Long Filter_Id;
+            String Flow;
+            String Filter_Condition;
+            String Filter_Columns;
 
             public String getFilterId() {
                 return Filter_Id.toString();
             }
 
-            public StringBuilder getFlow() {
+            public String getFlow() {
                 return Flow;
             }
 
             public String getFilterCondition() {
-                return Filter_Condition.toString();
+                return Filter_Condition;
             }
 
-            public StringBuilder getFilterColumns() {
+            public String getFilterColumns() {
                 return Filter_Columns;
             }
 
@@ -2844,10 +3353,10 @@ public class DataMartStructureScriptGenerator {
                 this.Table_Name = Table_Name;
                 this.Table_Name_Alias = Table_Name_Alias;
 
-                this.Filter_Id = new StringBuilder();
-                this.Flow = new StringBuilder();
-                this.Filter_Condition = new StringBuilder();
-                this.Filter_Columns = new StringBuilder();
+                // this.Filter_Id = new StringBuilder();
+                // this.Flow = new StringBuilder();
+                // this.Filter_Condition = new StringBuilder();
+                // this.Filter_Columns = new StringBuilder();
             }
         }
 
@@ -4003,13 +4512,21 @@ public class DataMartStructureScriptGenerator {
                     table3 + ".`property` " +
                     "FROM " + table3 + " WHERE " + table3 + ".`property` != 'db'";
         }
-        // Value Source - Selction from tmp table
-        public static String buildQueryForTable(String table) {
+        // Value Source - Selction from tmp table `property` = 'db'
+        public static String buildQueryForTableForDB(String table) {
             return "SELECT " +
                     table + ".`table_name`, " +
                     table + ".`Final_Table_Name`, " +
                     table + ".`property` " +
                     "FROM " + table + " WHERE " + table + ".`property` = 'db'";
+        }
+        // Value Source Execute Sql - Selction from tmp table `property` != 'db'
+        public static String buildQueryForTableForNonDB(String table) {
+            return "SELECT " +
+            table + ".`table_name`, " +
+                    table + ".`Final_Table_Name`, " +
+                    table + ".`property` " +
+                    "FROM " + table + " WHERE " + table + ".`property` != 'db'";
         }
         // TBD: refer above. May be deleted
         // Full Join Query: Joining ELT_DL_Join_Mapping_Info with tables in Query 2 and Query 3
@@ -4155,6 +4672,81 @@ public class DataMartStructureScriptGenerator {
             "INNER JOIN ELT_DL_Filter_Info " +
             "ON ELT_DL_FilterGroupBy_Info.Filter_Id = ELT_DL_Filter_Info.Filter_Id " +
             "WHERE Job_Id = ? AND DL_Id = ? AND Settings_Position IN ('Lookup_Table','Driving_Table')";
+
+       // Value Source Execute SQL
+       public static final String SELECT_DISTINCT_FROM_DRIVING_LOOKUP_TABLE_INFO =
+            " Select Distinct " +
+            " Job_Id, " +
+            " DL_Id, " +
+            " Table_Name, " +
+            " Table_Name as Table_Name_Alias, " +
+            " Column_Name, " +
+            " Column_Name_Alias, " +
+            " Data_Type " +
+            " from ELT_DL_Driving_Table_Info where Job_Id = ? and DL_Id = ? + " +
+            " union all " +
+            " select Distinct " +
+            " Job_Id, " +
+            " DL_Id, " +
+            " Table_Name, " +
+            " Table_Name_Alias, " +
+            " Column_Name, " +
+            " Column_Name_Alias, " +
+            " Data_Type " +
+            " from ELT_DL_Lookup_Table_Info where Job_Id = ? and DL_Id = ?";
+            // Value Source Execute SQL
+        public static final String SELECT_DISTINCT_FROM_FILTER_GROUP_BY_INFO =
+            " Select Distinct " +
+            " ELT_DL_FilterGroupBy_Info.DL_Id, " +
+            " ELT_DL_FilterGroupBy_Info.Job_Id, " +
+            " ELT_DL_FilterGroupBy_Info.Settings_Position, " +
+            " ELT_DL_FilterGroupBy_Info.Table_Name, " +
+            " ELT_DL_FilterGroupBy_Info.Table_Name_Alias, " +
+            " ELT_DL_FilterGroupBy_Info.Group_By_Id, " +
+            " ELT_DL_FilterGroupBy_Info.Flow, " +
+            " ELT_DL_Group_By_Info.Column_Name, " +
+            " case when ELT_DL_Group_By_Info.Aggregation = 'random' then 'LAST' else ELT_DL_Group_By_Info.Aggregation end as Aggregation, " +
+            " ELT_DL_Group_By_Info.Flag, " +
+            " ELT_DL_Group_By_Info.Column_Name_Alias " +
+            " from ELT_DL_FilterGroupBy_Info " +
+            " inner join ELT_DL_Group_By_Info on ELT_DL_FilterGroupBy_Info.Group_By_Id = ELT_DL_Group_By_Info.Group_By_Id " +
+            " where ELT_DL_FilterGroupBy_Info.Job_Id = ? " +
+            " and ELT_DL_FilterGroupBy_Info.DL_Id = ? " +
+            " and ELT_DL_FilterGroupBy_Info.Settings_Position in ('Lookup_Table', 'Driving_Table')";
+        // Value Source Execute Sql
+        public static final String SELECT_FROM_FILTER_GROUP_BY_INFO = 
+            "SELECT " +
+            "`ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
+            "`ELT_DL_FilterGroupBy_Info`.`Job_Id`, " +
+            "`ELT_DL_FilterGroupBy_Info`.`Table_Name`, " +
+            "`ELT_DL_FilterGroupBy_Info`.`Table_Name_Alias`, " +
+            "`ELT_DL_FilterGroupBy_Info`.`Flow`, " +
+            "`ELT_DL_FilterGroupBy_Info`.`Filter_Id`, " +
+            "`ELT_DL_FilterGroupBy_Info`.`Group_By_Id` " +
+            "FROM `ELT_DL_FilterGroupBy_Info` " +
+            "WHERE Group_By_Id<>0 AND Job_Id = ? AND DL_Id = ? AND Settings_Position IN ('Lookup_Table', 'Driving_Table')";
+        // Value Source Execute Sql main flow
+        public static final String SELECT_FROM_DRIVING_LOOKUP_TABLE_INFO = 
+            " Select Distinct " +
+            " Job_Id, " +
+            " DL_Id, " +
+            " Table_Name, " +
+            " Table_Name as Table_Name_Alias, " +
+            " Column_Name, " +
+            " Column_Name_Alias, " +
+            " Data_Type " +
+            " from ELT_DL_Driving_Table_Info where Job_Id = ? and DL_Id = ? " +
+            " union all " +
+            " select Distinct " +
+            " Job_Id, " +
+            " DL_Id, " +
+            " Table_Name, " +
+            " Table_Name_Alias, " +
+            " Column_Name, " +
+            " Column_Name_Alias, " +
+            " Data_Type " +
+            " from ELT_DL_Lookup_Table_Info where Job_Id = ? and DL_Id = ?";
+        
 
     }
 
