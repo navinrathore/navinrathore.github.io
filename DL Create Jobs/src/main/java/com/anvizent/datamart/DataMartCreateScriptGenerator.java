@@ -21,7 +21,7 @@ public class DataMartCreateScriptGenerator {
     public void generateCreateScript() {
         try {
             // Get DB connection for the dataSourceType
-            Connection conn = DBHelper.getConnection(dataSourceType);
+            Connection conn = DBHelper.getConnection(DataSourceType.MYSQL);
 
             if (conn != null) {
                 System.out.println("DB Connection established");
@@ -85,7 +85,7 @@ public class DataMartCreateScriptGenerator {
                     System.out.println("SQL Combined Column Definition: " + combinedColumnDefinitions.toString());
                     String sqlCreateTableDefinition = "CREATE TABLE IF NOT EXISTS "+ tableName +" (";
                     // TBD - Need to check the text after these two sets of keys are combined.
-                    String key = primaryKeys.toString() + secondaryKeys.toString();
+                    String key = primaryKeys.toString() + ", " + secondaryKeys.toString();
                     int len = key.length();
                     String primaryKey = key.substring(0, len - 1);
                     String sqlPrimaryKeyDefinition = " Primary Key (" + primaryKey + " ) ";
@@ -93,9 +93,8 @@ public class DataMartCreateScriptGenerator {
                     // Append all the individual part definitions
                     StringBuilder finalScriptBuilder = new StringBuilder();
                     finalScriptBuilder.append(sqlCreateTableDefinition)
-                            .append("\n")
                             .append(combinedColumnDefinitions)
-                            .append("\n")
+                            .append(",\n")
                             .append(sqlPrimaryKeyDefinition)
                             .append("\n")
                             .append(END_OF_SCRIPT_TEXT);
@@ -132,7 +131,7 @@ public class DataMartCreateScriptGenerator {
                 .append(dataType)
                 .append(dataType.startsWith("varchar") ? " COLLATE utf8_unicode_ci" : " ");
 
-        if (constraint.equals("pk")) {
+        if ("pk".equalsIgnoreCase(constraint)) {
             columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
             columnDefinitionBuilder.append(DBHelper.getDefaultForDataType(dataType));
         } else {
@@ -177,8 +176,20 @@ public class DataMartCreateScriptGenerator {
         }
     }
 
+    // // Enum to represent different data source types
+    // enum DataSourceType {
+    //     MYSQL,
+    //     SNOWFLAKE,
+    //     SQLSERVER
+    // }
+    // // Enum to represent different return status
+    // public enum Status {
+    //     SUCCESS,
+    //     FAILURE
+    // }
+
     public static void main(String[] args) {
-        String tableId = "XNXNXN";
+        String tableId = "9";
         DataMartCreateScriptGenerator generator = new DataMartCreateScriptGenerator(DataSourceType.MYSQL, tableId);
         generator.generateCreateScript();
     }

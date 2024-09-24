@@ -20,9 +20,10 @@ public class DBHelper {
         switch (dataSourceType) {
             case MYSQL:
                 // MySQL Connection Dummy
-                String mysqlUrl = "jdbc:mysql://localhost:3306/databasename?noDatetimeStringSync=true";
-                String mysqlUser = "userName";
-                String mysqlPassword = "password";
+                //String mysqlUrl = "jdbc:mysql://localhost:3306/databasename?noDatetimeStringSync=true";
+                String mysqlUrl = "jdbc:mysql://172.25.25.124:4475/Mysql8_2_1009427_appdb?noDatetimeStringSync=true";
+                String mysqlUser = "root";
+                String mysqlPassword = "Explore@09";
                 connection = DriverManager.getConnection(mysqlUrl, mysqlUser, mysqlPassword);
                                 
                 // Enable auto-commit
@@ -54,24 +55,22 @@ public class DBHelper {
         }
     }
 
-    // Helper function to get the default value based on the data type
     static String getDefaultForDataType(String dataType) {
-        switch (dataType.toLowerCase()) {
-            case "varchar":
-            case "text":
-            case "char":
-                return "''";
-            case "int":
-                return "0";
-            case "float":
-            case "decimal":
-                return "0.0";
-            case "boolean":
-                return "0";
-            case "date":
-                return "'0000-00-00'";
-            default:
-                return "''"; // Default to empty string for unknown types
+        dataType = dataType.toLowerCase();
+        
+        if (dataType.startsWith("varchar") || dataType.startsWith("text") || dataType.startsWith("char")) {
+            return "''";
+        } else if (dataType.contains("int")) {
+            return "0";
+        } else if (dataType.contains("float") || dataType.contains("decimal")) {
+            return "'0.0'";
+        } else if (dataType.contains("boolean")) {
+            return "0";
+        } else if (dataType.contains("date")) {
+            return "'0000-00-00'";
+        } else {
+            return " "; // Default to empty string for unknown types
         }
     }
+    
 }
