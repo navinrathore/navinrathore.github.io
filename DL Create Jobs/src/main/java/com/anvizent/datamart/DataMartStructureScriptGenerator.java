@@ -33,6 +33,9 @@ public class DataMartStructureScriptGenerator {
     private static final String COMPONENT_SQLSINK = "sqlsink";
     private static final String COMPONENT_SOURCESQL = "sourcesql"; // TODO check in the list
     
+    private static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"; // Newer Charset
+    //private static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"; // Old and deprecated
+
     private DataSourceType dataSourceType;
     private long dlId;
     private long jobId;
@@ -91,10 +94,10 @@ public class DataMartStructureScriptGenerator {
         //     return;
         // }
         // The create script generator
-        // if (new DataMartCreateScriptGenerator().generateCreateScript() != Status.SUCCESS) {
-        //     System.out.println("Create script generation failed. Stopping process.");
-        //     return;
-        // }
+        if (new DataMartCreateScriptGenerator().generateCreateScript() != Status.SUCCESS) {
+            System.out.println("Create script generation failed. Stopping process.");
+            return;
+        }
         // The alter script generator
         // if (new DataMartAlterScriptGenerator().generateAlterScript() != Status.SUCCESS) {
         //     System.out.println("Alter script generation failed. Stopping process.");
@@ -4609,13 +4612,150 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         public DataMartCreateScriptGenerator() {
         }
 
-        public Status generateCreateScript() {
-            System.out.println("Generating create script for DL_ID: " + dlId);
-            getDataSourceType();
-            dataSourceType = DataSourceType.MYSQL;
-            getDlId();
+         public Status generateCreateScript() {
+            try {
+                Connection conn = DBHelper.getConnection(DataSourceType.MYSQL);
+    
+                if (conn != null) {
+                    System.out.println("DB Connection established");
+    
+                    String tableName = "";
+                    String id = "";
+                    String columnName = "";
+                    StringBuilder combinedColumnDefinitions = new StringBuilder();
+                    StringBuilder primaryKeys = new StringBuilder();
+                    StringBuilder secondaryKeys = new StringBuilder();
+    
+                    try (PreparedStatement pstmt = conn.prepareStatement(SQLQueries.SELECT_DISTINCT_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY)) {
+                        pstmt.setLong(1, dlId);
+                        try (ResultSet rs = pstmt.executeQuery()) {
+    
+                            String columnDefinition = "";
+                            while (rs.next()) {
+                                id = rs.getString("DL_Id");
+                                tableName = rs.getString("Table_Name");
+                                columnName = rs.getString("Column_Name_Alias");
+                                String constraints = rs.getString("Constraints");
+                                String dataTypes = rs.getString("DL_Data_Types");
+                               
+                                // Consolidated Primary keys
+                                if ("PK".equalsIgnoreCase(constraints)) {
+                                    if (primaryKeys.length() > 0) {
+                                        primaryKeys.append(", ");
+                                    }
+                                    primaryKeys.append(columnName);
+                                }
+                                // Consolidated Secondary keys
+                                else if ("SK".equalsIgnoreCase(constraints)) {
+                                    if (secondaryKeys.length() > 0) {
+                                        secondaryKeys.append(", ");
+                                    }
+                                    secondaryKeys.append(columnName);
+                                }
+    
+                                // Form Column Definition and append to combined Column Definition
+                                columnDefinition = buildColumnDefinition(columnName, constraints, dataTypes);
+                                if (combinedColumnDefinitions.length() > 0) {
+                                    combinedColumnDefinitions.append(", ");
+                                }
+                                combinedColumnDefinitions.append(columnDefinition);
+                            }
+                        }
+     
+                        String sqlCreateTableDefinition = "CREATE TABLE IF NOT EXISTS `"+ tableName +"` (";
+                        String key = primaryKeys.toString() + ", " + secondaryKeys.toString();
+                        int len = key.length();
+                        String primaryKey = key.substring(0, len);
+                        String sqlPrimaryKeyDefinition = " Primary Key (" + primaryKey + ") ";
+    
+                        // Append all the individual part definitions
+                        StringBuilder finalScriptBuilder = new StringBuilder();
+                        finalScriptBuilder.append(sqlCreateTableDefinition)
+                                .append(combinedColumnDefinitions)
+                                .append(",\n")
+                                .append(sqlPrimaryKeyDefinition)
+                                .append("\n")
+                                .append(END_OF_SCRIPT_TEXT);
+    
+                        // The final script definition
+                        String finalCreateScript = finalScriptBuilder.toString();
+                        System.out.println(finalCreateScript);
+    
+                        // Delete the existing rows, if any.
+                        deleteFromEltDlCreateInfo(conn, tableName);
+
+                        // Final step that is to put data into the table.
+                        insertIntoEltDlCreateInfo(conn, id, tableName, finalCreateScript);
+                    }
+                    conn.close();
+                } else {
+                    System.out.println("Failed to make connection!");
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
             return Status.SUCCESS;
-         }
+        }
+        // Build the column definition
+        private String buildColumnDefinition(String columnName, String constraint, String dataType) {
+            StringBuilder columnDefinitionBuilder = new StringBuilder();
+            if ("text".equalsIgnoreCase(dataType) && "pk".equalsIgnoreCase(constraint)) {
+                dataType = "varchar(150)";
+            }
+    
+            columnDefinitionBuilder.append("\n")
+                    .append("`").append(columnName).append("`")
+                    .append(" ")
+                    .append(dataType)
+                    .append(dataType.startsWith("varchar") ? " COLLATE utf8mb4_0900_ai_ci" : " ");
+    
+            if ("pk".equalsIgnoreCase(constraint)) {
+                columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
+                columnDefinitionBuilder.append(DBHelper.getDefaultForDataType(dataType));
+            } else if ("sk".equalsIgnoreCase(constraint)) {
+                    columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
+                    columnDefinitionBuilder.append(DBHelper.getDefaultForDataType(dataType)); // TBD Why not
+            } else {
+                columnDefinitionBuilder.append(" DEFAULT NULL");
+            }
+            return columnDefinitionBuilder.toString();
+        }
+    
+        /**
+         * Inserts a record into the 'ELT_DL_Create_Info' table with the given 'DL_ID', 'DL_NAME', and 'script'.
+         * 
+         * @param conn The connection object to the database.
+         * @param dlId The DL_ID column.
+         * @param dlName The DL_NAME column.
+         * @param script The script column.
+         * @throws SQLException If an SQL error occurs during the operation.
+         */
+        public void insertIntoEltDlCreateInfo(Connection conn, String dlId, String dlName, String script) throws SQLException {
+            String sqlInsertQuery = SQLQueries.INSERT_INTO_ELT_DL_CREATE_INFO_QUERY;
+            try (PreparedStatement pstmt = conn.prepareStatement(sqlInsertQuery)) {
+                pstmt.setString(1, dlId);
+                pstmt.setString(2, dlName);
+                pstmt.setString(3, script);
+                int rowsAffected = pstmt.executeUpdate();
+                System.out.println("Rows Inserted: " + rowsAffected);
+            }
+        }
+    
+        /**
+         * Removes records from 'ELT_DL_Create_Info' where 'DL_Name' matches the given parameter.
+         * 
+         * @param conn The connection object to the database.
+         * @param dlName The DL_Name column.
+         * @throws SQLException If an SQL error occurs during the operation.
+         */
+        public void deleteFromEltDlCreateInfo(Connection conn, String dlName) throws SQLException {
+            String sqlDeleteQuery = SQLQueries.DELETE_FROM_ELT_DL_CREATE_INFO_QUERY;
+            try (PreparedStatement pstmt = conn.prepareStatement(sqlDeleteQuery)) {
+                pstmt.setString(1, dlName);
+                int rowsAffected = pstmt.executeUpdate();         
+                System.out.println("Rows Deleted: " + rowsAffected);
+            }
+        }
     }
 
             
@@ -4652,6 +4792,28 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         public static final String UPDATE_ACTIVE_FLAG = "UPDATE ELT_DL_Alter_Script_Info SET Active_flag = 0 WHERE DL_Id = ?";
 
         public static final String SELECT_MAX_UPDATED_DATE = "SELECT MAX(Updated_Date) FROM ELT_DL_Mapping_Info WHERE DL_Id = ?";
+
+
+        // SQL Query for retrieving distinct table and column information
+        public static final String SELECT_DISTINCT_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY = "SELECT DISTINCT " +
+                "  DL_Name AS Table_Name, " +
+                "  DL_Column_Names AS Column_Name_Alias, " +
+                "  `Constraints`, " +
+                "  CASE " +
+                "    WHEN DL_Data_Types = 'bit(1)' THEN 'tinyint(1)' " +
+                "    ELSE DL_Data_Types " +
+                "  END AS DL_Data_Types, " +
+                "  DL_Id " +
+                "FROM " +
+                "  ELT_DL_Mapping_Info_Saved " +
+                "WHERE " +
+                "  DL_Id = ?";
+
+        // SQL Query for deleting records
+        public static final String DELETE_FROM_ELT_DL_CREATE_INFO_QUERY = "DELETE FROM ELT_DL_Create_Info WHERE DL_Name = ?";
+
+        // SQL Query for inserting records
+        public static final String INSERT_INTO_ELT_DL_CREATE_INFO_QUERY = "INSERT INTO ELT_DL_Create_Info (DL_ID, DL_NAME, script) VALUES (?, ?, ?)";
 
         // Query to retrieve unique columns from joined tables
         public static final String SELECT_UNIQUE_MAPPING_INFO_QUERY = 
@@ -5398,23 +5560,21 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
 
         // Helper function to get the default value based on the data type
-        public String getDefaultForDataType(String dataType) {
-            switch (dataType.toLowerCase()) {
-                case "varchar":
-                case "text":
-                case "char":
-                    return "''";
-                case "int":
-                    return "0";
-                case "float":
-                case "decimal":
-                    return "0.0";
-                case "boolean":
-                    return "0";
-                case "date":
-                    return "'0000-00-00'";
-                default:
-                    return "''"; // Default to empty string for unknown types
+        static String getDefaultForDataType(String dataType) {
+            dataType = dataType.toLowerCase();
+            
+            if (dataType.startsWith("varchar") || dataType.startsWith("text") || dataType.startsWith("char")) {
+                return "''";
+            } else if (dataType.contains("int")) {
+                return "'0'";
+            } else if (dataType.contains("float") || dataType.contains("decimal")) {
+                return "'0.0'";
+            } else if (dataType.contains("boolean")) {
+                return "0";
+            } else if (dataType.contains("date")) {
+                return "'0000-00-00'";
+            } else {
+                return " "; // Default to empty string for unknown types
             }
         }
     }
