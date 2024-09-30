@@ -4643,14 +4643,14 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                                     if (primaryKeys.length() > 0) {
                                         primaryKeys.append(", ");
                                     }
-                                    primaryKeys.append(columnName);
+                                    primaryKeys.append("`").append(columnName).append("`");
                                 }
                                 // Consolidated Secondary keys
                                 else if ("SK".equalsIgnoreCase(constraints)) {
                                     if (secondaryKeys.length() > 0) {
                                         secondaryKeys.append(", ");
                                     }
-                                    secondaryKeys.append(columnName);
+                                    secondaryKeys.append("`").append(columnName).append("`");
                                 }
     
                                 // Form Column Definition and append to combined Column Definition
@@ -4707,7 +4707,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     .append("`").append(columnName).append("`")
                     .append(" ")
                     .append(dataType)
-                    .append(dataType.startsWith("varchar") ? " COLLATE utf8mb4_0900_ai_ci" : " ");
+                    .append(dataType.startsWith("varchar") ? " COLLATE utf8mb4_0900_ai_ci " : " ");
     
             if ("pk".equalsIgnoreCase(constraint)) {
                 columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
