@@ -44,6 +44,7 @@ public class DataMartStructureScriptGenerator {
     private long jobId;
     private String dlName;
     private String tmpTableName;
+    private String startTimeString;
 
 
     SQLQueries sqlQueries;
@@ -60,7 +61,8 @@ public class DataMartStructureScriptGenerator {
 
     private void init() {
         tmpTableName = dlName + dlId + jobId;
-        sqlQueries = new SQLQueries(); // Creating instance of SQLQueries inner class
+        startTimeString = getCurrentDateFormatted();
+        sqlQueries = new SQLQueries(); // Creating instance of SQLQueries inner class //TODO
         try {
             // App DB connection
             conn = DBHelper.getConnection(dataSourceType);
@@ -83,6 +85,9 @@ public class DataMartStructureScriptGenerator {
     }   
     public String getTmpTableName() {
         return tmpTableName;
+    }
+    public String getTimeStamp() {
+        return startTimeString;
     }
     // Method to trigger generation of different scripts
     public void generateScripts() {
@@ -506,7 +511,7 @@ public class DataMartStructureScriptGenerator {
         }
 
         private String getConfigFileName() {
-            String suffix = getCurrentDateFormatted();
+            String suffix = getTimeStamp();
             String configFileName = clientId + dlName + "_Config_File_" + suffix + ".config.properties";
             System.out.println(configFileName);
             return configFileName;
@@ -3551,7 +3556,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
      
         
         private String getValueFileName() {
-            String suffix = getCurrentDateFormatted();
+            String suffix = getTimeStamp();
             String valueFileName = clientId + dlName + "_Value_File_" + suffix + ".values.properties";
             System.out.println(valueFileName);
             return valueFileName;
