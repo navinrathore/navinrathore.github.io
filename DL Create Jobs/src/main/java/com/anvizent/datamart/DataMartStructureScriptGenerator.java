@@ -33,7 +33,7 @@ public class DataMartStructureScriptGenerator {
     private static final String COMPONENT_JOIN = "join";
     private static final String COMPONENT_PARTITIONSOURCESQL_DL = "partitionsourcesql_dl";
     private static final String COMPONENT_SQLSINK = "sqlsink";
-    private static final String COMPONENT_SOURCESQL = "sourcesql"; // TODO check in the list
+    private static final String COMPONENT_SOURCESQL = "sourcesql";
     
     private static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"; // Newer Charset
     //private static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"; // Old and deprecated
@@ -128,8 +128,6 @@ public class DataMartStructureScriptGenerator {
             System.out.println("\nGenerating config script for DL_ID: " + dlId);
             boolean status = false;
 
-            //#########################
-            //#########################
             // Script Job 1 Source
             System.out.println("============================================");
             System.out.println("============================================");
@@ -171,7 +169,7 @@ public class DataMartStructureScriptGenerator {
                 // 4
                 // TODO MULTIPLE components used
                 // Data OK used in next component
-
+                // TODO merge the two components values
                 System.out.println(component);
                 sourceComponent = fetchAndFormatProperties(conn, COMPONENT_PARTITIONSOURCESQL_DL);
                 //System.out.println("sourceComponent: " +sourceComponent);
@@ -454,15 +452,8 @@ public class DataMartStructureScriptGenerator {
             printScript(COMPONENT_SQLSINK, sinkComponent);
             //######################################
 
-            // script = result
-            // TBD: to be filled up values built in previous steps
-            // StringBuilder outputBuilder = new StringBuilder();
-            // outputBuilder.append();
-            
-
-
+            //Output: Config.properties
             StringBuffer output = new StringBuffer();
-
             if (sourceComponent != "") { // 1
                 output.append(sourceComponent);
             }
@@ -494,7 +485,7 @@ public class DataMartStructureScriptGenerator {
                 output.append(sinkComponent);
             }
 
-            //System.out.println("Output: ######################## \n\n" + output.toString());
+            //System.out.println("Output: Config.properties ######################## \n\n" + output.toString());
             System.out.println("#################");
             String configFileName = getConfigFileName();
             String configScript = output.toString();
@@ -511,13 +502,10 @@ public class DataMartStructureScriptGenerator {
 
             writeToFile(configScript, configFileName);
 
-            // TBD the output has to be saved into a file
-
             return status ? Status.SUCCESS : Status.FAILURE;
         }
 
         private String getConfigFileName() {
-            //String clientId = "Client_"; // TODO client ID eg. 1009427
             String suffix = getCurrentDateFormatted();
             String configFileName = clientId + dlName + "_Config_File_" + suffix + ".config.properties";
             System.out.println(configFileName);
@@ -568,8 +556,9 @@ public class DataMartStructureScriptGenerator {
         }
 
         public String fetchAndFormatProperties(Connection conn, String component) {
-//            String query = SQLQueries.SELECT_JOB_PROPERTIES_INFO_WITH_COMPONENT; // TODO single component
-            String query = SQLQueries.SELECT_ELT_JOB_PROPERTIES_INFO; // Handles Multiple Component
+            //String query = SQLQueries.SELECT_JOB_PROPERTIES_INFO_WITH_COMPONENT; // op '=' (Single component)
+            String query = SQLQueries.SELECT_ELT_JOB_PROPERTIES_INFO; // IN clause: Though Handles Multiple Component,
+                                                                    // due to stmt.setString(),  works good with one Comp only
             StringBuilder script = new StringBuilder();
             try (PreparedStatement stmt = conn.prepareStatement(query)) {
                 stmt.setString(1, component);
@@ -1222,14 +1211,13 @@ public class DataMartStructureScriptGenerator {
             System.out.println("\nGenerating value script for DL_ID: " + dlId);
             boolean status = false;
 
-//######################################
             // Job 1 Source
-            String componentSource1 = "partitionsourcesql_dl"; // Multiple component // TODO
-            String componentSource2 = "sourcesql"; // Multiple component // TODO
+            String componentSource1 = COMPONENT_PARTITIONSOURCESQL_DL;
+            String componentSource2 = COMPONENT_SOURCESQL;
             String finalSource = componentSourceValue(componentSource1, componentSource2); // Output
 
             // Job 2 SourceExecutesql
-            String componentExecuteSqlSource = "executesql_source";
+            String componentExecuteSqlSource = COMPONENT_EXECUTESQL_SOURCE;
             String finalSourceExecuteSql = componentSourceExecuteSqlValue(componentExecuteSqlSource); // Output
 
             // Job 3 lkp/join
@@ -1245,13 +1233,13 @@ public class DataMartStructureScriptGenerator {
             String tgtPwd = ""; // TBD: TODO use input, replace literal $
             tgtPwd = tgtPwd.replace("$", "\\$");
             String componentNullReplacement = "empty";
-            String emptyValueScript = componentNullReplacementValue(componentNullReplacement); 
+            String emptyValue = componentNullReplacementValue(componentNullReplacement); 
 
             // Job 6 FilterValue
             String componentFilterGroupBy = "executesqlfiltergroupby";
-            Map<String, String> values = componentFilterGroupBy(componentEmptyRecoercing); // Two output values inside
-            String scriptJoinFilterGroupby = values.get("JoinFilterGroupby");
-            String scriptDerivedFilterGroupby = values.get("DerivedFilterGroupby");
+            Map<String, String> values = componentFilterGroupBy(componentEmptyRecoercing);
+            String joinFilterGroupbyValue = values.get("JoinFilterGroupby");
+            String derivedFilterGroupbyValue = values.get("DerivedFilterGroupby");
 
 
             // Job 7 Expression
@@ -1262,22 +1250,22 @@ public class DataMartStructureScriptGenerator {
 
             // Job 8 Sql_Expression
             String componentSQLExpression = "executesql";
-            String MappingSQLExpressionValue = componentSQLExpressionValue(componentSQLExpression); // TODO name of output
+            String executeSqlValue = componentSQLExpressionValue(componentSQLExpression);
 
             // Job 9 remit
             String componentRemit = "empty_remit";
-            String MappingRemitValue = componentRemitValue(componentRemit);
+            String mappingRemitValue = componentRemitValue(componentRemit);
 
             // Job 10 Rename
-            String MappingRetainValue = componentRenameValue(COMPONENT_EMPTY_RENAME);
+            String mappingRenameValue = componentRenameValue(COMPONENT_EMPTY_RENAME);
 
             // Job 11 Sink
             String componentSink = "sqlsink";
             String sinkValue = componentSinkValue(componentSink);
             System.out.println(sinkValue);
 
+            //Output: Values.properties
             StringBuffer output = new StringBuffer();
-
             if (finalSource != "") { // 1
                 output.append(finalSource);
             }
@@ -1287,44 +1275,39 @@ public class DataMartStructureScriptGenerator {
             if (joinValue != "") { // 3
                 output.append("\n").append(joinValue);
             }
-            if (RecoercingValue != "") { // 1
+            if (RecoercingValue != "") { // 4
                 output.append("\n").append("\n").append(RecoercingValue);
             }
-            // TODO
-            // if (Empty_Value != "") { // 2
-            //     output.append("\n").append(Empty_Value);
-            // }
-            // if (JoinFilterGroupby != "") { // 3
-            //     output.append("\n").append(JoinFilterGroupby);
-            // }
-            // if (ExpressionValue != "") { // 4
-            //     output.append("\n").append(ExpressionValue);
-            // }
-            // if (ExecuteSql_Value != "") { // 5
-            //     output.append("\n").append(ExecuteSql_Value);
-            // }
-            // if (DerivedFilterGroupby != "") { // 6
-            //     output.append("\n").append(DerivedFilterGroupby);
-            // }
+            if (emptyValue != "") { // 5
+                output.append("\n").append(emptyValue);
+            }
+            if (joinFilterGroupbyValue != "") { // 5
+                output.append("\n").append(joinFilterGroupbyValue);
+            }
+            if (expressionValue != "") { // 6
+                output.append("\n").append(expressionValue);
+            }
+            if (executeSqlValue != "") { // 7
+                output.append("\n").append(executeSqlValue);
+            }
+            if (derivedFilterGroupbyValue != "") { // 8
+                output.append("\n").append(derivedFilterGroupbyValue);
+            }
+            // TODO: Seems Not in Use
             // if (DerivedValueGenerated != "") { // 7
             //     output.append("\n").append(DerivedValueGenerated);
             // }
-            // if (mappingRemitValue != "") { // 8
-            //     output.append("\n").append(mappingRemitValue);
-            // }
-            // if (mappingRenameValue != "") { // 9
-            //     output.append("\n").append(mappingRenameValue);
-            // }
-            if (sinkValue != "") { // 10
+            if (mappingRemitValue != "") { // 9
+                output.append("\n").append(mappingRemitValue);
+            }
+            if (mappingRenameValue != "") { // 10
+                output.append("\n").append(mappingRenameValue);
+            }
+            if (sinkValue != "") { // 11
                 output.append("\n").append(sinkValue);
             }
-            System.out.println("Output: ######################## \n\n" + output.toString());
+            System.out.println("Output: Values.properties ######################## \n\n" + output.toString());
 
-//######################################
-
-            //config filename
-            // script = result
-            //TBD: to be filled up values built in previous steps
             String valueFileName = getValueFileName();
             String script = output.toString();
             Map<String, String> rowDetails = selectActiveEltDlTableInfo(conn, dlId);
@@ -2094,32 +2077,21 @@ public class DataMartStructureScriptGenerator {
         // Value 1. Source
         private String componentSourceValue(String component1, String component2) {
             try {
-                String sourceValue1 = getValueNamesFromJobPropertiesInfo(conn, component1); // component contains multiple values
-                String sourceValue2 = getValueNamesFromJobPropertiesInfo(conn, component2); // component contains multiple values
+                String sourceValue1 = getValueNamesFromJobPropertiesInfo(conn, component1);
+                String sourceValue2 = getValueNamesFromJobPropertiesInfo(conn, component2);
                 String sourceValue = getSourceValue(sourceValue1, sourceValue2);
 
-                Map<String, SourceAggregationData> sourceData = performLeftOuterJoin(String.valueOf(jobId), String.valueOf(dlId), conn);
-                
-                Map<String, SourceAggregationData> mainData = performLeftOuterJoin(String.valueOf(jobId), String.valueOf(dlId), conn);
+                Map<String, SourceAggregationData> mainData = getDrivingAndLookupTableData(String.valueOf(jobId), String.valueOf(dlId), conn);
                 Map<String, SourceGroupByAggregationData> groupByInfoData = getGroupByInfoData(conn, String.valueOf(jobId), String.valueOf(dlId));
                 Map<String, SourceFilterByAggregationData> filterGroupByInfoData = getFilterGroupByInfoData(conn, String.valueOf(jobId), String.valueOf(dlId));
 
-                String tmpTable = dlName + dlId + jobId; // TODO
-                Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, true); //`property` = 'db' TODO check
-
+                String tmpTable = getTmpTableName();
+                Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, true); //`property` = 'db'
 
                 sourceValue = performJoinWithLookupData(sourceValue, mainData, groupByInfoData, filterGroupByInfoData, tmpTableDataMap, String.valueOf(jobId), String.valueOf(dlId));
 
-
-                //String querySelectFromTmpTable = SQLQueries.buildQueryForTable(tmpTable);
-
-
-                // String drivingAndLookupTableQuery = buildDrivingAndLookupTableQuery();
-                // joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId, dlId);
-                // return joinValue;
                 return sourceValue;
             } catch (SQLException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
             return "";
@@ -2369,9 +2341,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 Map<String, Map<String, String>> tmpTableDataMap,
                 String jobId, String dlId) {
 
-            //Map<String, AggregatedResult> joinedData = new HashMap<>();
             StringBuilder finalSource = new StringBuilder();
-            //TODO: Context object 
             Context context = Context.getContext();
             for (Map.Entry<String, SourceAggregationData> mainEntry : mainData.entrySet()) {
                 String key = mainEntry.getKey();
@@ -2380,41 +2350,12 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 String tablenameAlias = mainRecord.getTableNameAlias();
 
                 // Lookup in groupByInfoData
-                SourceGroupByAggregationData groupBy = groupByInfoData.getOrDefault(key, new SourceGroupByAggregationData(Long.valueOf(dlId), Long.valueOf(jobId), tableName, tablenameAlias)); // TODO no null value
+                SourceGroupByAggregationData groupBy = groupByInfoData.getOrDefault(key, new SourceGroupByAggregationData(Long.valueOf(dlId), Long.valueOf(jobId), tableName, tablenameAlias));
                 // Lookup in filterGroupByInfoData
-                SourceFilterByAggregationData filter = filterGroupByInfoData.getOrDefault(key, new SourceFilterByAggregationData(dlId, jobId, tableName, tablenameAlias));  // TODO no null
+                SourceFilterByAggregationData filter = filterGroupByInfoData.getOrDefault(key, new SourceFilterByAggregationData(dlId, jobId, tableName, tablenameAlias));
                 // Lookup in tmpTableDataMap
-                Map<String, String> tmpTableData = tmpTableDataMap.getOrDefault(key, new HashMap<String, String>()); //TODO instead of null blank value object must be return
+                Map<String, String> tmpTableData = tmpTableDataMap.getOrDefault(key, new HashMap<String, String>());
 
-                // Create an AggregatedResult object to hold the joined data
-                //AggregatedResult aggregatedResult = new AggregatedResult();
-
-                // Fill in the main data
-                // aggregatedResult.setDlId(mainRecord.getDlId());
-                // aggregatedResult.setJobId(mainRecord.getJobId());
-                // aggregatedResult.setTableName(mainRecord.getTableName());
-                // aggregatedResult.setTableNameAlias(mainRecord.getTableNameAlias());
-
-                // if (groupBy != null) {
-                //     aggregatedResult.setGroupByColumn(groupBy.getGroupByColumn());
-                //     aggregatedResult.setAggregation(groupBy.getAggregation());
-                // }
-
-                // if (filter != null) {
-                //     aggregatedResult.setFilterCondition(filter.getFilterCondition());
-                //     aggregatedResult.setFilterColumns(filter.getFilterColumns());
-                // }
-
-                // if (tmpTableData != null) {
-                //     aggregatedResult.setTmpTableName(tmpTableData.get("table_name"));
-                //     aggregatedResult.setFinalTableName(tmpTableData.get("Final_Table_Name"));
-                //     aggregatedResult.setProperty(tmpTableData.get("property"));
-                // }
-
-                //String sourceValues = (String) globalMap.get("Source_Value");
-
-
-                // TODO add null conditions for groupBy, filter, tmpTableData as above
                 String whereCondition = (filter.getFilterCondition() != null) ?
                     " WHERE " + filter.getFilterCondition() : "";
                 String havingCondition = (tmpTableData.get("property") == null) ? " " :
@@ -2447,29 +2388,19 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 String partitionSqlQuery = mainRecord.getTableNameAlias() + ".partitionsql.query=" + partitionQuery;
                 String sourceSqlQuery = mainRecord.getTableNameAlias() + ".sourcesql.query=" + sqlQuery;
 
-                // TODO target DB Name etc. 
-                // replace them appropriately
+                // Note: replaceAll() is used instead of replace() as regular expressions are understood by it only.
                 String tgtHost = context.getTgtHost(), tgtport = context.getTgtPort(), tgtDbName = context.getTgtDbName(), tgtUser = context.getTgtUser(), tgtPassword = context.getTgtPassword();
                 String url = sourceValues.replaceAll("\\$\\{TableName.src.jdbc.url}",
                     mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + ":" + tgtport + "/" + tgtDbName);
-                // String url = sourceValues.replaceAll("\\$\\{TableName.src.jdbc.url}",
-                //     mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.jdbc.url=jdbc:mysql://" + context.getTgtHost() + ":" + context.getTgtPort() + "/" + context.getTgtDbName());
-
 
                 String driver = url.replaceAll("\\$\\{TableName.src.jdbc.driver}",
                     mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.jdbc.driver=com.mysql.jdbc.Driver");
 
                 String user = driver.replaceAll("\\$\\{TableName.src.db.user}",
-                    mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.db.user=" + tgtUser); // TODO TgtUN to TgtUser
-
-                // TODO: tgt password so the replacement as other place tgtPwd
+                    mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.db.user=" + tgtUser);
 
                 String password = user.replaceAll("\\$\\{TableName.src.db.password}",
                     mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.db.password=" + tgtPassword.replaceAll("\\$", "\\$"));
-
-                // String password = user.replaceAll("\\$\\{TableName.src.db.password}",
-                //     mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".src.db.password=" + StringHandling.ereplace((String) globalMap.get("tgt_pwd"), "\\$", "\\$"));
-                    // TODO password \\$ is really escaped properly
 
                 String partitionSize = password.replaceAll("\\$\\{TableName.partition.size}",
                     mainRecord.getTableNameAlias().replaceAll("\\$", "\\\\\\$") + ".partition.size=");
@@ -2488,22 +2419,17 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
                 String dynamicSourceSqlQuery = noOfPartitions.replaceAll("Dynamic_SourceSql_Query", sourceSqlQuery.replaceAll("\\$", "\\\\\\$"));
 
-                // String finalSource = (Var.Final_Source == null) ? dynamicSourceSqlQuery :
-                //     Var.Final_Source + "\n" + dynamicSourceSqlQuery + "\n";
-
                 // Append to final dynamic join sources
                 if (finalSource.length() > 0) {
                     finalSource.append("\n");
                 }
                 finalSource.append(dynamicSourceSqlQuery).append("\n");  // Double newlines
-
-                // joinedData.put(key, aggregatedResult);
             }
             return finalSource.toString();
         }
 
-        public Map<String, SourceAggregationData> performLeftOuterJoin(String jobId, String dlId, Connection connection) throws SQLException {        
-            Map<String, Map<String, Object>> lookupTableMap = getLookupTableData(jobId, dlId, connection);
+        public Map<String, SourceAggregationData> getDrivingAndLookupTableData(String jobId, String dlId, Connection connection) throws SQLException {        
+            Map<String, Map<String, Object>> lookupTableMap = getLookupData(jobId, dlId, connection);
             String mainQuery = buildDrivingAndLookupTableQuery();
             Map<String, SourceAggregationData> sourceAggregationMap = new HashMap<>();
             try (PreparedStatement pstmt = connection.prepareStatement(mainQuery)) {
@@ -2518,7 +2444,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String tableNameAliasOriginal = rs.getString("Table_Name_Alias");
                     String tableNameAliasReplaced = tableNameAliasOriginal.replace(" ", "_");
 
-                    // TODO Key requires one additional paramter check specification. but I guess it is redundant
                     String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + tableNameAliasReplaced;
                     String tableName = rs.getString("Table_Name");
 
@@ -2526,21 +2451,17 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
                     SourceAggregationData data = sourceAggregationMap.getOrDefault(key, new SourceAggregationData(dlId, jobId, tableName, tableNameAliasReplaced));
         
-                    // TODO: Should data getter functions be used??
-                    // lookupValuesalues from main table
+                    // Values from main table
                     data.Column_Name.append(data.Column_Name.length() > 0 ? ", " : "").append(rs.getString("Column_Name"));
                     data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(rs.getString("Column_Name_Alias"));
                     data.Column_Name_with_Alias.append(data.Column_Name_with_Alias.length() > 0 ? ", " : "").append(columnNameWithAlias);
                     data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(rs.getString("Data_Type"));
                     // Values from lookup table
                     if (lookupValues != null) {
-                        // TODO Using last values only
+                        // Using last values only
                         data.Flow = (String) lookupValues.get(rs.getString("Flow"));
                         data.Filter_Id = (Long) lookupValues.get(rs.getString("Filter_Id"));
-                        data.Group_By_Id = (Long) lookupValues.get(rs.getString("Group_By_Id"));
-                        // data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Flow"))); 
-                        // data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Filter_Id")));  
-                        // data.Group_By_Id.append(data.Group_By_Id.length() > 0 ? ", " : "").append(lookupValues.get(rs.getString("Group_By_Id")));  
+                        data.Group_By_Id = (Long) lookupValues.get(rs.getString("Group_By_Id")); 
                     }
                     sourceAggregationMap.put(key, data);
                 }
@@ -2578,7 +2499,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return result.toString();
         }
         
-        public Map<String, Map<String, Object>> getLookupTableData(String jobId, String dlId, Connection connection) throws SQLException {
+        public Map<String, Map<String, Object>> getLookupData(String jobId, String dlId, Connection connection) throws SQLException {
             Map<String, Map<String, Object>> lookupTableMap = new HashMap<>();
             String lookupQuery = "SELECT " +
                     "`DL_Id`, `Job_Id`, `Table_Name`, `Table_Name_Alias`, " +
@@ -2898,16 +2819,14 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return resultMap;
         }        
 
-        // value Source main processing
+        // Value Source 'Group by Conditions'
         public Map<String, SourceGroupByAggregationData> getGroupByInfoData(Connection connection, String jobId,
                 String dlId) throws SQLException {
             Map<String, Map<String, String>> drivingTableDataMap = getDrivingTableInfoData(jobId, dlId, connection);
             Map<String, Map<String, String>> lookupTableDataMap = getLookupTableInfoData(jobId, dlId, connection);
-            // TODO: tmpTable shoul;d be defined somewhere else??
-            String tmpTable = dlName + dlId + jobId;
+            String tmpTable = getTmpTableName();
             Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(connection, tmpTable, true); //`property` = 'db'
 
-            // Prepare the main query and execute
             try (PreparedStatement pstmt = connection.prepareStatement(SQLQueries.SOURCE_MAIN_QUERY)) {
                 pstmt.setString(1, jobId);
                 pstmt.setString(2, dlId);
@@ -2921,33 +2840,29 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         String columnName = rs.getString("Column_Name");
                         String flow = rs.getString("Flow");
 
-                        // Create keys for DrivingTable, LookupTable and Temp Table
+                        // keys for DrivingTable, LookupTable and Temp Table
                         String drivingKey = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + columnName;
                         String lookupKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
                         String queryTableKey = tableNameAlias;
 
-                        // TODO ImpPoint 1
-                        // Perform left outer join with the driving table data
+                        // left outer join with the driving table data
                         Map<String, String> drivingData = drivingTableDataMap.getOrDefault(drivingKey, new HashMap<>());
-                        // Perform left outer join with the lookup table data
+                        // left outer join with the lookup table data
                         Map<String, String> lookupData = lookupTableDataMap.getOrDefault(lookupKey, new HashMap<>());
-                        // Perform left outer join with the temp table data
+                        // left outer join with the temp table data
                         Map<String, String> tmpData = tmpTableDataMap.getOrDefault(queryTableKey, new HashMap<>());
 
                         // Example process for final result; this can be expanded or modified
-                        System.out.println("Main Query Result:");
-                        System.out.println("DL_Id: " + dlIdResult);
-                        System.out.println("Job_Id: " + jobIdResult);
-                        System.out.println("Table_Name: " + tableName);
-                        System.out.println("Table_Name_Alias: " + tableNameAlias);
-                        System.out.println("Column_Name: " + columnName);
+                        // System.out.println("Main Query Result:");
+                        // System.out.println("DL_Id: " + dlIdResult);
+                        // System.out.println("Job_Id: " + jobIdResult);
+                        // System.out.println("Table_Name: " + tableName);
+                        // System.out.println("Table_Name_Alias: " + tableNameAlias);
+                        // System.out.println("Column_Name: " + columnName);
 
-                        // Join the data from the other sources (e.g., drivingData, lookupData,
-                        // queryTableData)
+                        // Join the data from the other sources (e.g., drivingData, lookupData, queryTableData)
                         // For example, log the joins or use the data in further processing
-                        System.out.println("Driving Table Data: " + drivingData);
-                        System.out.println("Lookup Table Data: " + lookupData);
-                        System.out.println("Query Table Data: " + tmpData);
+
                         String key = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
 
                         // Map 5
@@ -3019,7 +2934,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                                 .append(aggregationColumns);
                         data.Group_By_Columns.append(data.Group_By_Columns.length() > 0 ? ", " : "")
                                 .append(groupByColumns);
-                        data.Flow = flow; // TODO Flow is Last value
+                        data.Flow = flow; // Flow is Last value, rest are lists
                         data.Aggregation_Columns_with_Alias
                                 .append(data.Aggregation_Columns_with_Alias.length() > 0 ? ", " : "")
                                 .append(aggregationColumnsWithAlias);
@@ -3038,15 +2953,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                                 .append(data.Having_Grpby_Columns_with_Alias.length() > 0 ? ", " : "")
                                 .append(havingGrpByColumnsWithAlias);
 
-                        // Values from lookup table
-                        // if (lookupValues != null) {
-                        // data.Flow.append(data.Flow.length() > 0 ? ", " :
-                        // "").append(lookupValues.get(rs.getString("Flow")));
-                        // data.Filter_Id.append(data.Filter_Id.length() > 0 ? ", " :
-                        // "").append(lookupValues.get(rs.getString("Filter_Id")));
-                        // data.Group_By_Id.append(data.Group_By_Id.length() > 0 ? ", " :
-                        // "").append(lookupValues.get(rs.getString("Group_By_Id")));
-                        // }
                         sourceGroupByAggregationMap.put(key, data);
                     }
                 }
@@ -3054,18 +2960,14 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             }
         }
                 
-        public Map<String, SourceFilterByAggregationData> getFilterGroupByInfoData(Connection conn, String jobId, String dlId) throws SQLException {
-            Map<String, Map<String, String>> resultMap = new HashMap<>();
-            
+        public Map<String, SourceFilterByAggregationData> getFilterGroupByInfoData(Connection conn, String jobId, String dlId) throws SQLException {           
             String query = SQLQueries.GET_FILTER_GROUP_BY_INFO_QUERY;
             Map<String, SourceFilterByAggregationData> sourceFilterByAggregationMap = new HashMap<>();
             try (PreparedStatement pstmt = conn.prepareStatement(query)) {
                 pstmt.setString(1, jobId);
                 pstmt.setString(2, dlId);
                 try (ResultSet rs = pstmt.executeQuery()) {
-                    while (rs.next()) {
-                        //String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + rs.getString("Table_Name_Alias");
-    
+                    while (rs.next()) {    
                         String dlIdResult = rs.getString("DL_Id");
                         String jobIdResult = rs.getString("Job_Id");
                         String tableName = rs.getString("Table_Name");
@@ -3075,17 +2977,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         String flow = rs.getString("Flow");
                         String filterCondition = rs.getString("Filter_Condition");
                         String filterColumns = rs.getString("Filter_Columns");
-
-                        // Map<String, String> rowMap = new HashMap<>();
-                        // rowMap.put("DL_Id", rs.getString("DL_Id"));
-                        // rowMap.put("Job_Id", rs.getString("Job_Id"));
-                        // rowMap.put("Settings_Position", rs.getString("Settings_Position"));
-                        // rowMap.put("Table_Name", rs.getString("Table_Name"));
-                        // rowMap.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));
-                        // rowMap.put("Filter_Id", rs.getString("Filter_Id"));
-                        // rowMap.put("Flow", rs.getString("Flow"));
-                        // rowMap.put("Filter_Condition", rs.getString("Filter_Condition"));
-                        // rowMap.put("Filter_Columns", rs.getString("Filter_Columns"));
                         
                         String key = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
 
@@ -3096,21 +2987,12 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         data.Filter_Condition = filterCondition;
                         data.Filter_Columns = filterColumns;
 
-
-                        // data.Filter_Id = .append(data.Filter_Id.length() > 0 ? ", " : "").append(filterId);
-                        // data.Flow.append(data.Flow.length() > 0 ? ", " : "").append(flow);
-                        // data.Filter_Condition.append(data.Filter_Condition.length() > 0 ? ", " : "").append(filterCondition);
-                        // data.Filter_Columns.append(data.Filter_Columns.length() > 0 ? ", " : "").append(filterColumns);
-
                         sourceFilterByAggregationMap.put(key, data);
-
-                        //resultMap.put(key, rowMap);
                     }
                 }
             }
             return sourceFilterByAggregationMap;
         }
-
 
         // Value 3. lkp/Join
         private String componentJoinValue(String component) {
@@ -3120,7 +3002,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, String.valueOf(jobId), String.valueOf(dlId));  
                 return joinValue;         
             } catch (SQLException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
             return "";
@@ -3670,7 +3551,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
      
         
         private String getValueFileName() {
-            //String clientId = "Client_"; // TODO client ID eg. 1009427
             String suffix = getCurrentDateFormatted();
             String valueFileName = clientId + dlName + "_Value_File_" + suffix + ".values.properties";
             System.out.println(valueFileName);
@@ -3818,7 +3698,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
                 this.Aggregation_Columns = new StringBuilder();
                 this.Group_By_Columns = new StringBuilder();
-                //this.Flow = new StringBuilder();
+                // this.Flow = new StringBuilder();
                 this.Aggregation_Columns_with_Alias = new StringBuilder();
                 this.Group_By_Columns_Alias = new StringBuilder();
                 this.Group_By_Columns_With_Alias = new StringBuilder();
@@ -5546,85 +5426,84 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
     }
 
     
-// Context class to hold the Input values - APP_DB, Target_DB and so on
-        // TODO: Is there any alternative
-        public static class Context {
+    // Context class to hold the Input values - APP_DB, Target_DB and so on
+    public static class Context {
 
-            // Declare the singleton instance (volatile for thread safety)
-            private static volatile Context instance;
+        // Declare the singleton instance (volatile for thread safety)
+        private static volatile Context instance;
 
-            private String jobId;
-            private String dlId;
-            private String tgtHost;
-            private String tgtPort;
-            private String tgtDbName;
-            private String tgtUser;
-            private String tgtPassword;
-            private String dlName;
-            private String sinkValue;
+        private String jobId;
+        private String dlId;
+        private String tgtHost;
+        private String tgtPort;
+        private String tgtDbName;
+        private String tgtUser;
+        private String tgtPassword;
+        private String dlName;
+        private String sinkValue;
 
-            private Context() {
-                System.out.println("Context has been intialized");
-                init();
-            }
+        private Context() {
+            System.out.println("Context has been intialized");
+            init();
+        }
 
-            private void init() {
-                tgtHost = "172.25.25.124";
-                tgtPort = "4475";
-                tgtDbName = "Mysql8_2_1009427";
-                tgtUser = "XXX_U_DONT_CHANGE";
-                tgtPassword = "XXX_P_DONT_CHANGE";
-                dlName = "test_1";
-                // sinkValue = ;
-            }
+        private void init() {
+            tgtHost = "172.25.25.124";
+            tgtPort = "4475";
+            tgtDbName = "Mysql8_2_1009427";
+            tgtUser = "XXX_U_DONT_CHANGE";
+            tgtPassword = "XXX_P_DONT_CHANGE";
+            dlName = "test_1";
+            // sinkValue = ;
+        }
 
-            // The method to provide access to the singleton instance
-            public static Context getContext() {
-                if (instance == null) {
-                    synchronized (Context.class) {
-                        if (instance == null) {
-                            instance = new Context();
-                        }
+        // The method to provide access to the singleton instance
+        public static Context getContext() {
+            if (instance == null) {
+                synchronized (Context.class) {
+                    if (instance == null) {
+                        instance = new Context();
                     }
                 }
-                return instance;
             }
-            public String getJobId() {
-                return jobId;
-            }
-
-            public String getDlId() {
-                return dlId;
-            }
-
-            public String getTgtHost() {
-                return tgtHost;
-            }
-
-            public String getTgtPort() {
-                return tgtPort;
-            }
-
-            public String getTgtDbName() {
-                return tgtDbName;
-            }
-
-            public String getTgtUser() {
-                return tgtUser;
-            }
-
-            public String getTgtPassword() {
-                return tgtPassword;
-            }
-
-            public String getDlName() {
-                return dlName;
-            }
-
-            public String getSinkValue() {
-                return sinkValue;
-            }
+            return instance;
         }
+        public String getJobId() {
+            return jobId;
+        }
+
+        public String getDlId() {
+            return dlId;
+        }
+
+        public String getTgtHost() {
+            return tgtHost;
+        }
+
+        public String getTgtPort() {
+            return tgtPort;
+        }
+
+        public String getTgtDbName() {
+            return tgtDbName;
+        }
+
+        public String getTgtUser() {
+            return tgtUser;
+        }
+
+        public String getTgtPassword() {
+            return tgtPassword;
+        }
+
+        public String getDlName() {
+            return dlName;
+        }
+
+        public String getSinkValue() {
+            return sinkValue;
+        }
+    }
 
     // Enum to represent different data source types
     enum DataSourceType {
@@ -5702,7 +5581,9 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         long tableId = 9; //DL_Id
         String dlName = "test_1";
         long jobId = 11;
+
         System.out.println("########################## Program Starts ####################");
+        System.out.println("Inputs: clientId: " + clientId);
         System.out.println("Inputs: dlId: " + tableId + ", JobId: " + jobId + ", dlName: " + dlName);
         DataMartStructureScriptGenerator generator = new DataMartStructureScriptGenerator(clientId, DataSourceType.MYSQL, tableId, jobId, dlName);
         generator.generateScripts();
