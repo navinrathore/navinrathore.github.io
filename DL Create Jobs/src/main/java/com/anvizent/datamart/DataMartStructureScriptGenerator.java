@@ -2117,23 +2117,14 @@ public class DataMartStructureScriptGenerator {
         // Value 2. SourceExecutesql entry point
         private String componentSourceExecuteSqlValue(String component) {
             try {
-                String sourceValue = getValueNamesFromJobPropertiesInfo(conn, component); // component contains multiple
-                                                                                          // values
-
-
-
-                //Map<String, SourceAggregationData> sourceData = performLeftOuterJoin(jobId, dlId, conn);
-
-                //Map<String, SourceAggregationData> mainData = performLeftOuterJoin(jobId, dlId, conn);
+                String sourceValue = getValueNamesFromJobPropertiesInfo(conn, component);
                 
                 Map<String, SourceGroupByAggregationData> groupByExecuteSqlInfoData = getGroupByInfoDataSourceExecuteSql(conn, String.valueOf(jobId), String.valueOf(dlId));
-                // Identical input Queries with the Source subcomponent
                 Map<String, SourceFilterByAggregationData> filterGroupByInfoData = getFilterGroupByInfoData(conn, String.valueOf(jobId), String.valueOf(dlId));
 
-                String tmpTable = dlName + dlId + jobId;
+                String tmpTable = getTimeStamp();
                 Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, false);
                 
-                // TODO jobId, dlId are long here
                 Map<String, Map<String, Object>> filtergroupByMap = getFilterGroupByInfo(conn, Long.valueOf(jobId), Long.valueOf(dlId));
 
 
@@ -2142,15 +2133,8 @@ public class DataMartStructureScriptGenerator {
                 
                 String finalSourceExecuteSql = getFinalSourceExecuteSqlScript(sourceValue, mainData, filterGroupByInfoData, groupByExecuteSqlInfoData, Long.valueOf(jobId), Long.valueOf(dlId));
 
-                // String querySelectFromTmpTable = SQLQueries.buildQueryForTable(tmpTable);
-
-                // String drivingAndLookupTableQuery = buildDrivingAndLookupTableQuery();
-                // joinValue = joinTablesAndFetchDerivedValues(conn, joinValue, tmpTable, jobId,
-                // dlId);
-                // return joinValue;
                 return finalSourceExecuteSql;
             } catch (SQLException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
             return "";
@@ -2638,7 +2622,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         // Value SourceExecuteSql GroupBy 
         public Map<String, SourceGroupByAggregationData> getGroupByInfoDataSourceExecuteSql(Connection connection, String jobId,
                 String dlId) throws SQLException {
-            // CHECK: Same queries as of Source
             Map<String, Map<String, String>> drivingTableDataMap = getDrivingTableInfoData(jobId, dlId, connection);
             Map<String, Map<String, String>> lookupTableDataMap = getLookupTableInfoData(jobId, dlId, connection);
             // Data from lookup and Driving tables union'ed
@@ -2663,7 +2646,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         String lookupKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
                         String queryTableKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
 
-                        // TODO ImpPoint 1
                         // Perform left outer join with the driving table data
                         Map<String, String> drivingData = drivingTableDataMap.getOrDefault(drivingKey, new HashMap<>());
                         // Perform left outer join with the lookup table data
