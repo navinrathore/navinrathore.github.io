@@ -143,7 +143,7 @@ public class DataMartStructureScriptGenerator {
                 // component = executesql_source ??
                 // 1
                 String settings = fetchLoadConfigsSettings(conn, dlId, jobId);
-                System.out.println("settings: " + settings);
+                // System.out.println("settings: " + settings);
                 String table = getTmpTableName();
 
                 //String component = "'" + COMPONENT_PARTITIONSOURCESQL_DL + "'" + ", "+ "'" + COMPONENT_SOURCESQL + "'";// ('partitionsourcesql_dl','sourcesql') 
@@ -165,7 +165,7 @@ public class DataMartStructureScriptGenerator {
 
                 // Iterate over the table names
                 for (String tableName : tableDataMap.keySet()) {
-                    System.out.println("Table Name: " + tableName);
+                    // System.out.println("Table Name: " + tableName);
                     String orignalTable = tableName; // TODO data from the Context input or surrounding loop
                     Map<String, String> config = getSpecialCharReplaceConfig(table, orignalTable); // Likely only one entry
                     insertTableDataIntoDB(conn, table, config);
@@ -175,7 +175,7 @@ public class DataMartStructureScriptGenerator {
                 // TODO MULTIPLE components used
                 // Data OK used in next component
                 // TODO merge the two components values
-                System.out.println(component);
+                // System.out.println(component);
                 sourceComponent = fetchAndFormatProperties(conn, COMPONENT_PARTITIONSOURCESQL_DL);
                 //System.out.println("sourceComponent: " +sourceComponent);
 
@@ -251,13 +251,13 @@ public class DataMartStructureScriptGenerator {
             //Output from previous funciton
             // PreviousJoinName
             // JoinComponent
-            System.out.println("propsJoin: ");
-            System.out.println(propsJoin);
-            System.out.println("JoinComponent: ");
-            System.out.println(joinComponent);
-            System.out.println( "previousComponent: " + previousComponent);
-            System.out.println("Script Component: " + COMPONENT_JOIN);
-            System.out.println("============================================");
+            // System.out.println("propsJoin: ");
+            // System.out.println(propsJoin);
+            // System.out.println("JoinComponent: ");
+            // System.out.println(joinComponent);
+            // System.out.println( "previousComponent: " + previousComponent);
+            // System.out.println("Script Component: " + COMPONENT_JOIN);
+            // System.out.println("============================================");
             //#########################
             //#########################
             // Script Job 3 Recoercing
@@ -747,12 +747,12 @@ public class DataMartStructureScriptGenerator {
             }
         }
 
-        // Function to execute both queries and perform an inner join using a hash map for efficiency
+        // Function to execute both queries and making an inner join using a hash map for efficiency
         public List<Map<String, Object>> executeAndJoinTablesSource(Connection conn, String dlId, String jobId)
                 throws SQLException {
             //Fetch Filter Group By Info and store in a hash map
             Map<String, Map<String, Object>> filterGroupByInfoMap = fetchFilterGroupByInfoMap(conn, dlId, jobId);
-            //Fetch Driving and Lookup Table Info and perform the INNER join
+            //Fetch Driving and Lookup Table Info and making the INNER join
             return joinWithDrivingAndLookupTableInfo(conn, dlId, jobId, filterGroupByInfoMap);
         }
 
@@ -905,9 +905,9 @@ public class DataMartStructureScriptGenerator {
                             previousJoinName = defaultJoinName;
                             emptyRetainRename = globalEmptyComponent;
                         }
-                        System.out.println("DL_Id: " + dlIdResult);
-                        System.out.println("        Previous_Join_Name: " + previousJoinName); // TODO
-                        System.out.println("        Empty Retain Rename: " + emptyRetainRename);
+                        // System.out.println("DL_Id: " + dlIdResult);
+                        // System.out.println("        Previous_Join_Name: " + previousJoinName); // TODO
+                        // System.out.println("        Empty Retain Rename: " + emptyRetainRename);
                         retValue.put("PreviousJoinName", previousJoinName);
                         retValue.put(EMPTY_RETAIN_RENAME, emptyRetainRename);
                     }
@@ -938,9 +938,9 @@ public class DataMartStructureScriptGenerator {
                             previousJoinName = defaultJoinName;
                             emptyRetainRename = emptyComponent;
                         }
-                        System.out.println("DL_Id: " + dlIdResult);
-                        System.out.println("    inside Previous_Join_Name: " + previousJoinName);
-                        System.out.println("    inside Empty Retain Rename: " + emptyRetainRename);
+                        // System.out.println("DL_Id: " + dlIdResult);
+                        // System.out.println("    inside Previous_Join_Name: " + previousJoinName);
+                        // System.out.println("    inside Empty Retain Rename: " + emptyRetainRename);
                         retValue.put("PreviousJoinName", previousJoinName);
                         retValue.put(EMPTY_RETAIN_RENAME, emptyRetainRename);
                     }
@@ -1017,8 +1017,8 @@ public class DataMartStructureScriptGenerator {
                     // Print or use finalDynamicJoinSources and previousJoinName. They are end
                     // Results.
                     joinComponent = finalDynamicJoinSources.toString();
-                    System.out.println("Join Component: " + joinComponent);
-                    System.out.println("Join Name: " + previousJoinName);
+                    // System.out.println("Join Component: " + joinComponent);
+                    // System.out.println("Join Name: " + previousJoinName);
                     retValue.put("PreviousJoinName", previousJoinName);
                     retValue.put("JoinComponent", joinComponent);
 
@@ -1153,8 +1153,8 @@ public class DataMartStructureScriptGenerator {
                 // }
             }
 
-            System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
-            System.out.println("Last_Component_Source: " + lastComponentSource);
+            // System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
+            // System.out.println("Last_Component_Source: " + lastComponentSource);
 
         }
 
@@ -1179,8 +1179,8 @@ public class DataMartStructureScriptGenerator {
                 finalExpressionBuilder.append(expressionSource);
             }
 
-            System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
-            System.out.println("Last_Component_Source: " + lastComponentSource);
+            // System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
+            // System.out.println("Last_Component_Source: " + lastComponentSource);
 
             return finalExpressionBuilder.toString();
         }
@@ -1196,7 +1196,7 @@ public class DataMartStructureScriptGenerator {
                 insertPs.setString(4, rowDetails.get("DL_Table_Name"));
                 insertPs.setString(5, rowDetails.get("config_file_name"));
                 insertPs.setBoolean(6, rowDetails.get("DL_Active_Flag").equals("1"));
-                System.out.println("DL_Active_Flag value : " + rowDetails.get("DL_Active_Flag"));
+                // System.out.println("DL_Active_Flag value : " + rowDetails.get("DL_Active_Flag"));
 
                 int rowsAffected = insertPs.executeUpdate();
                 return rowsAffected > 0;
@@ -1267,7 +1267,7 @@ public class DataMartStructureScriptGenerator {
             // Job 11 Sink
             String componentSink = "sqlsink";
             String sinkValue = componentSinkValue(componentSink);
-            System.out.println(sinkValue);
+            // System.out.println(sinkValue);
 
             //Output: Values.properties
             StringBuffer output = new StringBuffer();
@@ -1311,7 +1311,7 @@ public class DataMartStructureScriptGenerator {
             if (sinkValue != "") { // 11
                 output.append("\n").append(sinkValue);
             }
-            System.out.println("Output: Values.properties ######################## \n\n" + output.toString());
+            // System.out.println("Output: Values.properties ######################## \n\n" + output.toString());
 
             String valueFileName = getValueFileName();
             String script = output.toString();
@@ -1460,7 +1460,7 @@ public class DataMartStructureScriptGenerator {
     
             List<Map<String, Object>> finalResults = new ArrayList<>();
     
-            // Perform left outer join
+            // left outer join
             for (Map<String, Object> mainRow : mainResults) {
                 String columnArguments = (String) mainRow.get("Column_Arguments");
                 String dataType = lookupMap.getOrDefault(columnArguments, null); // Lookup Data_Type using Column_Arguments
@@ -1855,8 +1855,7 @@ public class DataMartStructureScriptGenerator {
 
                     //String dateFormats = mapCleansingData != null && mapCleansingData.getDataType().contains("date") ? "yyyy-MM-dd" : "";
 
-                    // Perform string replacements (similar to StringHandling.EREPLACE)
-                    Context context = Context.getContext(); // TODO FIX it get the value
+                    Context context = Context.getContext();
                     sinkValue = replaceSinkValues(sinkValue, mapJoinData, mapCleansingData, context, columnNameAlias, keyFieldsValuesBuilder, constraints);
 
                     finalSinkValue = sinkValue;
@@ -2646,26 +2645,26 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         String lookupKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
                         String queryTableKey = dlIdResult + "-" + jobIdResult + "-" + tableNameAlias + "-" + columnName;
 
-                        // Perform left outer join with the driving table data
+                        // left outer join with the driving table data
                         Map<String, String> drivingData = drivingTableDataMap.getOrDefault(drivingKey, new HashMap<>());
-                        // Perform left outer join with the lookup table data
+                        // left outer join with the lookup table data
                         Map<String, String> lookupData = lookupTableDataMap.getOrDefault(lookupKey, new HashMap<>());
-                        // Perform left outer join with the Union'ed tables data
+                        // left outer join with the Union'ed tables data
                         Map<String, String> lookupAndDrivingData = lookupAndDrivingTableDataMap.getOrDefault(queryTableKey, new HashMap<>());
 
-                        System.out.println("Main Query Result:");
-                        System.out.println("DL_Id: " + dlIdResult);
-                        System.out.println("Job_Id: " + jobIdResult);
-                        System.out.println("Table_Name: " + tableName);
-                        System.out.println("Table_Name_Alias: " + tableNameAlias);
-                        System.out.println("Column_Name: " + columnName);
+                        // System.out.println("Main Query Result:");
+                        // System.out.println("DL_Id: " + dlIdResult);
+                        // System.out.println("Job_Id: " + jobIdResult);
+                        // System.out.println("Table_Name: " + tableName);
+                        // System.out.println("Table_Name_Alias: " + tableNameAlias);
+                        // System.out.println("Column_Name: " + columnName);
 
                         // Join the data from the other sources (e.g., drivingData, lookupData,
                         // queryTableData)
                         // For example, log the joins or use the data in further processing
-                        System.out.println("Driving Table Data: " + drivingData);
-                        System.out.println("Lookup Table Data: " + lookupData);
-                        System.out.println("Query Table Data: " + lookupAndDrivingData);
+                        // System.out.println("Driving Table Data: " + drivingData);
+                        // System.out.println("Lookup Table Data: " + lookupData);
+                        // System.out.println("Query Table Data: " + lookupAndDrivingData);
                         // Key to put data into output
                         String key = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
 
@@ -3116,7 +3115,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
                         RecoercingAggregationData recoercingData = recoercingMap.getOrDefault(key, new RecoercingAggregationData(dlIdValue, jobIdValue));
                             
-                        // Perform the replacements sequentially
                         recoercingValue = recoercingValue
                                 .replace("${recoerce.to.format}", "recoerce.to.format=" + recoercingData.getRecoerceToFormat())
                                 .replace("${recoerce.to.type}", "recoerce.to.type=" + recoercingData.getRecoerceToType())
@@ -3540,7 +3538,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         private String getValueFileName() {
             String suffix = getTimeStamp();
             String valueFileName = clientId + dlName + "_Value_File_" + suffix + ".values.properties";
-            System.out.println(valueFileName);
+            // System.out.println(valueFileName);
             return valueFileName;
         }
 
@@ -4144,7 +4142,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return conversionData;
         }
 
-        // Value NullReplacement - Method to perform in-memory inner join and process data
+        // Value NullReplacement - Method for in-memory inner join and process data
         public List<Map<String, Object>> processJoinedData(
                 List<Map<String, Object>> replacementMappingInfo, 
                 List<Map<String, Object>> dataTypeConversions) {
@@ -4430,7 +4428,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         }
                         combinedDropColumnDefinition.append(dropColumnDefinition);
                     }
-                    System.out.println("SQL Combined Column Definition: " + combinedDropColumnDefinition.toString());
+                    // System.out.println("SQL Combined Column Definition: " + combinedDropColumnDefinition.toString());
                     String sqlAlterTableDefinition = "ALTER TABLE "+ dlName +" ";
                     final String END_OF_SCRIPT_TEXT = ";";
                     // Append all the individual part definitions
@@ -4443,7 +4441,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
                     // The final alter script definition
                     String finalAlterScript = finalAlterScriptBuilder.toString();
-                    System.out.println(finalAlterScript);
+                    // System.out.println(finalAlterScript);
                     // Insert the record into the table "ELT_DL_Alter_Script_Info"
                     return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
                 }
@@ -4518,8 +4516,8 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         if ("".equals(lookupColumnNamesBuilder)) {
             changeFlag = "Y";
         }
-        System.out.println("Change Flag: " + changeFlag);
-        System.out.println(pkColumnNamesBuilder.toString());
+        // System.out.println("Change Flag: " + changeFlag);
+        // System.out.println(pkColumnNamesBuilder.toString());
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -4556,7 +4554,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 }
 
                 String finalChangeColumnNotNullScript = combinedChangeColumnDefBuilder.toString();
-                System.out.println(finalChangeColumnNotNullScript);
+                // System.out.println(finalChangeColumnNotNullScript);
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -4594,7 +4592,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 }
 
                 String finalChangeColumnNotNullScript = combinedChangeColumnDefBuilder.toString();
-                System.out.println(finalChangeColumnNotNullScript);
+                // System.out.println(finalChangeColumnNotNullScript);
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -5026,7 +5024,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 "    Updated_User" +
                 ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
-        // SQL Query to perform the left outer join between ELT_DL_Mapping_Info_Saved
+        // SQL Query for left outer join between ELT_DL_Mapping_Info_Saved
         // and ELT_DL_Mapping_Info
         public static final String JOIN_OUTER_ELT_DL_MAPPING_INFO_SAVED_AND_INFO =
                 // TBD: Performance - all are not keys?
