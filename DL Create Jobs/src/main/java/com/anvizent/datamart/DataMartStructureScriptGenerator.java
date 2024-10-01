@@ -2122,7 +2122,7 @@ public class DataMartStructureScriptGenerator {
                 Map<String, SourceGroupByAggregationData> groupByExecuteSqlInfoData = getGroupByInfoDataSourceExecuteSql(conn, String.valueOf(jobId), String.valueOf(dlId));
                 Map<String, SourceFilterByAggregationData> filterGroupByInfoData = getFilterGroupByInfoData(conn, String.valueOf(jobId), String.valueOf(dlId));
 
-                String tmpTable = getTimeStamp();
+                String tmpTable = getTmpTableName();
                 Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, false);
                 
                 Map<String, Map<String, Object>> filtergroupByMap = getFilterGroupByInfo(conn, Long.valueOf(jobId), Long.valueOf(dlId));
