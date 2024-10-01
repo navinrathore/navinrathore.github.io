@@ -3869,28 +3869,182 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
 
         private String componentNullReplacementValue(String component) {
+            String finalEmptyvalue = "";
             try {
-                getValueNamesFromJobPropertiesInfo(conn, component);
-                List<Map<String, Object>> replacementMappingInfoList = fetchReplacementMappingInfo(conn, String.valueOf(jobId), String.valueOf(dlId));
-                List<Map<String, Object>> dataTyperConversionList = executeDataTypeConversionsQuery(conn);
-            // TODO Pending Component
+                String emptyValue = getValueNamesFromJobPropertiesInfo(conn, component); // EmptyValue
+                // Constraints is PK, SK
+                List<Map<String, Object>> replacementInfoPKList = fetchReplacementIncludeConstraintsInfo(conn, String.valueOf(jobId), String.valueOf(dlId));
+                Map<String, Map<String, Object>> pkCleansingConversionMap = getDataTypeConversionsForPKCleansinghValue(conn); // 28
+                Map<String, SinkAggregationData> pkCleansingDataMap = getPKCleansingInfo(replacementInfoPKList, pkCleansingConversionMap);
+
+                // Constraints is not PK, SK
+                List<Map<String, Object>> replacementInfoList = fetchReplacementExcludeConstraintsInfo(conn, String.valueOf(jobId), String.valueOf(dlId));
+                Map<String, Map<String, Object>> cleansingConversionMap = getDataTypeConversionsForCleansinghValue(conn); // 0/7
+                Map<String, SinkAggregationData> cleansingDataMap = getCleansingInfo(replacementInfoList, cleansingConversionMap);
+
+                Map<String, String> cleansingData = consolidateCleansingInfo(pkCleansingDataMap, cleansingDataMap);
+                String columnNameAlias = cleansingData.get("Column_Name_Alias");
+                String cleansingValue = cleansingData.get("Cleansing_Value");
+                String cleansingValidations = cleansingData.get("cleansing_Validations");
+                String dateFormat = cleansingData.get("date_formats");
+
+                String cleansingValidation = emptyValue.replace("${cleansing.validation}", "cleansing.validation=" + cleansingValidations);
+                String cleansingValues = cleansingValidation.replace("${cleansing.values}", "cleansing.values=" + cleansingValue);
+                String dateFormats = cleansingValues.replace("${date.formats}", "date.formats=" + dateFormat);
+                String cleansingFields = dateFormats.replace("${cleansing.fields}", "cleansing.fields=" + columnNameAlias);
+                finalEmptyvalue = cleansingFields;
             } catch (SQLException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
-            return ""; //TODO
+            return finalEmptyvalue;
         }
 
-        public List<Map<String, Object>> fetchReplacementMappingInfo(Connection conn, String jobId, String dlId) throws SQLException {
-            String query = SQLQueries.SELECT_REPLACEMENT_MAPPING_INFO;
+        public Map<String, String> consolidateCleansingInfo(Map<String, SinkAggregationData> pkCleansingDataMap, Map<String, SinkAggregationData> cleansingDataMap) {
+            Map.Entry<String, SinkAggregationData> entry = pkCleansingDataMap.entrySet().iterator().next();
+            SinkAggregationData value1 = entry.getValue();
+            String key1 = entry.getKey();
+
+            Map.Entry<String, SinkAggregationData> entry2 = cleansingDataMap.entrySet().iterator().next();
+            SinkAggregationData value2 = entry2.getValue();
+            String key2 = entry2.getKey();
+
+            if (!key1.equals(key2)) {
+                System.out.println("Some error in data.");
+                return null;
+            }
+
+            Map<String, String> out = new HashMap<>();
+            // Merge Column_Name_Alias
+            String columnNameAlias = (value2.getColumnNameAlias() == null) 
+            ? value1.getColumnNameAlias() 
+            : value1.getColumnNameAlias() + ", " + value2.getColumnNameAlias();
+
+            // Merge Cleansing_Value
+            String cleansingValue = (value2.getCleansingValue() == null) 
+            ? value1.getCleansingValue() 
+            : value1.getCleansingValue() + ", " + value2.getCleansingValue();
+
+            // Merge cleansing_Validations
+            String cleansingValidations = (value2.getCleansingValidations() == null) 
+            ? value1.getCleansingValidations() 
+            : value1.getCleansingValidations() + ", " + value2.getCleansingValidations();
+
+            // Merge date_formats
+            String dateFormats = (value2.getDateFormats() == null) 
+            ? value1.getDateFormats() 
+            : value1.getDateFormats() + ", " + value2.getDateFormats();
+
+            // Setting the values in Var (or any appropriate data structure)
+            out.put("Column_Name_Alias", columnNameAlias);
+            out.put("Cleansing_Value", cleansingValue);
+            out.put("cleansing_Validations", cleansingValidations);
+            out.put("date_formats" , dateFormats);
+
+            return out;
+        }
+
+        public Map<String, SinkAggregationData> getCleansingInfo(List<Map<String, Object>> replacementInfoList,
+                Map<String, Map<String, Object>> cleansingConversionMap) {
+            Map<String, SinkAggregationData> aggregationMap = new HashMap<>(); // Sink contain the same data
+
+            for (Map<String, Object> replacementInfo : replacementInfoList) {
+                String dataType = (String) replacementInfo.get("Data_Type");
+
+                // get the corresponding entry in cleansingConversionMap
+                Map<String, Object> cleansingInfo = cleansingConversionMap.get(dataType);
+                
+                // Inner join
+                if (cleansingInfo != null) {
+                    String dlIdResult = (String) replacementInfo.get("DL_Id");
+                    String jobIdResult = (String) replacementInfo.get("Job_Id");
+                    String keyMap = dlIdResult + "-" + jobIdResult;
+                    
+                    String columnNameAlias = (String) replacementInfo.get("DL_Column_Names");
+                    String dataTypeInfo = (String) replacementInfo.get("Data_Type");
+
+                    String cleansingValidations = (columnNameAlias == null) ? null : "EMPTY";
+                    String cleansingValue = (String) cleansingInfo.get("Cleansing_Value");
+
+                    String dateFormats = (dataTypeInfo.toLowerCase().contains("date")) ? "yyyy-MM-dd" : ""; // toLowerCase()
+                    SinkAggregationData data = aggregationMap.getOrDefault(keyMap, new SinkAggregationData(dlIdResult, jobIdResult));
+
+                    data.Table_Name.append(data.Table_Name.length() > 0 ? ", " : "").append(replacementInfo.get("Table_Name"));
+                    data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(replacementInfo.get("DL_Column_Names")); // DL_Column_Names in place of Column_Name_Alias
+                    data.Constraints.append(data.Constraints.length() > 0 ? ", " : "").append(replacementInfo.get("Constraints"));
+                    data.Source_Name.append(data.Source_Name.length() > 0 ? ", " : "").append(replacementInfo.get("Source_Name"));
+                    data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(replacementInfo.get("Data_Type"));
+                    // Specific fields
+                    data.Cleansing_Value.append(data.Cleansing_Value.length() > 0 ? ", " : "").append(cleansingValue);  
+                    data.cleansing_Validations.append(data.cleansing_Validations.length() > 0 ? ", " : "").append(cleansingValidations);
+                    if (data.date_formats.length() == 0 && dateFormats.equals("")) {
+                        data.date_formats.append(", ");
+                    } else {
+                        data.date_formats.append(data.date_formats.length() > 0 ? ", " : "").append(dateFormats);
+                    }
+
+                    aggregationMap.put(keyMap, data);
+                }
+            }
+            return aggregationMap;
+        }
+
+        public Map<String, SinkAggregationData> getPKCleansingInfo(List<Map<String, Object>> replacementInfoList,
+                Map<String, Map<String, Object>> pkCleansingConversionMap) {
+            Map<String, SinkAggregationData> aggregationMap = new HashMap<>(); // Sink contain the same data
+
+            for (Map<String, Object> replacementInfo : replacementInfoList) {
+                String dataType = (String) replacementInfo.get("Data_Type");
+
+                // get the corresponding entry in cleansingConversionMap
+                Map<String, Object> pkCleansingInfo = pkCleansingConversionMap.get(dataType);
+                
+                // Inner join
+                if (pkCleansingInfo != null) {
+                    String dlIdResult = (String) replacementInfo.get("DL_Id");
+                    String jobIdResult = (String) replacementInfo.get("Job_Id");
+                    String keyMap = dlIdResult + "-" + jobIdResult;
+                    
+                    String columnNameAlias = (String) replacementInfo.get("DL_Column_Names");
+                    String dataTypeInfo = (String) replacementInfo.get("Data_Type");
+
+                    String cleansingValidations = (columnNameAlias == null) ? null : "EMPTY";
+                    String pkCleansingValue = (String) pkCleansingInfo.get("PK_Cleansing_Value");
+
+                    String dateFormats = (dataTypeInfo.toLowerCase().contains("date")) ? "yyyy-MM-dd" : ""; // toLowerCase()
+                    SinkAggregationData data = aggregationMap.getOrDefault(keyMap, new SinkAggregationData(dlIdResult, jobIdResult));
+
+                    data.Table_Name.append(data.Table_Name.length() > 0 ? ", " : "").append(replacementInfo.get("Table_Name"));
+                    data.Column_Name_Alias.append(data.Column_Name_Alias.length() > 0 ? ", " : "").append(replacementInfo.get("DL_Column_Names")); // DL_Column_Names in place of Column_Name_Alias
+                    data.Constraints.append(data.Constraints.length() > 0 ? ", " : "").append(replacementInfo.get("Constraints"));
+                    data.Source_Name.append(data.Source_Name.length() > 0 ? ", " : "").append(replacementInfo.get("Source_Name"));
+                    data.Data_Type.append(data.Data_Type.length() > 0 ? ", " : "").append(replacementInfo.get("Data_Type"));
+                    // Specific fields
+                    data.Cleansing_Value.append(data.Cleansing_Value.length() > 0 ? ", " : "").append(pkCleansingValue);  
+                    data.cleansing_Validations.append(data.cleansing_Validations.length() > 0 ? ", " : "").append(cleansingValidations);
+                    if (data.date_formats.length() == 0 && dateFormats.equals("")) {
+                        data.date_formats.append(", ");
+                    } else {
+                        data.date_formats.append(data.date_formats.length() > 0 ? ", " : "").append(dateFormats);
+                    }
+
+                    aggregationMap.put(keyMap, data);
+                }
+            }
+            return aggregationMap;
+        }
+
+        public List<Map<String, Object>> fetchReplacementIncludeConstraintsInfo(Connection conn, String jobId, String dlId) throws SQLException {
+           //String query = SQLQueries.SELECT_REPLACEMENT_MAPPING_INFO;
+            String query = sqlQueries.getReplacementIncludeConstraintsQuery(dlId, jobId);
+
             try (PreparedStatement ps = conn.prepareStatement(query)) {
                 // ps.setString(1, jobId);
                 // ps.setString(2, dlId);
                 // ps.setString(3, dlId);
                 // ps.setString(4, jobId);
-                ps.setString(1, dlId);
-                ps.setString(2, dlId);
-                ps.setString(3, jobId);
+                // ps.setString(1, dlId);
+                // ps.setString(2, dlId);
+                // ps.setString(3, jobId);
         
                 try (ResultSet rs = ps.executeQuery()) {
                     List<Map<String, Object>> results = new ArrayList<>();
@@ -3910,7 +4064,29 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             }
         }
 
-        public List<Map<String, Object>> executeDataTypeConversionsQuery(Connection conn) throws SQLException {
+        public List<Map<String, Object>> fetchReplacementExcludeConstraintsInfo(Connection conn, String jobId, String dlId) throws SQLException {
+             String query = sqlQueries.getReplacementExcludeConstraintsQuery(dlId, jobId);
+ 
+             try (PreparedStatement ps = conn.prepareStatement(query)) {
+                 try (ResultSet rs = ps.executeQuery()) {
+                     List<Map<String, Object>> results = new ArrayList<>();
+                     while (rs.next()) {
+                         Map<String, Object> row = new HashMap<>();
+                         row.put("Table_Name", rs.getString("Table_Name"));
+                         row.put("DL_Column_Names", rs.getString("DL_Column_Names"));
+                         row.put("Constraints", rs.getString("Constraints"));
+                         row.put("Source_Name", rs.getString("Source_Name"));
+                         row.put("Data_Type", rs.getString("Data_Type"));
+                         row.put("DL_Id", rs.getString("DL_Id"));
+                         row.put("Job_Id", rs.getString("Job_Id"));
+                         results.add(row);
+                     }
+                     return results;
+                 }
+             }
+         }
+
+        public Map<String, Map<String, Object>> getDataTypeConversionsForPKCleansinghValue(Connection conn) throws SQLException {
             String query = "SELECT " +
                            "`ELT_Datatype_Conversions`.`Id`, " +
                            "`ELT_Datatype_Conversions`.`Source_Data_Type`, " +
@@ -3919,22 +4095,54 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                            "PK_Cleansing_Value " +
                            "FROM `ELT_Datatype_Conversions`";
     
-            List<Map<String, Object>> results = new ArrayList<>();
+            //List<Map<String, Object>> results = new ArrayList<>();
+            Map<String, Map<String, Object>> conversionData = new HashMap<>();
             try (PreparedStatement ps = conn.prepareStatement(query);
                 ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Map<String, Object> row = new HashMap<>();
+                    String key = (String) rs.getObject("Data_Type");
                     row.put("Id", rs.getObject("Id"));
                     row.put("Source_Data_Type", rs.getObject("Source_Data_Type"));
-                    row.put("Data_Type", rs.getObject("Data_Type"));
+                    row.put("IL_Data_Type", rs.getObject("Data_Type"));
                     row.put("Java_Data_Type", rs.getObject("Java_Data_Type"));
                     row.put("PK_Cleansing_Value", rs.getObject("PK_Cleansing_Value"));
-                    results.add(row);
+                    //results.add(row);
+                    conversionData.put(key, row);
                 }
             }
-            return results;
+            return conversionData;
         }
         
+        public Map<String, Map<String, Object>> getDataTypeConversionsForCleansinghValue(Connection conn) throws SQLException {    
+            String query = "SELECT `ELT_Datatype_Conversions`.`Id`, " +
+                           "`ELT_Datatype_Conversions`.`Source_Data_Type`, " +
+                           "LOWER(SUBSTRING_INDEX(ELT_UI_Data_Type, '(', 1)) AS `UI_Data_Type`, " +
+                           "`ELT_Datatype_Conversions`.`Java_Data_Type`, " +
+                           "Cleansing_Value " +
+                           "FROM `ELT_Datatype_Conversions` " +
+                           "WHERE Cleansing_Value != ''";
+
+            //List<Map<String, Object>> results = new ArrayList<>();
+            Map<String, Map<String, Object>> conversionData = new HashMap<>();
+
+            try (PreparedStatement ps = conn.prepareStatement(query);
+                ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> row = new HashMap<>();
+                    String key = (String) rs.getObject("UI_Data_Type");
+                    row.put("Id", rs.getObject("Id"));
+                    row.put("Source_Data_Type", rs.getObject("Source_Data_Type"));
+                    row.put("IL_Data_Type", rs.getObject("UI_Data_Type"));
+                    row.put("Java_Data_Type", rs.getObject("Java_Data_Type"));
+                    row.put("Cleansing_Value", rs.getObject("Cleansing_Value"));
+                    //results.add(row);
+                    conversionData.put(key, row);
+                }
+
+            }
+            return conversionData;
+        }
 
         // Value NullReplacement - Method to perform in-memory inner join and process data
         public List<Map<String, Object>> processJoinedData(
@@ -5030,6 +5238,42 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 "        FROM ELT_DL_Derived_Column_Info " +
                 "        WHERE DL_ID = ? AND Job_Id = ? " +
                 "    )";
+        // TODO see if above query is related. INNER Join part is must
+        public String getReplacementExcludeConstraintsQuery(String dlId, String jobId) {
+            return "SELECT DISTINCT " +
+                    "'' AS Table_Name, " +
+                    "DL_Column_Names, " +
+                    "Constraints, " +
+                    "'' AS Source_Name, " +
+                    "LOWER(SUBSTRING_INDEX(DL_Data_Types, '(', 1)) AS Data_Type, " +
+                    "DL_Id, " +
+                    "'" + jobId + "' AS Job_Id " +
+                    "FROM ELT_DL_Mapping_Info_Saved " +
+                    "WHERE Constraints NOT IN ('Pk','SK') " +
+                    "AND DL_Id = '" + dlId + "' " +
+                    "AND DL_Column_Names NOT IN ( " +
+                    "SELECT DISTINCT Column_Alias_Name " +
+                    "FROM ELT_DL_Derived_Column_Info " +
+                    "WHERE DL_ID='" + dlId + "' AND Job_Id='" + jobId + "')";
+        }
+
+        public String getReplacementIncludeConstraintsQuery(String dlId, String jobId) {
+            return "SELECT DISTINCT " +
+                    "'' AS Table_Name, " +
+                    "DL_Column_Names, " +
+                    "Constraints, " +
+                    "'' AS Source_Name, " +
+                    "LOWER(SUBSTRING_INDEX(DL_Data_Types, '(', 1)) AS Data_Type, " +
+                    "DL_Id, " +
+                    "'" + jobId + "' AS Job_Id " +
+                    "FROM ELT_DL_Mapping_Info_Saved " +
+                    "WHERE Constraints IN ('Pk','SK') " +
+                    "AND DL_Id = '" + dlId + "' " +
+                    "AND DL_Column_Names NOT IN ( " +
+                    "SELECT DISTINCT Column_Alias_Name " +
+                    "FROM ELT_DL_Derived_Column_Info " +
+                    "WHERE DL_ID='" + dlId + "' AND Job_Id='" + jobId + "')";
+        }
 
         public static final String SELECT_FILTER_GROUP_BY_INFO =
                 "SELECT DISTINCT " +
