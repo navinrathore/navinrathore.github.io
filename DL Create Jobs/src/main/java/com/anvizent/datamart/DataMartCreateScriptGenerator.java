@@ -10,8 +10,6 @@ public class DataMartCreateScriptGenerator {
     public static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci";
     private DataSourceType dataSourceType;
     private String dlId;
-    // TBD                                          ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;";
-    // Is semicolon neeeded?
     
     public DataMartCreateScriptGenerator(DataSourceType type, String tableId) {
         dataSourceType = type;
@@ -36,7 +34,7 @@ public class DataMartCreateScriptGenerator {
                 StringBuilder secondaryKeys = new StringBuilder();
 
                 try (PreparedStatement pstmt = conn.prepareStatement(SQLQueries.SELECT_DETAILS_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY)) {
-                    pstmt.setString(1, dlId); // Set the parameter for DL_Id
+                    pstmt.setString(1, dlId);
 
                     try (ResultSet rs = pstmt.executeQuery()) {
 
@@ -87,8 +85,8 @@ public class DataMartCreateScriptGenerator {
                     // TBD - Need to check the text after these two sets of keys are combined.
                     String key = primaryKeys.toString() + ", " + secondaryKeys.toString();
                     int len = key.length();
-                    String primaryKey = key.substring(0, len - 1);
-                    String sqlPrimaryKeyDefinition = " Primary Key (" + primaryKey + " ) ";
+                    String primaryKey = key.substring(0, len);
+                    String sqlPrimaryKeyDefinition = " Primary Key (" + primaryKey + ") ";
 
                     // Append all the individual part definitions
                     StringBuilder finalScriptBuilder = new StringBuilder();
@@ -104,13 +102,12 @@ public class DataMartCreateScriptGenerator {
                     System.out.println(finalCreateScript);
 
                     // Final step that is to put data into the table
-                    insertIntoELT_DL_Create_Info(conn, id, tableName, finalCreateScript);
+                    insertIntoEltDlCreateInfo(conn, id, tableName, finalCreateScript);
                 }
                 conn.close();
             } else {
                 System.out.println("Failed to make connection!");
             }
-
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -134,6 +131,9 @@ public class DataMartCreateScriptGenerator {
         if ("pk".equalsIgnoreCase(constraint)) {
             columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
             columnDefinitionBuilder.append(DBHelper.getDefaultForDataType(dataType));
+        } else if ("sk".equalsIgnoreCase(constraint)) {
+                columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
+                columnDefinitionBuilder.append(DBHelper.getDefaultForDataType(dataType)); // Why not
         } else {
             columnDefinitionBuilder.append(" DEFAULT NULL");
         }
@@ -149,14 +149,14 @@ public class DataMartCreateScriptGenerator {
      * @param script The script column.
      * @throws SQLException If an SQL error occurs during the operation.
      */
-    public void insertIntoELT_DL_Create_Info(Connection conn, String dlId, String dlName, String script) throws SQLException {
+    public void insertIntoEltDlCreateInfo(Connection conn, String dlId, String dlName, String script) throws SQLException {
         String sqlInsertQuery = SQLQueries.INSERT_INTO_ELT_DL_CREATE_INFO_QUERY;
         try (PreparedStatement pstmt = conn.prepareStatement(sqlInsertQuery)) {
             pstmt.setString(1, dlId);
             pstmt.setString(2, dlName);
             pstmt.setString(3, script);
             int rowsAffected = pstmt.executeUpdate();
-            System.out.println("Rows inserted: " + rowsAffected);
+            System.out.println("Rows Inserted: " + rowsAffected);
         }
     }
 
@@ -167,30 +167,31 @@ public class DataMartCreateScriptGenerator {
      * @param dlName The DL_Name column.
      * @throws SQLException If an SQL error occurs during the operation.
      */
-    public void deleteFromELT_DL_Create_Info(Connection conn, String dlName) throws SQLException {
+    public void deleteFromEltDlCreateInfo(Connection conn, String dlName) throws SQLException {
         String sqlDeleteQuery = SQLQueries.DELETE_FROM_ELT_DL_CREATE_INFO_QUERY;
         try (PreparedStatement pstmt = conn.prepareStatement(sqlDeleteQuery)) {
             pstmt.setString(1, dlName);
             int rowsAffected = pstmt.executeUpdate();         
-            System.out.println("Rows affected: " + rowsAffected);
+            System.out.println("Rows Deleted: " + rowsAffected);
         }
     }
 
-    // // Enum to represent different data source types
-    // enum DataSourceType {
-    //     MYSQL,
-    //     SNOWFLAKE,
-    //     SQLSERVER
-    // }
-    // // Enum to represent different return status
-    // public enum Status {
-    //     SUCCESS,
-    //     FAILURE
-    // }
-
-    public static void main(String[] args) {
-        String tableId = "9";
-        DataMartCreateScriptGenerator generator = new DataMartCreateScriptGenerator(DataSourceType.MYSQL, tableId);
-        generator.generateCreateScript();
+        public static void main(String[] args) {
+            String tableId = "9";
+            DataMartCreateScriptGenerator generator = new DataMartCreateScriptGenerator(DataSourceType.MYSQL, tableId);
+            generator.generateCreateScript();
+        }
     }
-}
+
+        // Enum to represent different data source types
+        enum DataSourceType {
+            MYSQL,
+            SNOWFLAKE,
+            SQLSERVER
+        }
+        // Enum to represent different return status
+        enum Status {
+            SUCCESS,
+            FAILURE
+        }
+    
