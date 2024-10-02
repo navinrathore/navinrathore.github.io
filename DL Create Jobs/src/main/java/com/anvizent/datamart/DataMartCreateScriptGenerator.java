@@ -4,12 +4,45 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.logging.Logger;
+
+/**
+ * The {@code DataMartCreateScriptGenerator} class is responsible for generating 
+ * SQL "CREATE TABLE" scripts for a data mart based on the mapping information stored 
+ * in the database. It dynamically builds column definitions, primary and secondary 
+ * key constraints, and appends the necessary storage engine and character set 
+ * configurations for the table.
+ * 
+ * <p> It retrieves table metadata from the database and generates 
+ * the corresponding SQL script with the specified charset and collation.
+ * 
+ * <p>The generated SQL script is inserted into the database, 
+ * and any previous definitions for the same table are deleted before insertion.
+ * 
+ * <p>Example usage:
+ * <pre>
+ *     DataMartCreateScriptGenerator generator = new DataMartCreateScriptGenerator(DataSourceType.MYSQL, "tableId");
+ *     generator.generateCreateScript();
+ * </pre> 
+ * @author navin
+ * @version 0.1
+ */
 
 public class DataMartCreateScriptGenerator {
+    private static final Logger logger = Logger.getLogger(DataMartCreateScriptGenerator.class.toString());
 
-    public static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci";
-    private DataSourceType dataSourceType;
-    private String dlId;
+    public static final String CHARSET_UTF8MB4 = "utf8mb4"; // Newer Charset
+    public static final String CHARSET_UTF8MB4_COLLATION = "utf8mb4_0900_ai_ci"; // Newer Charset Collation
+    // public static final String CHARSET_UTF8 = "utf8";
+    // public static final String CHARSET_UTF8_COLLATION = "utf8mb4_0900_ai_ci";
+
+    public static final String CHARSET = CHARSET_UTF8MB4;
+    public static final String CHARSET_COLLATION = CHARSET_UTF8MB4_COLLATION;
+
+    private static final String END_OF_SCRIPT_TEXT = ") ENGINE=InnoDB DEFAULT CHARSET=" + CHARSET + " COLLATE=" + CHARSET_COLLATION;
+
+    private final DataSourceType dataSourceType;
+    private final String dlId;
     
     public DataMartCreateScriptGenerator(DataSourceType type, String tableId) {
         dataSourceType = type;
@@ -17,42 +50,25 @@ public class DataMartCreateScriptGenerator {
     }
 
     public void generateCreateScript() {
-        try {
-            // Get DB connection for the dataSourceType
-            Connection conn = DBHelper.getConnection(DataSourceType.MYSQL);
-
+        try (Connection conn = DBHelper.getConnection(DataSourceType.MYSQL)) {
             if (conn != null) {
-                System.out.println("DB Connection established");
-
-                //String dlId = "dl_id";
                 String tableName = "";
                 String id = "";
                 String columnName = "";
                 StringBuilder combinedColumnDefinitions = new StringBuilder();
-                //String sqlPrimaryKeyDefinition = "";
                 StringBuilder primaryKeys = new StringBuilder();
                 StringBuilder secondaryKeys = new StringBuilder();
 
                 try (PreparedStatement pstmt = conn.prepareStatement(SQLQueries.SELECT_DETAILS_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY)) {
                     pstmt.setString(1, dlId);
-
                     try (ResultSet rs = pstmt.executeQuery()) {
-
                         String columnDefinition = "";
                         while (rs.next()) {
-                            // Process the result set
                             id = rs.getString("DL_Id");
                             tableName = rs.getString("DL_Name");
                             columnName = rs.getString("DL_Column_Names");
                             String constraints = rs.getString("Constraints");
                             String dataTypes = rs.getString("DL_Data_Types");
-
-                            // Operations on data
-                            // tableName - no change
-                            // create - fixed
-                            // PKs - aggregated
-                            // SKs - aggregated
-                            // ColumnNames - aggregated
                            
                             // Consolidated Primary keys
                             if ("PK".equalsIgnoreCase(constraints)) {
@@ -62,16 +78,14 @@ public class DataMartCreateScriptGenerator {
                                 primaryKeys.append(columnName);
                             }
                             // Consolidated Secondary keys
-                            // Append secondary keys if the constraint is 'SK' or any other key type
-                            // TBD: is UK deined in our tables? if not it should be removed
-                            else if ("SK".equalsIgnoreCase(constraints) || "UK".equalsIgnoreCase(constraints)) {
+                            else if ("SK".equalsIgnoreCase(constraints)) {
                                 if (secondaryKeys.length() > 0) {
                                     secondaryKeys.append(", ");
                                 }
                                 secondaryKeys.append(columnName);
                             }
 
-                            // Form Column Definition and append to combined Column Definition
+                            // Form Column Definition and make a list of all column Definitions
                             columnDefinition = buildColumnDefinition(columnName, constraints, dataTypes);
                             if (combinedColumnDefinitions.length() > 0) {
                                 combinedColumnDefinitions.append(", ");
@@ -80,10 +94,15 @@ public class DataMartCreateScriptGenerator {
                         }
                     }
  
-                    System.out.println("SQL Combined Column Definition: " + combinedColumnDefinitions.toString());
                     String sqlCreateTableDefinition = "CREATE TABLE IF NOT EXISTS "+ tableName +" (";
-                    // TBD - Need to check the text after these two sets of keys are combined.
-                    String key = primaryKeys.toString() + ", " + secondaryKeys.toString();
+                    String key = "";
+                    if (!primaryKeys.toString().isEmpty() && !secondaryKeys.toString().isEmpty()) {
+                        key = primaryKeys.toString() + ", " + secondaryKeys.toString();
+                    } else if (!primaryKeys.toString().isEmpty()) {
+                        key = primaryKeys.toString();
+                    } else if (!secondaryKeys.toString().isEmpty()) {
+                        key = secondaryKeys.toString();
+                    }
                     int len = key.length();
                     String primaryKey = key.substring(0, len);
                     String sqlPrimaryKeyDefinition = " Primary Key (" + primaryKey + ") ";
@@ -99,12 +118,13 @@ public class DataMartCreateScriptGenerator {
 
                     // The final script definition
                     String finalCreateScript = finalScriptBuilder.toString();
-                    System.out.println(finalCreateScript);
 
-                    // Final step that is to put data into the table
+                    // Delete the existing rows, if any.
+                    deleteFromEltDlCreateInfo(conn, tableName);
+
+                    // Put data into the table
                     insertIntoEltDlCreateInfo(conn, id, tableName, finalCreateScript);
                 }
-                conn.close();
             } else {
                 System.out.println("Failed to make connection!");
             }
@@ -126,7 +146,7 @@ public class DataMartCreateScriptGenerator {
                 .append(columnName)
                 .append(" ")
                 .append(dataType)
-                .append(dataType.startsWith("varchar") ? " COLLATE utf8_unicode_ci" : " ");
+                .append(dataType.startsWith("varchar") ? " COLLATE " + CHARSET_COLLATION + " " : " ");
 
         if ("pk".equalsIgnoreCase(constraint)) {
             columnDefinitionBuilder.append(" NOT NULL DEFAULT ");
@@ -176,22 +196,39 @@ public class DataMartCreateScriptGenerator {
         }
     }
 
-        public static void main(String[] args) {
-            String tableId = "9";
-            DataMartCreateScriptGenerator generator = new DataMartCreateScriptGenerator(DataSourceType.MYSQL, tableId);
-            generator.generateCreateScript();
-        }
+    public static class SQLQueries {
+        // Query for deleting records
+        public static final String DELETE_FROM_ELT_DL_CREATE_INFO_QUERY = "DELETE FROM ELT_DL_Create_Info WHERE DL_Name = ?";
+        // Query for inserting records
+        public static final String INSERT_INTO_ELT_DL_CREATE_INFO_QUERY = "INSERT INTO ELT_DL_Create_Info (DL_ID, DL_NAME, script) VALUES (?, ?, ?)";
+        // Query for retrieving detailed information from the ELT_DL_Mapping_Info_Saved table.
+        public static final String SELECT_DETAILS_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY = "SELECT " +
+                "    `ELT_DL_Mapping_Info_Saved`.`DL_Id`, " +
+                "    `ELT_DL_Mapping_Info_Saved`.`DL_Name`, " +
+                "    `ELT_DL_Mapping_Info_Saved`.`DL_Column_Names`, " +
+                "    `ELT_DL_Mapping_Info_Saved`.`Constraints`, " +
+                "    `ELT_DL_Mapping_Info_Saved`.`DL_Data_Types` " +
+                "FROM " +
+                "    `ELT_DL_Mapping_Info_Saved` " +
+                "WHERE " +
+                "    `DL_Id` = ?";
     }
 
-        // Enum to represent different data source types
-        enum DataSourceType {
-            MYSQL,
-            SNOWFLAKE,
-            SQLSERVER
-        }
-        // Enum to represent different return status
-        enum Status {
-            SUCCESS,
-            FAILURE
-        }
-    
+    public static void main(String[] args) {
+        String tableId = "9"; // Input paramter along with APP DB in Context
+        DataMartCreateScriptGenerator generator = new DataMartCreateScriptGenerator(DataSourceType.MYSQL, tableId);
+        generator.generateCreateScript();
+    }
+}
+
+// Enum to represent different data source types
+enum DataSourceType {
+    MYSQL,
+    SNOWFLAKE,
+    SQLSERVER
+}
+// Enum to represent different return status
+enum Status {
+    SUCCESS,
+    FAILURE
+}
