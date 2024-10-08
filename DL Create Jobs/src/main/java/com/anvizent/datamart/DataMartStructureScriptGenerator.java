@@ -127,8 +127,6 @@ public class DataMartStructureScriptGenerator {
 
         // If all the above operations are successful, delete the temp table
         executeDropTableQuery(conn, getTmpTableName());
-        System.exit(1); //TODO
-
     }
 
     public class DataMartConfigScriptGenerator {
@@ -146,67 +144,55 @@ public class DataMartStructureScriptGenerator {
             System.out.println("============================================");
             System.out.println("Script Component: " + "Source");
             String sourceComponent = ""; // TO name Case
+            String executeSourceComponent = "";
             String previousComponent = ""; // Initialization
             try {
                 // component = executesql_source ??
                 // 1
                 String settings = fetchLoadConfigsSettings(conn, dlId, jobId);
-                String table = getTmpTableName();
-
-                //String component = "'" + COMPONENT_PARTITIONSOURCESQL_DL + "'" + ", "+ "'" + COMPONENT_SOURCESQL + "'";// ('partitionsourcesql_dl','sourcesql') 
-                String component = COMPONENT_PARTITIONSOURCESQL_DL + ", "+ COMPONENT_SOURCESQL;// ('partitionsourcesql_dl','sourcesql') 
-                // TODO COMPONENT_SOURCESQL is not returning any value; Change it to new SQL 
                 
                 // 2
-                //String tt = dlName + dlId + jobId; // TODO repalce with a single function
-                //Map<String, Map<String, String>> tmpTableData = getTmpTableData(conn, tt, false); //`property` != 'db'
 
                 List<Map<String, Object>> list = executeAndJoinTablesSource(conn, String.valueOf(dlId), String.valueOf(jobId));
+                String table = getTmpTableName();
                 boolean tableCreated = createNewTable(conn, table);
                 if (tableCreated) {
                     insertDataIntoTable(conn, table, list);
                 }
 
                 // 3
-                Map<String, Map<String, String>> tableDataMap = getTmpTableData(conn, table, false); //`property` != 'db'
+                //Map<String, Map<String, String>> tableDataMap = getTmpTableData(conn, table, false); //`property` != 'db'
+                List<Map<String, String>> tableDataList = getTmpTableDataAsList(conn, table, false); //`property` != 'db'
 
                 // Iterate over the table names
-                for (String tableName : tableDataMap.keySet()) {
-                    String orignalTable = tableName;
-                    Map<String, String> config = getSpecialCharReplaceConfig(table, orignalTable); // Likely only one entry
-                    insertTableDataIntoDB(conn, table, config);
+                for (Map<String, String> entry : tableDataList) {
+                    String originalTable = entry.get("table_name"); // Access table_name from the entry
+                    Map<String, String> config = getSpecialCharReplaceConfig(table, originalTable); // Likely only one entry
+                    updateTableDataIntoDB(conn, table, config);
                 }
-                
                 // 4
-                // TODO MULTIPLE components used
-                // Data OK used in next component
-                // TODO merge the two components values
-                // System.out.println(component);
-                sourceComponent = fetchAndFormatProperties(conn, COMPONENT_PARTITIONSOURCESQL_DL);
-                //System.out.println("sourceComponent: " +sourceComponent);
+                String sourceConfig1 = fetchAndFormatProperties(conn, COMPONENT_PARTITIONSOURCESQL_DL);
+                String sourceConfig2 = fetchAndFormatProperties(conn, COMPONENT_SOURCESQL);
+                sourceComponent = mergeSourceConfig(sourceConfig1, sourceConfig2);
 
                 // 5 table ELT_DL_Driving_Table_Info and ELT_DL_Lookup_Table_Info have data - two
                 // data is good OK
                 Map<String, Object> result = getSourceAndPreviousComponent(sourceComponent);
-                previousComponent = (String) result.get("PreviousComponent");
+                previousComponent = (String) result.get("PreviousComponent"); // Last tableNameAlias
                 sourceComponent = (String) result.get("SourceComponent");
-
-            //    System.out.println("previousComponent: " + previousComponent);
-            //    System.out.println("sourceComponent: \n" + sourceComponent);
                 
                // 6
                // Table ELT_Job_Properties_Info has data...
                // OK data coming
                 String propsExecutesqlSource = fetchAndFormatProperties(conn, COMPONENT_EXECUTESQL_SOURCE);
                 String executesqlSource = propsExecutesqlSource;
-                System.out.println("6. executesqlSource: ");
-                System.out.println(executesqlSource);
 
                 // 7
-                // NO data
                 String tmpTable = getTmpTableName();
                 Map<String, Map<String, String>> tmpTableDataMap = getTmpTableData(conn, tmpTable, false); // `property` != 'db'
-                // TODO data processing Pending
+                result = processExecuteSqlSource(executesqlSource, tmpTableDataMap);
+                executeSourceComponent = (String) result.get("ExecuteSourceComponent");
+                previousComponent = (String) result.get("PreviousComponent");
 
             } catch (SQLException e) {
                 e.printStackTrace();
@@ -234,7 +220,6 @@ public class DataMartStructureScriptGenerator {
             String joinComponent = propsJoin; //Output
             //String previousJoinName = ""; //Output
             try {
-                // TODO commented below for testing
                 System.out.println("table: " + table);
                 Map<String, String> retObjJoin = executeJoinQueryAndBuildJoinComponent(conn, table, dlId, jobId, joinComponent);
                 if (retObjJoin.size() != 0) {
@@ -253,23 +238,13 @@ public class DataMartStructureScriptGenerator {
             } catch (SQLException e) {
                 e.printStackTrace();
             }
-            //Output from previous funciton
-            // PreviousJoinName
-            // JoinComponent
-            // System.out.println("propsJoin: ");
-            // System.out.println(propsJoin);
-            // System.out.println("JoinComponent: ");
-            // System.out.println(joinComponent);
-            // System.out.println( "previousComponent: " + previousComponent);
-            // System.out.println("Script Component: " + COMPONENT_JOIN);
-            // System.out.println("============================================");
-            //#########################
-            //#########################
+
             // Script Job 3 Recoercing
             System.out.println("============================================");
             System.out.println("Script Component: " + COMPONENT_EMPTY_RECOERCING);
             String propsEmptyRecoercing = fetchAndFormatProperties(conn, COMPONENT_EMPTY_RECOERCING);
-            String recoercingScript = propsEmptyRecoercing.replace("Dynamic_Join_Name", previousComponent);
+            //String recoercingScript = propsEmptyRecoercing.replace("Dynamic_Join_Name", previousComponent);
+            String recoercingScript = propsEmptyRecoercing.replace("Dynamic_Name", previousComponent); // TODO - made things work.. check original doc again
             previousComponent = "Recoercing"; // Hardcoded
             System.out.println("propsEmptyRecoercing: ");
             System.out.println(propsEmptyRecoercing);
@@ -285,7 +260,8 @@ public class DataMartStructureScriptGenerator {
             System.out.println("Script Component: " + COMPONENT_EMPTY);
             String componentNullReplacement = "empty";
             String propsNullReplacement = fetchAndFormatProperties(conn, COMPONENT_EMPTY);
-            String emptyScript = propsNullReplacement.replace("Dynamic_Join_Name", previousComponent); // Output //Effectively no impact of replace
+            String emptyScript = propsNullReplacement.replace("Dynamic_Join_Name", previousComponent); //TODO Output //Effectively no impact of replace
+            //String emptyScript = propsNullReplacement.replace("Dynamic_Name", previousComponent); // TODO temporarily it is done
             previousComponent = "Cleansing_Fields";
             System.out.println("propsNullReplacement: ");
             System.out.println(propsNullReplacement);
@@ -298,14 +274,17 @@ public class DataMartStructureScriptGenerator {
 
             // SubJob 5 - GroupbyJoin
             String componentFilterGroupBy = COMPONENT_EXECUTESQL_FILTERGROUPBY;
+            String joinDynamicGroupbyFilterConfig = "";
             String filterGroupBy = fetchAndFormatProperties(conn, componentFilterGroupBy);
-            String dynamicFilterGroupByName = filterGroupBy.replace("Dynamic_FilterGroupby_Name", "Join_Aggregation");
-            String dynamicFilterGroupBySource = dynamicFilterGroupByName.replace("Dynamic_FilterGroupby_Source", previousComponent);
-            String previousName = "Join_Aggregation";
-            String joinDynamicGroupbyFilterConfig = dynamicFilterGroupBySource; //output
-            System.out.println("Previous Name: " + previousName);
-            System.out.println("Derived Dynamic Groupby Filter Config: \n" + joinDynamicGroupbyFilterConfig);
-
+            if (doesFilterGroupByInfoRecordExist(conn, "Join_Columns", String.valueOf(jobId), String.valueOf(dlId))) {
+                String dynamicFilterGroupByName = filterGroupBy.replace("Dynamic_FilterGroupby_Name", "Join_Aggregation");
+                String dynamicFilterGroupBySource = dynamicFilterGroupByName.replace("Dynamic_FilterGroupby_Source", previousComponent);
+                previousComponent = "Join_Aggregation";
+                joinDynamicGroupbyFilterConfig = dynamicFilterGroupBySource; //output
+                System.out.println("Previous Name: " + previousComponent);
+                System.out.println("Derived Dynamic Groupby Filter Config: \n" + joinDynamicGroupbyFilterConfig);
+            }
+    
             System.out.println("filterGroupBy: ");
             System.out.println(filterGroupBy);
             System.out.println("Script Component: " + "Derived Sub Job");
@@ -320,55 +299,59 @@ public class DataMartStructureScriptGenerator {
                 List<Map<String, String>> results = getDerivedColumnInfoByJobAndDLId(conn, jobId, dlId);
                 System.out.println();
                 System.out.println(results.size());
-                //System.exit(1);
+                // Iterating child Job
+                String finalDerivedValue = "";
+                StringBuilder finalExpressionComponentBuilder = new StringBuilder();
+                for (Map<String, String> row : results) {
+                    String level = row.get("Level");
 
-                    // Iterating child Job
-                    String finalDerivedValue = "";
-                    StringBuilder finalExpressionComponentBuilder = new StringBuilder();
-
-                    for (Map<String, String> row : results) {
-                        String level = row.get("Level");
-
-                        previousComponent = ""; // TBD
-                        // Expression Type Java
-                        final String componentExpression = "expression";
-                        String expressionType = "JAVA";
-                        // TBD: Below  function seems constant. Can be moved out of the loop. Verify?
-                        String jobPropertiesJava = fetchAndFormatProperties(conn, componentExpression);
-                        List<Map<String, Object>> result = fetchDerivedColumnInfoByLevel(conn, expressionType, level, jobId, dlId);
-                        expressionComponent = processDerivedColumnInfoForTypeSQL(result, jobPropertiesJava);
-
-                        // Expression_Data type SQL
-                        final String componentExecuteSql = COMPONENT_EXECUTESQL;
-                        expressionType = "SQL";
-                        String jobPropertiesEexecuteSql = fetchAndFormatProperties(conn, componentExecuteSql);
-                        List<Map<String, Object>> result2 = fetchDerivedColumnInfoByLevel(conn, expressionType, level, jobId, dlId);
-                        String executeSqlComponent = processDerivedColumnInfoForTypeSQL(result2, jobPropertiesEexecuteSql);
-
-                        System.out.println(expressionComponent);
-                        System.out.println(executeSqlComponent);
-
-                        String derivedComponentConfig = expressionComponent + "\n" + executeSqlComponent;
-
-                        System.out.println(derivedComponentConfig);
-
-
-                        finalDerivedValue = derivedComponentConfig;
-
-                        // TBD: rechech that Talend "Iteration" component does other than this 
-                        // TBD: Set the Previous_Component; Need to see how it used
-                        if (finalExpressionComponentBuilder.length() > 0) {
-                            finalExpressionComponentBuilder.append("\n");
-                        }
-                        finalExpressionComponentBuilder.append(finalDerivedValue);
-
-                        System.out.println("Final_Derived_Value: " + finalDerivedValue);
+                    // Expression Type Java
+                    final String componentExpression = "expression";
+                    String expressionType = "JAVA";
+                    String jobPropertiesJava = fetchAndFormatProperties(conn, componentExpression);
+                    List<Map<String, Object>> result = fetchDerivedColumnInfoByLevel(conn, expressionType, level, jobId, dlId);
+                    expressionComponent = processDerivedColumnInfoForTypeJava(result, jobPropertiesJava, previousComponent);
+                    if (!expressionComponent.equals("")) {
+                        previousComponent = "Expression_" + level;
                     }
 
-                    System.out.println("Final_Derived_Value: " + finalDerivedValue);
-                    // Output of the "Derived" component
-                    expressionComponent = finalExpressionComponentBuilder.toString();
+                    // Expression_Data type SQL
+                    final String componentExecuteSql = COMPONENT_EXECUTESQL;
+                    expressionType = "SQL";
+                    String jobPropertiesEexecuteSql = fetchAndFormatProperties(conn, componentExecuteSql);
+                    List<Map<String, Object>> result2 = fetchDerivedColumnInfoByLevel(conn, expressionType, level, jobId, dlId);
+                    String executeSqlComponent = processDerivedColumnInfoForTypeSQL(result2, jobPropertiesEexecuteSql, previousComponent);
+                    if (!executeSqlComponent.equals("")) {
+                        previousComponent = "ExecuteSql_" + level;
+                    }
 
+                    System.out.println(expressionComponent);
+                    System.out.println(executeSqlComponent);
+                    //String derivedComponentConfig = expressionComponent + "\n" + executeSqlComponent;
+                    // Append both two components
+                    String derivedComponentConfig = "";
+                    if (!expressionComponent.isEmpty() && !executeSqlComponent.isEmpty()) {
+                        derivedComponentConfig = expressionComponent + "\n" + executeSqlComponent;
+                    } else if (expressionComponent.isEmpty()) {
+                        derivedComponentConfig = executeSqlComponent;
+                    } else if (executeSqlComponent.isEmpty()) {
+                        derivedComponentConfig = expressionComponent;
+                    }
+
+                    System.out.println(derivedComponentConfig);
+                    finalDerivedValue = derivedComponentConfig;
+
+                    // TBD: rechech that Talend "Iteration" component does other than this 
+                    // TBD: Set the Previous_Component; Need to see how it used
+                    if (finalExpressionComponentBuilder.length() > 0) {
+                        finalExpressionComponentBuilder.append("\n");
+                    }
+                    finalExpressionComponentBuilder.append(finalDerivedValue);
+                    System.out.println("Final_Derived_Value: " + finalDerivedValue);
+                }
+                System.out.println("Final_Derived_Value: " + finalDerivedValue);
+                // Output of the "Derived" component
+                expressionComponent = finalExpressionComponentBuilder.toString();
             } catch (SQLException e) {
                 e.printStackTrace();
             }
@@ -377,16 +360,18 @@ public class DataMartStructureScriptGenerator {
             //#########################
 
             // SubJob 7: GroupbyDerived
-            String previousComponent2 = ""; // TBD
-            // Same maybe reused from job 5 GroupbyJoin
-            //String componentFilterGroupBy = "executesqlfiltergroupby";
-            //String filterGroupBy = fetchAndFormatProperties(conn, componentFilterGroupBy);
-            String dynamicFilterGroupByName2 = filterGroupBy.replace("Dynamic_FilterGroupby_Name", "Derived_Aggregation");
-            String dynamicFilterGroupBySource2 = dynamicFilterGroupByName2.replace("Dynamic_FilterGroupby_Source", previousComponent2);
-            String previousName2 = "Derived_Aggregation";
-            String derivedDynamicGroupbyFilterConfig = dynamicFilterGroupBySource2;
-            System.out.println("Previous Name: " + previousName2);
-            System.out.println("Derived Dynamic Groupby Filter Config: " + derivedDynamicGroupbyFilterConfig);
+            // filterGroupBy has been earlier extracted in subjob 5 GroupByJoin
+            String derivedDynamicGroupbyFilterConfig = "";
+            String filterGroupBy2 = fetchAndFormatProperties(conn, COMPONENT_EXECUTESQL_FILTERGROUPBY);
+            if (doesFilterGroupByInfoRecordExist(conn, "Derived_Columns", String.valueOf(jobId), String.valueOf(dlId))) {
+                String dynamicFilterGroupByName2 = filterGroupBy2.replace("Dynamic_FilterGroupby_Name", "Derived_Aggregation");
+                String dynamicFilterGroupBySource2 = dynamicFilterGroupByName2.replace("Dynamic_FilterGroupby_Source", previousComponent);
+                previousComponent = "Derived_Aggregation";
+                derivedDynamicGroupbyFilterConfig = dynamicFilterGroupBySource2;
+                System.out.println("Previous Name: " + previousComponent);
+                System.out.println("Derived Dynamic Groupby Filter Config: " + derivedDynamicGroupbyFilterConfig);
+            }
+
             
             //#########################
             //#########################
@@ -394,24 +379,24 @@ public class DataMartStructureScriptGenerator {
             String componentEmptyRemit = "empty_remit";
             printComponent(COMPONENT_EMPTY_REMIT, previousComponent);
             String propsEmptyRemit = fetchAndFormatProperties(conn, componentEmptyRemit);
-            String emptyRemitComponent = propsEmptyRemit; // output of this componentp; input to next // "empty_Component"
-
+            
+            String emptyRemitComponent = ""; // output of this component;
             final String defaultJoinNameRemit = "Emit_UnWanted_Columns"; // Input
             // TBD: Cases Yes or No Derived Columns
             try {
-                Map<String, String> retObjRemit = processDerivedColumnInfoInRemit(conn, jobId, dlId, defaultJoinNameRemit, emptyRemitComponent);
+                Map<String, String> retObjRemit = processDerivedColumnInfoInRemit(conn, jobId, dlId, defaultJoinNameRemit, propsEmptyRemit);
                 if (retObjRemit.size() != 0) {
                     String emptyRetainRename = retObjRemit.get(EMPTY_RETAIN_RENAME);
                     String previousJoinNameRemit = retObjRemit.get("PreviousJoinName");
-                    emptyRemitComponent = emptyRetainRename; // TODO check it is null impact on next statement. ditto for rename
                     // For Global Map
-                    emptyRemitComponent = emptyRemitComponent.replace("Dynamic_Previous_Component", previousComponent); // What if it is null
+                    if (emptyRetainRename != null )
+                        emptyRemitComponent = emptyRetainRename.replace("Dynamic_Previous_Component", previousComponent);
                     // For SharedMap
                     if (emptyRetainRename == null) {
                         emptyRemitComponent = " ";
                     }
                     if (previousJoinNameRemit != null) {
-                        previousComponent = previousJoinNameRemit; // output of this component // If null do not do anything "Previous_Component"
+                        previousComponent = previousJoinNameRemit; // Output 2
                     }
                 }
             } catch (SQLException e) {
@@ -424,27 +409,28 @@ public class DataMartStructureScriptGenerator {
             String componentEmptyRename = "empty_rename";
             printComponent(COMPONENT_EMPTY_RENAME, previousComponent);
             String propsEmptyRename = fetchAndFormatProperties(conn, componentEmptyRename);
-            String EmptyRenameComponent = propsEmptyRename; /// output of this component
-
+            
+            String EmptyRenameComponent = ""; // output of this component
             final String defaultJoinNameRename = "Rename_Derived_Columns"; // Input
             String globalEmptyComponent = EmptyRenameComponent; // input  TODO where is it coming from "empty_Component" - from previous remit 
             //previousJoinName = ""; // TBD or NULL; see above
             // TBD: Below funciton/query seems not doing any actual processing. Seems redundent. Check!!
             try {
-                Map<String, String> retObjRename = processDerivedColumnInfoInRename(conn, jobId, dlId, defaultJoinNameRename, EmptyRenameComponent);
+                Map<String, String> retObjRename = processDerivedColumnInfoInRename(conn, jobId, dlId, defaultJoinNameRename, propsEmptyRename);
                 //String EmptyRenameScript = propsEmptyRename.replace("Dynamic_Previous_Component", previousComponent); // not done here rather previous step
                 if (retObjRename.size() != 0) {
                     String emptyRetainRename = retObjRename.get(EMPTY_RETAIN_RENAME);
                     String previousJoinNameRename = retObjRename.get("PreviousJoinName");
                     EmptyRenameComponent = emptyRetainRename;
                     // For Global Map
-                    EmptyRenameComponent = EmptyRenameComponent.replace("Dynamic_Previous_Component", previousComponent); // What if it is null
+                    if (emptyRetainRename != null )
+                        EmptyRenameComponent = EmptyRenameComponent.replace("Dynamic_Previous_Component", previousComponent);
                     // For SharedMap
                     if (emptyRetainRename == null) {
                         EmptyRenameComponent = " "; // Sharedmap "Empty_Rename"
                     }
                     if (previousJoinNameRename != null) {
-                        previousComponent = previousJoinNameRename; // output of this component // If null do not do anything "Previous_Component"
+                        previousComponent = previousJoinNameRename; // output 2
                     }
                 }
             } catch (SQLException e) {
@@ -463,8 +449,11 @@ public class DataMartStructureScriptGenerator {
 
             //Output: Config.properties
             StringBuffer output = new StringBuffer();
-            if (sourceComponent != "") { // 1
+            if (sourceComponent != "") { // 1a
                 output.append(sourceComponent);
+            }
+            if (executeSourceComponent != "") { // 1b
+                output.append(executeSourceComponent);
             }
             if (joinComponent != "") { // 2
                 output.append(joinComponent);
@@ -500,7 +489,7 @@ public class DataMartStructureScriptGenerator {
             String configScript = output.toString();
             Map<String, String> rowDetails = selectActiveEltDlTableInfo(conn, dlId);
             if (rowDetails == null) {
-                System.out.println("No record found with DL_Id: " + dlId);
+                System.out.println("No record found in ELT_DL_Table_Info with DL_Active_Flag='1' and DL_Id: " + dlId);
                 return Status.FAILURE;
             }
             rowDetails.put("Job_Id", String.valueOf(jobId));
@@ -521,7 +510,6 @@ public class DataMartStructureScriptGenerator {
             return configFileName;
         }
 
-        // TODO sourceComponent is an input
         private Map<String, Object> getSourceAndPreviousComponent(String sourceComponent) throws SQLException {
             String query = SQLQueries.SELECT_TABLE_NAME_FROM_DRIVING_LOOKUP_TABLE;
             String previousComponent = "";
@@ -539,7 +527,7 @@ public class DataMartStructureScriptGenerator {
                         String dynamicName = sourceComponent.replace("Dynamic_Table_Name", tableNameAlias.replace("$", "\\$"));
                         String dynamicSourceSqlQuery = dynamicName.replace("Dynamic_SourceSql_Query", "\\${" + tableNameAlias.replace("$", "\\$") + ".sourcesql.query}");
                         String dynamicTableName = dynamicSourceSqlQuery.replace("TableName", tableNameAlias.replace("$", "\\$"));
-                        String dynamicPartitionSqlQuery = dynamicTableName.replace("Dynamic_PartitionSql_Query", "\\${" + tableNameAlias.replace("$", "\\$") + ".partitionsql.query}");
+                        String dynamicPartitionSqlQuery = dynamicTableName.replace("Dynamic_PartitionSql_Query", "${" + tableNameAlias.replace("$", "\\$") + ".partitionsql.query}");
                         
                         if (finalQueryBuilder.length() > 0) {
                             finalQueryBuilder.append("\n").append(dynamicPartitionSqlQuery).append("\n");
@@ -561,6 +549,36 @@ public class DataMartStructureScriptGenerator {
             return returnValue;
         }
 
+        private Map<String, Object> processExecuteSqlSource(String executeSqlSource, Map<String, Map<String, String>> tableDataMap) {
+            StringBuilder finalQuery = new StringBuilder();
+            String previousComponent = "";
+            for (Map.Entry<String, Map<String, String>> entry : tableDataMap.entrySet()) {
+                Map<String, String> row = entry.getValue();
+                String tableName = row.get("table_name");
+                String finalTableName = row.get("Final_Table_Name");
+    
+                String name = executeSqlSource.replace("Dynamic_Name", 
+                            finalTableName.replaceAll("\\$", "\\\\\\$") + "_ExecuteSql");
+
+                String source = name.replace("Dynamic_Source", 
+                            tableName.replaceAll("\\$", "\\\\\\$"));
+
+                String alias = source.replace("Dynamic_Alias_Name", 
+                            finalTableName.replaceAll("\\$", "\\\\\\$") + "_excsql");
+
+                String query = alias.replace("DynamicName", 
+                            finalTableName.replaceAll("\\$", "\\\\\\$"));
+                            
+                previousComponent = finalTableName + "_ExecuteSql" ;
+                finalQuery.append(finalQuery.length() == 0 ? query : "\n" + query + "\n");
+            }
+            Map<String, Object> returnValue = new HashMap<String, Object>();
+            returnValue.put("ExecuteSourceComponent", finalQuery.toString());
+            returnValue.put("PreviousComponent", previousComponent);
+
+            return returnValue;
+        }
+
         public String fetchAndFormatProperties(Connection conn, String component) {
             //String query = SQLQueries.SELECT_JOB_PROPERTIES_INFO_WITH_COMPONENT;
             String query = SQLQueries.SELECT_ELT_JOB_PROPERTIES_INFO;
@@ -572,7 +590,7 @@ public class DataMartStructureScriptGenerator {
                     String keyName = rs.getString("Key_Name");
                     String valueName = rs.getString("Value_Name");
                     script.append(keyName)
-                                 .append("=")
+                                 .append(valueName.length() > 0 ? "=" : "")
                                  .append(valueName)
                                  .append("\n");
                 }
@@ -583,16 +601,33 @@ public class DataMartStructureScriptGenerator {
             return script.toString();
         }
     
+        private String mergeSourceConfig(String sourceConfig1, String sourceConfig2) {
+            String sourceConfig;
+            if (!sourceConfig1.isEmpty() && !sourceConfig2.isEmpty()) {
+                sourceConfig = sourceConfig1 + "\n" + sourceConfig2;
+            } else if (!sourceConfig1.isEmpty()) {
+                sourceConfig = sourceConfig1;
+            } else {
+                sourceConfig = sourceConfig2;
+            }
+            return sourceConfig;
+        }
+
         public boolean createNewTable(Connection conn, String tableName) throws SQLException {
             // Drop the table if it exists and create a new one
             String deleteTableSql = "DROP TABLE IF EXISTS " + tableName + "; ";
             String createTableSql = "CREATE TABLE " + tableName + " (" +
-                         "id INT NOT NULL AUTO_INCREMENT, " +
-                         "table_name VARCHAR(255) NOT NULL, " +
-                         "Final_Table_Name VARCHAR(255) NOT NULL, " +
-                         "property VARCHAR(100), " +
-                         "PRIMARY KEY (id));";
+                         "table_name VARCHAR(200), " +
+                         "Final_Table_Name VARCHAR(200), " +
+                         "property VARCHAR(500));";
             
+                        //  String createTableSql = "CREATE TABLE " + tableName + " (" +
+                        //  //  "id INT NOT NULL AUTO_INCREMENT, " +
+                        //   "table_name VARCHAR(200), " +
+                        //   "Final_Table_Name VARCHAR(200), " +
+                        //   "property VARCHAR(500), " +
+                        //   "PRIMARY KEY (id));";
+
             try (Statement stmt = conn.createStatement()) {
                 stmt.executeUpdate(deleteTableSql);
                 stmt.executeUpdate(createTableSql);
@@ -616,7 +651,7 @@ public class DataMartStructureScriptGenerator {
                     pstmt.setString(1, table_name);
                     pstmt.setString(2, final_table_name);
                     pstmt.setString(3, property);
-                    System.out.println(table_name + " " + final_table_name + " " + property);
+                    // System.out.println(table_name + " , " + final_table_name + ", " + property);
                     pstmt.executeUpdate();
                 }
                 System.out.println("Data has been inserted successfully into table: " + tableName);
@@ -639,7 +674,7 @@ public class DataMartStructureScriptGenerator {
                     ResultSet rs = stmt.executeQuery(query)) {
 
                 Map<String, Map<String, String>> appProps = getELTAppProperties(conn);
-                String finalSpclReplaceName = null;
+                //String finalSpclReplaceName = null;
                 Map<String, String> returnedMap = new HashMap<>();
                 while (rs.next()) {
                     String dlIdResult = rs.getString("DL_Id");
@@ -648,40 +683,95 @@ public class DataMartStructureScriptGenerator {
                     String property = rs.getString("property");
 
                     String key = dlIdResult + "-" + jobIdResult;
+                    String finalSpclReplaceName = null;
 
-  
+                    // Left Outer Join
                     Map<String, String> props = appProps.getOrDefault(key, new HashMap<>());
-                    String characterValue = props.get("CharacterValue");
-                    String uiReplaceable = props.get("UIReplaceable");
 
-                    String finalTableName = (finalSpclReplaceName == null)
-                            ? tableName.replaceAll(characterValue, uiReplaceable)
-                            : finalSpclReplaceName.replaceAll(characterValue, uiReplaceable);
+                    for (Map.Entry<String, String> entry : props.entrySet()) {
+                        String characterValue = entry.getKey();
+                        String uiReplaceable = entry.getValue();
+                        String finalTableName = (finalSpclReplaceName == null)
+                                ? tableName.replaceAll(characterValue, uiReplaceable)
+                                : finalSpclReplaceName.replaceAll(characterValue, uiReplaceable);
 
-                    finalSpclReplaceName = finalTableName;
-
-                    System.out.println("characterValue: " + characterValue);
-                    System.out.println("uiReplaceable: " + uiReplaceable);
-
-                    System.out.println("table_name: " + tableName);
-                    System.out.println("finalTableName: " + finalTableName);
-                    returnedMap.put(tableName, finalTableName);
+                        finalSpclReplaceName = finalTableName;
+                    }
+                    returnedMap.put(tableName, finalSpclReplaceName);
                 }
                 return returnedMap;
             }
         }
 
-        public void insertTableDataIntoDB(Connection conn, String table, Map<String, String> config) throws SQLException {
-            // TODO what should be the default Property value???
-            String insertQuery = "INSERT INTO " + table + " (`table_name`, `Final_Table_Name`, `property`) VALUES (?, ?, 'db')";
+        private Map<String, Map<String, String>> normalizeTableName(Map<String, String> tableMap) {
+            String tableName = tableMap.get("table_name");
+            String property = tableMap.get("property");
     
-            try (PreparedStatement pstmt = conn.prepareStatement(insertQuery)) {
-                for (Map.Entry<String, String> entry : config.entrySet()) { // TODO likely only one entry
+            // Split the tableName string
+            String[] splitTableNames = tableName.split(",", -1);
+    
+            Map<String, Map<String, String>> tableNameMap = new HashMap<>();
+            for (int i = 0; i < splitTableNames.length; i++) {
+                int id = i + 1;
+    
+                Map<String, String> valueObject = new HashMap<>();
+                valueObject.put("Id", String.valueOf(id));
+                valueObject.put("table_name", splitTableNames[i]);
+                valueObject.put("property", property);
+
+                tableNameMap.put(tableName, valueObject);  // Using "table_name" as key
+            }
+            // System.out.println("Table name-based map: " + tableNameMap);
+            return tableNameMap;
+        }
+
+        private Map<String, Map<String, String>> normalizeProperties(Map<String, String> tableMap) {
+            String tableNameList = tableMap.get("table_name");
+            String propertyList = tableMap.get("property");
+    
+            // For normalization, split the property, tableName strings
+
+            String[] splitProperties = new String[0];
+            String[] splitTableNames = new String[0];
+            if (propertyList != null) {
+                splitProperties = propertyList.split(",", -1);
+            }
+            if (tableNameList != null) {
+                splitTableNames = tableNameList.split(",", -1);
+            }
+
+            Map<String, Map<String, String>> tableNameMap = new HashMap<>();
+            int j = splitProperties.length;
+            for (int i = 0; i < splitTableNames.length; i++) {
+                int id = i + 1;
+    
+                Map<String, String> valueObject = new HashMap<>();
+                valueObject.put("Id", String.valueOf(id)); // Not in use, though
+
+                String tableNameValue = splitTableNames[i];
+                valueObject.put("table_name", tableNameValue);
+
+                // For all non-existing properties (a potential schenario), assign null
+                String propertyValue = i < j ? splitProperties[i] : null;
+                valueObject.put("property", propertyValue);
+    
+                tableNameMap.put(tableNameValue, valueObject);  // "table_name" as key
+            }
+            System.out.println("Table name-based map: " + tableNameMap);
+            return tableNameMap;
+        }
+
+        public void updateTableDataIntoDB(Connection conn, String table, Map<String, String> config) throws SQLException {
+            // It's update table
+            String updateQuery =  "UPDATE " +  table + " SET " +  table + "." + "Final_Table_Name" + " = ? WHERE " + table + "." + "table_name" + " = ? ";
+
+            try (PreparedStatement pstmt = conn.prepareStatement(updateQuery)) {
+                for (Map.Entry<String, String> entry : config.entrySet()) {
                     String tableName = entry.getKey();
                     String finalTableName = entry.getValue();
     
-                    pstmt.setString(1, tableName);
-                    pstmt.setString(2, finalTableName);
+                    pstmt.setString(1, finalTableName);
+                    pstmt.setString(2, tableName) ;
     
                     pstmt.executeUpdate();
                 }
@@ -712,10 +802,11 @@ public class DataMartStructureScriptGenerator {
 
         public Map<String, Map<String, String>> getELTAppProperties(Connection conn) throws SQLException {
             Map<String, Map<String, String>> resultMap = new HashMap<>();
-            String query = SQLQueries.buildAppPropertiesQuery(String.valueOf(dlId), String.valueOf(jobId));
+            String query = SQLQueries.buildAppNamesPropertiesQuery(String.valueOf(dlId), String.valueOf(jobId));
     
             try (Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(query)) {
+                Map<String, String> value = new HashMap<>();
                 while (rs.next()) {
                     String dlId = rs.getString("DL_Id");
                     String jobId = rs.getString("Job_Id");
@@ -725,11 +816,9 @@ public class DataMartStructureScriptGenerator {
                     characterValue = processCharacterValue(characterValue);
     
                     String key = dlId + "-" + jobId;
-                    Map<String, String> value = new HashMap<>();
-                    value.put("CharacterValue", characterValue);
-                    value.put("UiReplaceable", uiReplaceable);
+                    value.put(characterValue, uiReplaceable);                    
                     
-                    resultMap.put(key, value);
+                    resultMap.put(key, value); // last Value
                 }
             }
             return resultMap;
@@ -750,9 +839,9 @@ public class DataMartStructureScriptGenerator {
         // Function to execute both queries and making an inner join using a hash map for efficiency
         public List<Map<String, Object>> executeAndJoinTablesSource(Connection conn, String dlId, String jobId)
                 throws SQLException {
-            //Fetch Filter Group By Info and store in a hash map
+            // Fetch Filter Group By Info and store in a hash map
             Map<String, Map<String, Object>> filterGroupByInfoMap = fetchFilterGroupByInfoMap(conn, dlId, jobId);
-            //Fetch Driving and Lookup Table Info and making the INNER join
+            // Fetch Driving and Lookup Table Info and making the INNER join
             return joinWithDrivingAndLookupTableInfo(conn, dlId, jobId, filterGroupByInfoMap);
         }
 
@@ -787,13 +876,13 @@ public class DataMartStructureScriptGenerator {
             }
         }
 
-        
-        // Function to join with SELECT_ELT_DL_DRIVING_AND_LOOKUP_TABLE_INFO using the
-        // hash map
+        // Function to join with SELECT_ELT_DL_DRIVING_AND_LOOKUP_TABLE_INFO using the hash map
         private List<Map<String, Object>> joinWithDrivingAndLookupTableInfo(Connection conn, String dlId, String jobId,
                 Map<String, Map<String, Object>> filterGroupByInfoMap) throws SQLException {
             String query = SQLQueries.SELECT_ELT_DL_DRIVING_AND_LOOKUP_TABLE_INFO;
 
+            Map<String, String> tableMap = new HashMap<>();
+            Map<String, Map<String, String>> props = normalizeProperties(tableMap);
             try (PreparedStatement ps = conn.prepareStatement(query)) {
                 ps.setString(1, dlId);
                 ps.setString(2, jobId);
@@ -812,12 +901,15 @@ public class DataMartStructureScriptGenerator {
                         if (filterGroupByInfoMap.containsKey(key)) {
                             Map<String, Object> filterRow = filterGroupByInfoMap.get(key);
                             Map<String, Object> drivingRow = new HashMap<>();
-                            drivingRow.put("DL_Id", rs.getString("DL_Id"));
-                            drivingRow.put("Job_Id", rs.getString("Job_Id"));
-                            drivingRow.put("Table_Name", rs.getString("Table_Name"));
-                            drivingRow.put("Table_Name_Alias", rs.getString("Table_Name_Alias"));
-                            //drivingRow.put("Settings_Position", rs.getString("Settings_Position"));
 
+                            // Left outer join with props based on "Table_Name_Alias" and "table_name"
+                            String tableNameAlias = rs.getString("Table_Name_Alias");
+                            Map<String, String> propRow = props.getOrDefault(tableNameAlias, new HashMap<>());
+                            drivingRow.put("property", propRow.get("property") == null ? "spark" : propRow.get("property")); // Default is "spark"
+                            drivingRow.put("table_name", propRow.get("table_name") == null ? tableNameAlias : propRow.get("table_name")); // default is tableNameAlias
+                            drivingRow.put("Final_Table_Name", ""); // No value is set
+                            drivingRow.put("Id", propRow.getOrDefault("Id", null)); // TODO what to do with Id
+                            
                             joinedResults.add(drivingRow);
                         }
                     }
@@ -859,6 +951,23 @@ public class DataMartStructureScriptGenerator {
                     }
                 }
             }
+        }
+
+        private boolean doesFilterGroupByInfoRecordExist(Connection connection, String settingsPosition, String jobId, String dlId) {
+            boolean exists = false;
+            String query = SQLQueries.CHECK_FILTER_GROUP_BY_INFO_EXISTS;
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, settingsPosition);
+                preparedStatement.setString(2, jobId);
+                preparedStatement.setString(3, dlId);
+    
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    exists = resultSet.next();
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return exists;
         }
 
         public List<Map<String, String>> getDerivedColumnInfoByJobAndDLId(Connection conn, long jobId, long dlId) {
@@ -961,9 +1070,6 @@ public class DataMartStructureScriptGenerator {
                     StringBuilder finalDynamicJoinSources = new StringBuilder();
 
                     while (rs.next()) {
-                        //String tableName = rs.getString("Table_Name");
-                        //String joinTableName = rs.getString("Join_Table"); // TODO: Recheck the name
-                        //String joinTableName = rs.getString("Join_Table_Name"); // TODO: Recheck the name
                         String tableNameAlias = rs.getString("Table_Name_Alias");
                         String joinTableAlias = rs.getString("Join_Table_Alias");
                         //String joinName = rs.getString("Join_Name");
@@ -1111,63 +1217,45 @@ public class DataMartStructureScriptGenerator {
             }
         }
 
-        public void processDerivedColumnInfoForTypeJava(List<Map<String, Object>> results, String expression) {
+        public String processDerivedColumnInfoForTypeJava(List<Map<String, Object>> results, String expression, String lastComponentName) {
             // Loop over the results list
             StringBuilder finalExpressionBuilder = new StringBuilder();
-            String lastComponentSource = "";
             for (Map<String, Object> row : results) {
                 String dlId = (String) row.get("DL_Id");
                 String jobId = (String) row.get("Job_Id");
                 String level = (String) row.get("Level");
                 
-                String previousComponent = ""; // TBD from inputs or otherwise
                 final String expressionLevel = "Expression_" + level;
-                lastComponentSource = "Expression_" + level; // TBD: Use one of them this, previous
                 String expressionName = expression.replace("Dynamic_Expression_Name", expressionLevel);
-                String expressionSource = expressionName.replace("Dynamic_Expression_Source", previousComponent);
+                String expressionSource = expressionName.replace("Dynamic_Expression_Source", lastComponentName);
         
-                // One of them to be prferred
-                // Concise code
                 if (finalExpressionBuilder.length() > 0) {
                     finalExpressionBuilder.append("\n");
                 }
                 finalExpressionBuilder.append(expressionSource);
-
-                // // Explicit code
-                // if (finalExpressionBuilder.length() > 0) {
-                //     finalExpressionBuilder.append("\n").append(expressionSource);
-                // } else {
-                //     finalExpressionBuilder.append(expressionSource);
-                // }
             }
-
-            // System.out.println("Final Expression     : " + finalExpressionBuilder.toString());
-            // System.out.println("Last_Component_Source: " + lastComponentSource);
-
+            return finalExpressionBuilder.toString();
         }
 
-        public String processDerivedColumnInfoForTypeSQL(List<Map<String, Object>> results, String expression) {
+        public String processDerivedColumnInfoForTypeSQL(List<Map<String, Object>> results, String executeSqlComp, String lastComponentName) {
             // Loop over the results list
-            StringBuilder finalExpressionBuilder = new StringBuilder();
-            String lastComponentSource = "";
+            StringBuilder finalExecuteSqlBuilder = new StringBuilder();
             for (Map<String, Object> row : results) {
                 String dlId = (String) row.get("DL_Id");
                 String jobId = (String) row.get("Job_Id");
                 String level = (String) row.get("Level");
                 
-                String previousComponent = ""; // TBD from inputs or otherwise
-                final String expressionLevel = "ExecuteSql_" + level;
-                lastComponentSource = "ExecuteSql_" + level; // TBD: Use one of them this, previous
-                String expressionName = expression.replace("Dynamic_Name", expressionLevel);
-                String expressionSource = expressionName.replace("Dynamic_Source", previousComponent);
+                String executeSqlName = executeSqlComp.replace("Dynamic_Name", "ExecuteSql_" + level);
+                String executeSqlSource = executeSqlName.replace("Dynamic_Source", lastComponentName.replace("$", "\\$"));
 
-                if (finalExpressionBuilder.length() > 0) {
-                    finalExpressionBuilder.append("\n");
+
+                if (finalExecuteSqlBuilder.length() > 0) {
+                    finalExecuteSqlBuilder.append("\n");
                 }
-                finalExpressionBuilder.append(expressionSource);
+                finalExecuteSqlBuilder.append(executeSqlSource);
             }
 
-            return finalExpressionBuilder.toString();
+            return finalExecuteSqlBuilder.toString();
         }
 
         private boolean insertIntoEltDlConfigProperties(Connection conn, Map<String, String> rowDetails) {
@@ -1712,7 +1800,7 @@ public class DataMartStructureScriptGenerator {
             } catch (SQLException e) {
                 e.printStackTrace();
             }
-            return mappingRemitValue; //TODO
+            return mappingRemitValue;
         }
         // remit
         public String fetchAndProcessColumnInfoForRemit(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
@@ -1745,11 +1833,10 @@ public class DataMartStructureScriptGenerator {
             } catch (SQLException e) {
                 e.printStackTrace();
             }
-            return mappingRenameValue; //TODO
+            return mappingRenameValue;
         }
         
         // Rename
-        //public static List<Map<String, String>> fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
         public String fetchAndProcessColumnInfo(Connection conn, String jobId, String dlId, String mappingRetainValue) throws SQLException {
             String query = "SELECT DL_Id, Job_Id, Column_Name, Column_Alias_Name " +
                         "FROM ELT_DL_Derived_Column_Info " +
@@ -1847,7 +1934,6 @@ public class DataMartStructureScriptGenerator {
         }
 
         // Helper function to replace sink values based on the mappings
-        // TODO: Context - Target DB how to get the value
         private String replaceSinkValues(String sinkValue, JoinAggregationData mapJoinData, SinkAggregationData mapCleansingData, Context context, String columnNameAlias,
                 StringBuilder keyFieldsValues, String constraints) {
 
@@ -1901,17 +1987,6 @@ public class DataMartStructureScriptGenerator {
         
         // Value Sink
         public Map<String, JoinAggregationData> executeJoinedQuery(Connection conn, String dlId, String jobId) throws SQLException {
-            // TODO made changes wrt to JobID. review
-            // String query = "SELECT DISTINCT m.DL_Name AS Join_Table, " +
-            //                "m.DL_Column_Names AS Join_Column, " +
-            //                "m.DL_Id, " +
-            //                jobId + " AS Job_Id " +
-            //                "FROM ELT_DL_Mapping_Info_Saved m " +
-            //                "INNER JOIN ELT_DL_Join_Mapping_Info j " +
-            //                "ON m.DL_Id = j.DL_Id " +
-            //                "AND m.Job_Id = j.Job_Id " +
-            //                "AND m.DL_Name = j.Join_Table " +
-            //                "WHERE m.DL_Id = ? AND m.Job_Id = ?";
         // New version
             String query = "SELECT DISTINCT " +
                     "main.DL_Name AS Join_Table, " +
@@ -1926,8 +2001,6 @@ public class DataMartStructureScriptGenerator {
                     "WHERE main.DL_Id = '" + dlId + "'";
 
             PreparedStatement pstmt = conn.prepareStatement(query);
-            // pstmt.setString(1, dlId);
-            // pstmt.setString(2, jobId);
             ResultSet rs = pstmt.executeQuery();
             Map<String, Object> resultMap = new HashMap<>();
             Map<String, JoinAggregationData> joinAggregationMap = new HashMap<>();
@@ -2398,7 +2471,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + tableNameAliasReplaced;
                     String tableName = rs.getString("Table_Name");
 
-                    Map<String, Object> lookupValues = lookupTableMap.getOrDefault(key, null); // TODO: what should be default value
+                    Map<String, Object> lookupValues = lookupTableMap.getOrDefault(key, null); // TODO: what should be default value Recheck
 
                     SourceAggregationData data = sourceAggregationMap.getOrDefault(key, new SourceAggregationData(dlId, jobId, tableName, tableNameAliasReplaced));
         
@@ -2410,9 +2483,9 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     // Values from lookup table
                     if (lookupValues != null) {
                         // Using last values only
-                        data.Flow = (String) lookupValues.get(rs.getString("Flow"));
-                        data.Filter_Id = (Long) lookupValues.get(rs.getString("Filter_Id"));
-                        data.Group_By_Id = (Long) lookupValues.get(rs.getString("Group_By_Id")); 
+                        data.Flow = (String) lookupValues.get("Flow");
+                        data.Filter_Id =  Long.valueOf((String) lookupValues.get("Filter_Id"));
+                        data.Group_By_Id = Long.valueOf((String) lookupValues.get("Group_By_Id")); 
                     }
                     sourceAggregationMap.put(key, data);
                 }
@@ -3146,7 +3219,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         row.put("Source_Name", rs.getString("Source_Name"));
                         //row.put("Column_Name_Alias", rs.getString("Column_Name_Alias"));
 
-                        // TODO check that all the keys are there in the sql table or resultset
                         String dataType = rs.getString("Data_Type").toLowerCase();  //
                         boolean isDecimalType = dataType.contains("decimal") ||
                                                 dataType.contains("double") ||
@@ -3327,7 +3399,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 query = aliasName.replace("${Dynamic_FilterGroupby_Name.query}",
                         "Derived_Aggregation.query=" + statement);
             } else {
-                // Throw an exception for undefined Setting_Position
                 throw new IllegalArgumentException("Setting_Position is not defined: " + settingsPosition);
             }
 
@@ -3775,7 +3846,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 this.groupbycolumns = new StringBuilder();
             }
 
-            //TODO: Perhaps not in use
             public AggregationData() {
                 allcolumn = new StringBuilder();
                 groupbycolumns = new StringBuilder();
@@ -4190,13 +4260,12 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         LocalDateTime now = LocalDateTime.now();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S");
         String formattedDateTime = now.format(formatter);
-        System.out.println("Formatted Date and Time: " + formattedDateTime);
         formattedDateTime = formattedDateTime.replace(" ", "_");
 
         // Remove dashes, colons and period
         formattedDateTime = formattedDateTime.replace("-", "").replace(":", "");
         formattedDateTime = formattedDateTime.replace(".", "");
-        System.out.println("Formatted Date and Time: " + formattedDateTime);
+        System.out.println("Current Formatted Date and Time: " + formattedDateTime);
         return formattedDateTime;
     }
 
@@ -4857,7 +4926,33 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
     }
 
-            
+    
+    public List<Map<String, String>> getTmpTableDataAsList(Connection connection, String tmpTable, boolean propertyDB) throws SQLException {
+        String query = "";
+        if (propertyDB == true ) {
+            query = SQLQueries.buildQueryForTableForDB(tmpTable); // `property` = 'db'
+        } else {
+            query = SQLQueries.buildQueryForTableForNonDB(tmpTable); // `property` != 'db'
+        }
+        Map<String, Map<String, String>> tmpTableData = new HashMap<>();
+        List<Map<String, String>> tmpTableDataList = new ArrayList<>();
+
+        try (PreparedStatement pstmt = connection.prepareStatement(query);
+            ResultSet rs = pstmt.executeQuery()) {
+            while (rs.next()) {
+                String tableName = rs.getString("table_name");
+                Map<String, String> rowData = new HashMap<>();
+                rowData.put("table_name", tableName);
+                rowData.put("Final_Table_Name", rs.getString("Final_Table_Name"));
+                rowData.put("property", rs.getString("property"));
+    
+                tmpTableData.put(tableName, rowData);
+                tmpTableDataList.add(rowData);
+            }
+        }
+        return tmpTableDataList;
+    }
+
     public Map<String, Map<String, String>> getTmpTableData(Connection connection, String tmpTable, boolean propertyDB) throws SQLException {
         String query = "";
         if (propertyDB == true ) {
@@ -5349,7 +5444,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
         }
 
-        // TBD: See if this and above queries if one of them can be got rid of!! Job - Source
         public static final String SELECT_ELT_DL_FILTER_GROUP_BY_INFO = 
                 "SELECT " +
                 "`ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
@@ -5561,24 +5655,35 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 " Table_Name_Alias " +
                 " from ELT_DL_Lookup_Table_Info where Job_Id = ? and DL_Id = ?";
 
-        public static String buildAppPropertiesQuery(String DL_Id, String Job_Id) {
+        public static String buildAppNamesPropertiesQuery(String DL_Id, String Job_Id) {
             String query = "SELECT DISTINCT " +
                     DL_Id + " AS `DL_Id`, " +
                     Job_Id + " AS `Job_Id`, " +
-                    "CASE WHEN `ELT_App_Names_Properties`.`CharacterValue` = ' ' THEN ',' ELSE `CharacterValue` END, " +
-                    "`ELT_App_Names_Properties`.`Id` " +
+                    "CASE WHEN `ELT_App_Names_Properties`.`CharacterValue` = ' ' THEN ',' ELSE `CharacterValue` END" + " As CharacterValue, " +
+                    "`ELT_App_Names_Properties`.`Id`  AS Id " +
                     "FROM `ELT_App_Names_Properties` " +
                     "WHERE `CharacterValue` NOT IN ('_', '-', '/', '|') " +
                     "LIMIT 30";
             return query;
         }
+
+        public static final String CHECK_FILTER_GROUP_BY_INFO_EXISTS = "SELECT DISTINCT " +
+                "`ELT_DL_FilterGroupBy_Info`.`DL_Id`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Job_Id`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Group_By_Id`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Filter_Id`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Flow`, " +
+                "`ELT_DL_FilterGroupBy_Info`.`Settings_Position` " +
+                "FROM `ELT_DL_FilterGroupBy_Info` " +
+                "WHERE `Settings_Position` = ? " +
+                "AND `Job_Id` = ? " +
+                "AND `DL_Id` = ?";
     }
 
-    
     // Context class to hold the Input values - APP_DB, Target_DB and so on
     public static class Context {
 
-        // Declare the singleton instance (volatile for thread safety)
+        // The singleton instance (volatile for thread safety)
         private static volatile Context instance;
 
         private String jobId;
@@ -5595,7 +5700,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             System.out.println("Context has been intialized");
             init();
         }
-
         private void init() {
             tgtHost = "172.25.25.124";
             tgtPort = "4475";
@@ -5605,8 +5709,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             dlName = "test_1";
             // sinkValue = ;
         }
-
-        // The method to provide access to the singleton instance
+        // The method provides access to the singleton instance
         public static Context getContext() {
             if (instance == null) {
                 synchronized (Context.class) {
@@ -5620,35 +5723,27 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         public String getJobId() {
             return jobId;
         }
-
         public String getDlId() {
             return dlId;
         }
-
         public String getTgtHost() {
             return tgtHost;
         }
-
         public String getTgtPort() {
             return tgtPort;
         }
-
         public String getTgtDbName() {
             return tgtDbName;
         }
-
         public String getTgtUser() {
             return tgtUser;
         }
-
         public String getTgtPassword() {
             return tgtPassword;
         }
-
         public String getDlName() {
             return dlName;
         }
-
         public String getSinkValue() {
             return sinkValue;
         }
@@ -5677,7 +5772,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String mysqlPassword = "Explore@09";
                     connection = DriverManager.getConnection(mysqlUrl, mysqlUser, mysqlPassword);
                                     
-                    // Enable auto-commit
+                    // auto-commit
                     connection.setAutoCommit(true);
                     if (connection != null) {
                         System.out.println("DB Connection established");
