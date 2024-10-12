@@ -972,14 +972,7 @@ public class DataMartStructureScriptGenerator {
                 }
             }
         }
-    
-        private String sanitizeAlias(String alias) {
-            return alias != null ? alias.replace(" ", "_") : null;
-        }
 
-        private String sanitizeReplace(String input, String target, String replacement) {
-            return input.replace(target, replacement);
-        }
 
         public List<Map<String, Object>> fetchDerivedColumnInfoByLevel(Connection conn, String expressionType, String level, long jobId, long dlId) throws SQLException {
             String query = SQLQueries.SELECT_ELT_DL_DERIVED_COLUMN_INFO;
@@ -1289,7 +1282,7 @@ public class DataMartStructureScriptGenerator {
                             "  WHERE Job_Id=? AND DL_Id=?" +
                             ") AS lookup";
     
-            // Execute Query 1
+            // Executing Query 1
             List<Map<String, Object>> mainResults = new ArrayList<>();
             try (PreparedStatement stmt1 = connection.prepareStatement(query1)) {
                 stmt1.setString(1, level);
@@ -1306,7 +1299,7 @@ public class DataMartStructureScriptGenerator {
                 }
             }
     
-            // Execute Query 2 and build lookup map
+            // Executing Query 2 and building lookup map
             Map<String, String> lookupMap = new HashMap<>();
             try (PreparedStatement stmt2 = connection.prepareStatement(query2)) {
                 stmt2.setLong(1, jobId);
@@ -1434,11 +1427,11 @@ public class DataMartStructureScriptGenerator {
     
             StringBuilder columnArgumentsBuilder = new StringBuilder();
     
-            // Map to store lookup data IL_Data_Type -> Java_Data_Type
+            // A Map to store lookup data IL_Data_Type -> Java_Data_Type
             PreparedStatement lookupStmt = connection.prepareStatement(lookupQuery);
             ResultSet lookupRs = lookupStmt.executeQuery();
     
-            // Use a HashMap to store lookup results (IL_Data_Type -> Java_Data_Type)
+            // A HashMap to store lookup results (IL_Data_Type -> Java_Data_Type)
             HashMap<String, String> lookupMap = new HashMap<>();
             while (lookupRs.next()) {
                 String ilDataType = lookupRs.getString("IL_Data_Type");
@@ -1486,7 +1479,7 @@ public class DataMartStructureScriptGenerator {
                 lookupMap.put(ilDataType, javaDataType); // Add to lookup map
             }
     
-            // Execute the main query
+            // Executing the main query
             PreparedStatement mainStmt = connection.prepareStatement(mainQuery);
             ResultSet mainRs = mainStmt.executeQuery();
             String finalDerivedValue = null;
@@ -1511,7 +1504,7 @@ public class DataMartStructureScriptGenerator {
                 String returnTypes = argumentTypes.replace("${Dynamic_Expression_Name.return.types}", 
                             "Expression_" + level + ".return.types=" + sourceDataType);
     
-                // Concatenate returnTypes into final expression
+                // Concatenating returnTypes into final expression
                 finalDerivedValue = finalDerivedValue == null ? returnTypes : finalDerivedValue + "\n" + returnTypes;
             }
             return finalDerivedValue;
@@ -2289,7 +2282,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String key = rs.getString("DL_Id") + "-" + rs.getString("Job_Id") + "-" + rs.getString("Table_Name") + "-" + tableNameAliasReplaced;
                     String tableName = rs.getString("Table_Name");
 
-                    Map<String, Object> lookupValues = lookupTableMap.getOrDefault(keyLookup, null); // TODO: what should be default value Recheck
+                    Map<String, Object> lookupValues = lookupTableMap.getOrDefault(keyLookup, null); // Default value
                     // key is having one more element but that seems redundant
                     SourceAggregationData data = sourceAggregationMap.getOrDefault(key, new SourceAggregationData(dlId, jobId, tableName, tableNameAliasReplaced));
         
@@ -2311,35 +2304,34 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return sourceAggregationMap;
         }
         
-        public String executeMainQuery(String jobId, String dlId, Connection connection) throws SQLException {
-            StringBuilder result = new StringBuilder();
-            String mainQuery = buildDrivingAndLookupTableQuery();
-            try (PreparedStatement pstmt = connection.prepareStatement(mainQuery)) {
-                pstmt.setString(1, jobId);
-                pstmt.setString(2, dlId);
-                pstmt.setString(3, jobId);
-                pstmt.setString(4, dlId);
-                ResultSet rs = pstmt.executeQuery();
-                while (rs.next()) {
-                    String dlIdValue = rs.getString("DL_Id");
-                    String jobIdValue = rs.getString("Job_Id");
-                    String tableName = rs.getString("Table_Name");
-                    String tableAlias = rs.getString("Table_Name_Alias");
-                    String columnName = rs.getString("Column_Name");
-                    String columnAlias = rs.getString("Column_Name_Alias");
+        // public String executeMainQuery(String jobId, String dlId, Connection connection) throws SQLException {
+        //     StringBuilder result = new StringBuilder();
+        //     String mainQuery = buildDrivingAndLookupTableQuery();
+        //     try (PreparedStatement pstmt = connection.prepareStatement(mainQuery)) {
+        //         pstmt.setString(1, jobId);
+        //         pstmt.setString(2, dlId);
+        //         pstmt.setString(3, jobId);
+        //         pstmt.setString(4, dlId);
+        //         ResultSet rs = pstmt.executeQuery();
+        //         while (rs.next()) {
+        //             String dlIdValue = rs.getString("DL_Id");
+        //             String jobIdValue = rs.getString("Job_Id");
+        //             String tableName = rs.getString("Table_Name");
+        //             String tableAlias = rs.getString("Table_Name_Alias");
+        //             String columnName = rs.getString("Column_Name");
+        //             String columnAlias = rs.getString("Column_Name_Alias");
                     
-                    String columnNameWithAlias = "`" + columnName + "` as `" + columnAlias + "`";
+        //             String columnNameWithAlias = "`" + columnName + "` as `" + columnAlias + "`";
         
-                    String tableAliasReplaced = tableAlias.replace(" ", "_");
+        //             String tableAliasReplaced = tableAlias.replace(" ", "_");
         
-                    // Append the result to StringBuilder for demonstration (could be processed further)
-                    result.append("Column: ").append(columnNameWithAlias)
-                          .append(", Table Alias: ").append(tableAliasReplaced)
-                          .append("\n");
-                }
-            }
-            return result.toString();
-        }
+        //             result.append("Column: ").append(columnNameWithAlias)
+        //                   .append(", Table Alias: ").append(tableAliasReplaced)
+        //                   .append("\n");
+        //         }
+        //     }
+        //     return result.toString();
+        // }
         
         public Map<String, Map<String, Object>> getLookupData(String jobId, String dlId, Connection connection) throws SQLException {
             Map<String, Map<String, Object>> lookupTableMap = new HashMap<>();
@@ -2368,7 +2360,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }        
         
         // Used in components Source and SourceExecutesql
-        // TODO simlar to query 2,4  3 is also in same group
         public String buildDrivingAndLookupTableQuery() {
             String query = "SELECT DISTINCT " +
                            "Job_Id, " +
@@ -2681,9 +2672,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         Map<String, String> lookupData = lookupTableDataMap.getOrDefault(lookupKey, new HashMap<>());
                         // left outer join with the temp table data
                         Map<String, String> tmpData = tmpTableDataMap.getOrDefault(queryTableKey, new HashMap<>());
-
-                        // Join the data from the other sources (e.g., drivingData, lookupData, queryTableData)
-                        // For example, log the joins or use the data in further processing
 
                         String key = dlIdResult + "-" + jobIdResult + "-" + tableName + "-" + tableNameAlias;
 
@@ -3702,12 +3690,12 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 String emptyValue = getValueNamesFromJobPropertiesInfo(conn, component); // EmptyValue
                 // Constraints is PK, SK
                 List<Map<String, Object>> replacementInfoPKList = fetchReplacementIncludeConstraintsInfo(conn, String.valueOf(jobId), String.valueOf(dlId));
-                Map<String, Map<String, Object>> pkCleansingConversionMap = getDataTypeConversionsForPKCleansinghValue(conn); // 28
+                Map<String, Map<String, Object>> pkCleansingConversionMap = getDataTypeConversionsForPKCleansinghValue(conn);
                 Map<String, SinkAggregationData> pkCleansingDataMap = getPKCleansingInfo(replacementInfoPKList, pkCleansingConversionMap);
 
                 // Constraints is not PK, SK
                 List<Map<String, Object>> replacementInfoList = fetchReplacementExcludeConstraintsInfo(conn, String.valueOf(jobId), String.valueOf(dlId));
-                Map<String, Map<String, Object>> cleansingConversionMap = getDataTypeConversionsForCleansinghValue(conn); // 0/7
+                Map<String, Map<String, Object>> cleansingConversionMap = getDataTypeConversionsForCleansinghValue(conn);
                 Map<String, SinkAggregationData> cleansingDataMap = getCleansingInfo(replacementInfoList, cleansingConversionMap);
 
                 Map<String, String> cleansingData = consolidateCleansingInfo(pkCleansingDataMap, cleansingDataMap);
@@ -3823,7 +3811,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             for (Map<String, Object> replacementInfo : replacementInfoList) {
                 String dataType = (String) replacementInfo.get("Data_Type");
 
-                // get the corresponding entry in cleansingConversionMap
+                // getting the corresponding entry in cleansingConversionMap
                 Map<String, Object> pkCleansingInfo = pkCleansingConversionMap.get(dataType);
                 
                 // Inner join
@@ -3914,7 +3902,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                            "PK_Cleansing_Value " +
                            "FROM `ELT_Datatype_Conversions`";
     
-            //List<Map<String, Object>> results = new ArrayList<>();
             Map<String, Map<String, Object>> conversionData = new HashMap<>();
             try (PreparedStatement ps = conn.prepareStatement(query);
                 ResultSet rs = ps.executeQuery()) {
@@ -3926,7 +3913,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     row.put("IL_Data_Type", rs.getObject("Data_Type"));
                     row.put("Java_Data_Type", rs.getObject("Java_Data_Type"));
                     row.put("PK_Cleansing_Value", rs.getObject("PK_Cleansing_Value"));
-                    //results.add(row);
                     conversionData.put(key, row);
                 }
             }
@@ -3942,9 +3928,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                            "FROM `ELT_Datatype_Conversions` " +
                            "WHERE Cleansing_Value != ''";
 
-            //List<Map<String, Object>> results = new ArrayList<>();
             Map<String, Map<String, Object>> conversionData = new HashMap<>();
-
             try (PreparedStatement ps = conn.prepareStatement(query);
                 ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -3955,7 +3939,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     row.put("IL_Data_Type", rs.getObject("UI_Data_Type"));
                     row.put("Java_Data_Type", rs.getObject("Java_Data_Type"));
                     row.put("Cleansing_Value", rs.getObject("Cleansing_Value"));
-                    //results.add(row);
                     conversionData.put(key, row);
                 }
 
@@ -3968,7 +3951,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 List<Map<String, Object>> replacementMappingInfo, 
                 List<Map<String, Object>> dataTypeConversions) {
 
-            // Convert the list of maps from dataTypeConversions into a lookup map for fast access
+            // Converting the list of maps from dataTypeConversions into a lookup map for fast access
             Map<String, Map<String, Object>> dataTypeMap = dataTypeConversions.stream()
                 .collect(Collectors.toMap(
                     map -> (String) map.get("Data_Type"),
@@ -4086,7 +4069,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         String formattedDateTime = now.format(formatter);
         formattedDateTime = formattedDateTime.replace(" ", "_");
 
-        // Remove dashes, colons and period
+        // Removing dashes, colons and period
         formattedDateTime = formattedDateTime.replace("-", "").replace(":", "");
         formattedDateTime = formattedDateTime.replace(".", "");
         System.out.println("Current Formatted Date and Time: " + formattedDateTime);
@@ -4250,7 +4233,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     }
                     String sqlAlterTableDefinition = "ALTER TABLE "+ dlName +" ";
                     final String END_OF_SCRIPT_TEXT = ";";
-                    // Append all the individual part definitions
+                    // Appending all the individual part definitions
                     StringBuilder finalAlterScriptBuilder = new StringBuilder();
                     finalAlterScriptBuilder.append(sqlAlterTableDefinition)
                             .append("\n")
@@ -4258,9 +4241,8 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                             .append("\n")
                             .append(END_OF_SCRIPT_TEXT);
 
-                    // The final alter script definition
                     String finalAlterScript = finalAlterScriptBuilder.toString();
-                    // Insert the record into the table "ELT_DL_Alter_Script_Info"
+                    // Inserting the record into the table "ELT_DL_Alter_Script_Info"
                     return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
                 }
             } catch (SQLException e) {
@@ -4331,7 +4313,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 }
             }
             String changeFlag = "N";
-            if ("".equals(lookupColumnNamesBuilder)) {
+            if ("".equals(lookupColumnNamesBuilder.toString())) {
                 changeFlag = "Y";
             }
         } catch (SQLException e) {
@@ -4353,11 +4335,11 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 while (rs.next()) {
                     String savedDlId = rs.getString("DL_Id");
                     String savedColumnName = rs.getString("DL_Column_Names");
-                    //String lookupColumnNames = rs.getString("lookup_column_names");
+                    // String lookupColumnNames = rs.getString("lookup_column_names");
                     String lookupDataTypes = rs.getString("lookup_data_types");
                     String savedConstraints = rs.getString("saved_constraints");
                     String lookupConstraints = rs.getString("lookup_constraints");
-                    // Form Change Column Not Null Definition and append to combined Definition
+                    // Forming Change Column Not Null Definition and append to combined Definition
                     String changeColumnDefinition = sqlChangeColumnNotNullDefinition(savedColumnName, lookupDataTypes,
                             savedConstraints, lookupConstraints);
                     if (combinedChangeColumnDefBuilder.length() > 0) {
@@ -4365,8 +4347,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     }
                     combinedChangeColumnDefBuilder.append(changeColumnDefinition);
                 }
-
-                String finalChangeColumnNotNullScript = combinedChangeColumnDefBuilder.toString();
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -4391,7 +4371,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String lookupDataTypes = rs.getString("lookup_data_types");
                     String mainConstraints = rs.getString("main_constraints");
                     String lookupConstraints = rs.getString("lookup_constraints");
-                    // Form Change Column Null Definition and append to combined Definition
+                    // Forming Change Column Null Definition and append to combined Definition
                     String changeColumnDefinition = sqlChangeColumnNullDefinition(columnName, lookupDataTypes,
                     mainConstraints, lookupConstraints);
                     if (combinedChangeColumnDefBuilder.length() > 0) {
@@ -4399,8 +4379,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     }
                     combinedChangeColumnDefBuilder.append(changeColumnDefinition);
                 }
-
-                String finalChangeColumnNotNullScript = combinedChangeColumnDefBuilder.toString();
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -4415,7 +4393,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         StringBuilder finalScriptBuilder = new StringBuilder();
         if (lookupDataTypes != null) {
             if ("pk".equalsIgnoreCase(savedConstraints) && "".equalsIgnoreCase(lookupConstraints)) {
-                finalScriptBuilder.setLength(0); // ensure start afresh
+                finalScriptBuilder.setLength(0); // ensuring start afresh
                 finalScriptBuilder.append(CHANGE_COLUMN_DEF_START).append(" ")
                         .append('`').append(columnName).append('`').append(" ")
                         .append('`').append(columnName).append('`').append(" ")  
@@ -4432,7 +4410,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         StringBuilder finalScriptBuilder = new StringBuilder();
         if (lookupDataTypes != null) {
             if ("pk".equalsIgnoreCase(mainConstraints) && "".equalsIgnoreCase(lookupConstraints)) {
-                finalScriptBuilder.setLength(0); // ensure start afresh
+                finalScriptBuilder.setLength(0); // ensuring start afresh
                 finalScriptBuilder.append(CHANGE_COLUMN_DEF_START).append(" ")
                         .append('`').append(columnName).append('`').append(" ")
                         .append('`').append(columnName).append('`').append(" ")
@@ -4533,7 +4511,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             System.out.println("Generating saved script for DL_ID: " + dlId);
             boolean status = false;
             status = deleteFromEltDlMappingInfo(conn, String.valueOf(dlId));
-            // Copy the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
+            // Copying the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
             status = insertMappingInfoFromSaved(conn, String.valueOf(dlId));
 
             return status? Status.SUCCESS : Status.FAILURE;
@@ -4581,7 +4559,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
     }
     
-    // Copy the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
+    // Copying the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
     public boolean insertMappingInfoFromSaved(Connection conn, String dlId) {
         String sql = SQLQueries.INSERT_INTO_ELT_DL_MAPPING_INFO_FROM_SAVED;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -5158,28 +5136,6 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     "AND ELT_DL_Join_Mapping_Info.DL_Id = ? " +
                     "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
         }
-
-        // public static String buildConfigJoinQuery(String table, String join) {
-        //     return "SELECT DISTINCT " +
-        //             "ELT_DL_Join_Mapping_Info.Table_Name, " +
-        //             "ELT_DL_Join_Mapping_Info.Join_Table, " +
-        //             "ELT_DL_Join_Mapping_Info.Join_Table_Alias, " +
-        //             "ELT_DL_Join_Mapping_Info.Table_Name_Alias, " +
-        //             "CONCAT(ELT_DL_Join_Mapping_Info.Table_Name_Alias, '_', ELT_DL_Join_Mapping_Info.Join_Table_Alias) AS Join_Name, " +
-        //             table + ".Final_Table_Name AS Table_Final_Table_Name, " +
-        //             table + ".property AS Table_Property, " +
-        //             join + ".Final_Table_Name AS Join_Final_Table_Name, " +
-        //             join + ".property AS Join_Property " +
-        //             "FROM ELT_DL_Join_Mapping_Info " +
-        //             "LEFT OUTER JOIN " + table + " " +
-        //             "ON (ELT_DL_Join_Mapping_Info.Table_Name_Alias = " + table + ".table_name AND " + table + ".property != 'db') " +
-        //             "OR (ELT_DL_Join_Mapping_Info.Join_Table_Alias = " + join + ".table_name AND " + join + ".property != 'db') " + 
-        //             "WHERE ELT_DL_Join_Mapping_Info.Job_Id = ? " +
-        //             "AND ELT_DL_Join_Mapping_Info.DL_Id = ? " +
-        //             "ORDER BY ELT_DL_Join_Mapping_Info.Join_Level";
-        // }
-
-        // TBD: refer above. May be deleted
         // Query 1: Primary query from ELT_DL_Join_Mapping_Info
         public static final String QUERY1 = "SELECT DISTINCT " +
                 "ELT_DL_Join_Mapping_Info.Table_Name, " +
