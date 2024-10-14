@@ -100,20 +100,20 @@ public class DataMartStructureScriptGenerator {
     // Method to trigger generation of different child scripts
     public void generateScripts() {
         // The config script generator
-        if (new DataMartConfigScriptGenerator().generateConfigScript() != Status.SUCCESS ) {
-            System.out.println("Create script generation failed. Stopping process.");
-            return;
-        }
-        // The value script generator
-        if (new DataMartValueScriptGenerator().generateValueScript() != Status.SUCCESS) {
-            System.out.println("Value script generation failed. Stopping process.");
-            return;
-        }
-        // The create script generator
-        if (new DataMartCreateScriptGenerator().generateCreateScript() != Status.SUCCESS) {
-            System.out.println("Create script generation failed. Stopping process.");
-            return;
-        }
+        // if (new DataMartConfigScriptGenerator().generateConfigScript() != Status.SUCCESS ) {
+        //     System.out.println("Create script generation failed. Stopping process.");
+        //     return;
+        // }
+        // // The value script generator
+        // if (new DataMartValueScriptGenerator().generateValueScript() != Status.SUCCESS) {
+        //     System.out.println("Value script generation failed. Stopping process.");
+        //     return;
+        // }
+        // // The create script generator
+        // if (new DataMartCreateScriptGenerator().generateCreateScript() != Status.SUCCESS) {
+        //     System.out.println("Create script generation failed. Stopping process.");
+        //     return;
+        // }
         // The alter script generator
         if (new DataMartAlterScriptGenerator().generateAlterScript() != Status.SUCCESS) {
             System.out.println("Alter script generation failed. Stopping process.");
@@ -3766,7 +3766,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             for (Map<String, Object> replacementInfo : replacementInfoList) {
                 String dataType = (String) replacementInfo.get("Data_Type");
 
-                // get the corresponding entry in cleansingConversionMap
+                // getting the corresponding entry in cleansingConversionMap
                 Map<String, Object> cleansingInfo = cleansingConversionMap.get(dataType);
                 
                 // Inner join
@@ -4089,53 +4089,77 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             Timestamp dateTime = getMaxUpdatedDate(conn, String.valueOf(dlId));
             boolean dlIdExists = checkDLIdExists(conn, String.valueOf(dlId));
             //TBD: Note: Below check moved earlier to be reused elsewhere
-            String TargetDB = ""; // Input Param
+            String TargetDB = Context.getContext().getTgtDbName(); // Input Param
             boolean tableExists = doesTableExist(conn, dlName, TargetDB);
+            String createTableString = null; // TODO Initialization or ""
             // Step 2:
             if (dlIdExists) {
-                // call Alter delete funcitons
-                String dlName = ""; // Input Param
+                // call Alter delete funcitons (subjob delete)
                 if (tableExists) {
                     System.out.println("Table Exists. Execute Alter Statement.");
-                    status = fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(conn, String.valueOf(dlId));
+                    createTableString = "N"; // Or Alter = "N"
+                    String deleteScript = fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(conn, String.valueOf(dlId));
+                    if (!deleteScript.isEmpty())
+                        status = insertAlterScriptInfo(conn, String.valueOf(dlId), dlName, deleteScript);
                 } else {
                     System.out.println("Table Doesn't Exists. Proceed with Create Statement.");
                     // TBD: This case is not specified properly. Is it redundant?
+                    // TODO seems come out of the function. do nothing
                 }
             }
             // Step 3:
             boolean hasRecentUpdateForDLId = checkDLIdExistsWithUpdatedDate(conn, String.valueOf(dlId), dateTime);
+            hasRecentUpdateForDLId = true; // TODO temporary
+            String pkColumns = "";
+            String changeFlag = "";
+
             if (hasRecentUpdateForDLId) {
-                // call Alter Services
-                getPKColumnNames(conn, String.valueOf(dlId));
-                buildChangeColumnNotNullQuery(conn, String.valueOf(dlId), dlName);
-                buildChangeColumnNullQuery(conn, String.valueOf(dlId), dlName);
+                // call Alter Services (subjob)
+                Map<String, String> resultSet  = getPKColumnNames(conn, String.valueOf(dlId));
+                changeFlag = resultSet.get("ChangeFlag");
+                pkColumns = resultSet.get("PkColumnNames");
+                // Likely call of another place will suffice
+                // notNullFinalStatement = buildChangeColumnNotNullQuery(conn, String.valueOf(dlId), dlName);
+                // nullFinalStatement = buildChangeColumnNullQuery(conn, String.valueOf(dlId), dlName);
             }
 
             // Step 4:
-            // TBD: This function must be changed to set either value 0,1
-            status = updateActiveFlag(conn, String.valueOf(dlId));
+            if (tableExists)
+                status = updateActiveFlag(conn, String.valueOf(dlId));
             // Step 5:
             // TBD: Table Exists or not (tableExists)
-            if (tableExists) { // TBD: any other check?
+            if (tableExists) { // TBD: any other check? Done below
+                String Alter = "NO";
+                if (createTableString == null) {
+                    Alter = "NO";
+                } else  {
+                    Alter = createTableString;
+                }
+                // Alter = "N";
                 System.out.println("Table Exists. Executing Alter Statement.");
             } else {
                 System.out.println("Table Doesn't Exists. Proceeding with Create Statement");
+                // TODO come out of the loop???
             }
-            // Step 6:
-            //Delete columns. Call to get Alter script delete funcitons/script But without inser function (need refactor)
-            // fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo()
-            // TBD: Can it be reused from above
-            // TBD: it's date or time? refer to database. Though, script shows timestamp format.
-            // Step 7:
-            Timestamp maxUpdatedDate = getMaxUpdatedDate(conn, String.valueOf(dlId)); // TBD: isn't dlId and dl_name are 1-1 mapped. THis call is with dlName
 
-            // Step 8:
-            buildAndExecuteCompleteAlterScript(conn, String.valueOf(dlId), maxUpdatedDate);
+            // createTableString = "N"
+            if ( createTableString.equals("N")) {
+                // Step 6:
+                String deleteAlterScript = fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(conn, String.valueOf(dlId));
+                // TBD: it's date or time? refer to database. Though, script shows timestamp format.
+                
+                // Step 7:
+                Timestamp maxUpdatedDate = getMaxUpdatedDateForTableName(conn, dlName);
+
+                // Step 8:
+                String finalAlterScript = buildAndStoreCompleteAlterScript(conn, String.valueOf(dlId), maxUpdatedDate, deleteAlterScript, pkColumns, changeFlag);
+                if (!finalAlterScript.isEmpty())
+                    status = insertAlterScriptInfo(conn, String.valueOf(dlId), dlName, finalAlterScript);
+            }
 
             return Status.SUCCESS;
         }
-
+        // Alter Script
         private boolean updateActiveFlag(Connection conn, String dlId) {
             String updateQuery = SQLQueries.UPDATE_ACTIVE_FLAG;
             try (PreparedStatement stmt = conn.prepareStatement(updateQuery)) {
@@ -4151,6 +4175,22 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             String selectQuery = SQLQueries.SELECT_MAX_UPDATED_DATE;
             try (PreparedStatement stmt = conn.prepareStatement(selectQuery)) {
                 stmt.setString(1, dlId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getTimestamp(1);
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return null;
+        }
+
+        //  Retrieves the maximum updated date (as a Timestamp) from the database for a given dlName
+        private Timestamp getMaxUpdatedDateForTableName(Connection conn, String dlName) {
+            String selectQuery = SQLQueries.SELECT_MAX_UPDATED_DATE_FOR_DL_NAME;
+            try (PreparedStatement stmt = conn.prepareStatement(selectQuery)) {
+                stmt.setString(1, dlName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
                         return rs.getTimestamp(1);
@@ -4200,7 +4240,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 stmt.setString(2, tableName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
-                        // Return true if count is greater than 0, indicating the table exists
+                        // Returning true if count is greater than 0, indicating the table exists
                         return rs.getInt(1) > 0;
                     }
                 }
@@ -4210,20 +4250,16 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return false;
         }
     
-        // Function to retrieve unique column values from Mapping_info table. Also, insert the alter script into ELT_DL_Alter_Script_Info
-        public boolean fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(Connection conn, String dlId) {
+        // Function to retrieve unique column values from Mapping_info table. Also, inserting the alter script into ELT_DL_Alter_Script_Info
+        public String fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(Connection conn, String dlId) {
             String query = SQLQueries.SELECT_UNIQUE_MAPPING_INFO_QUERY;
             StringBuilder combinedDropColumnDefinition = new StringBuilder();
             try (PreparedStatement stmt = conn.prepareStatement(query)) {
                 stmt.setString(1, dlId);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
-                        // Retrieve and process the columns from the result set
-                        String dlIdResult = rs.getString("DL_Id");
-                        String dlName = rs.getString("DL_Name");
+                         // dlName = rs.getString("DL_Name");
                         String dlColumnNames = rs.getString("DL_Column_Names");
-                        String constraints = rs.getString("Constraints");
-                        String dlDataTypes = rs.getString("DL_Data_Types");
 
                         String dropColumnDefinition = "Drop Column `" + dlColumnNames + "`";
                         if (combinedDropColumnDefinition.length() > 0) {
@@ -4231,24 +4267,30 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         }
                         combinedDropColumnDefinition.append(dropColumnDefinition);
                     }
+
+                    if (combinedDropColumnDefinition.toString().isEmpty()) { // Doing nothing, returning
+                        System.out.println("No column to drop.");
+                        return "";
+                    }
                     String sqlAlterTableDefinition = "ALTER TABLE "+ dlName +" ";
                     final String END_OF_SCRIPT_TEXT = ";";
                     // Appending all the individual part definitions
                     StringBuilder finalAlterScriptBuilder = new StringBuilder();
                     finalAlterScriptBuilder.append(sqlAlterTableDefinition)
                             .append("\n")
-                            .append(combinedDropColumnDefinition)
-                            .append("\n")
+                            .append(combinedDropColumnDefinition.toString())
+                            .append(!combinedDropColumnDefinition.toString().isEmpty() ? "\n" : "")
                             .append(END_OF_SCRIPT_TEXT);
 
-                    String finalAlterScript = finalAlterScriptBuilder.toString();
+                    //String finalAlterScript = finalAlterScriptBuilder.toString();
                     // Inserting the record into the table "ELT_DL_Alter_Script_Info"
-                    return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
+                    return finalAlterScriptBuilder.toString();
+                    //return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
                 }
             } catch (SQLException e) {
                 e.printStackTrace();
             }
-            return false;
+            return "";
         }
 
         // Function to insert a record into ELT_DL_Alter_Script_Info
@@ -4283,10 +4325,12 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 return false;
             }
         }
-    }
-    
-    public String getPKColumnNames(Connection conn, String dlId) {
+
+    // Alter Script
+    public  Map<String, String> getPKColumnNames(Connection conn, String dlId) {
         String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_FOR_PK_COLUMNS;
+        Map<String, String> result = new HashMap<>();
+
         StringBuilder pkColumnNamesBuilder = new StringBuilder();
         StringBuilder lookupColumnNamesBuilder = new StringBuilder();
         try (PreparedStatement pstmt = conn.prepareStatement(query)) {
@@ -4305,7 +4349,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String lookupColumnName = rs.getString("lookup_column_names");
                     if (lookupColumnName != null) {
                         if (!firstLookupColumn) {
-                            pkColumnNamesBuilder.append(", ");
+                            lookupColumnNamesBuilder.append(", ");
                         }
                         lookupColumnNamesBuilder.append("`").append(lookupColumnName).append("`");
                         firstLookupColumn = false;
@@ -4316,13 +4360,16 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             if ("".equals(lookupColumnNamesBuilder.toString())) {
                 changeFlag = "Y";
             }
+
+            result.put("ChangeFlag", changeFlag);
+            result.put("PkColumnNames", pkColumnNamesBuilder.toString());
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        return pkColumnNamesBuilder.toString();
+        return result;
     }
     
-    // Function to build Change Column Non Null query
+    // Alter Script - Function to build Change Column Non Null query
     public String buildChangeColumnNotNullQuery(Connection conn, String dlId, String dlName) {
         String query = SQLQueries.JOIN_OUTER_ELT_DL_MAPPING_INFO_SAVED_AND_INFO;
 
@@ -4335,12 +4382,12 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 while (rs.next()) {
                     String savedDlId = rs.getString("DL_Id");
                     String savedColumnName = rs.getString("DL_Column_Names");
-                    // String lookupColumnNames = rs.getString("lookup_column_names");
-                    String lookupDataTypes = rs.getString("lookup_data_types");
+                    String savedDataTypes = rs.getString("saved_data_types");
                     String savedConstraints = rs.getString("saved_constraints");
+                    String lookupDataTypes = rs.getString("lookup_data_types");
                     String lookupConstraints = rs.getString("lookup_constraints");
                     // Forming Change Column Not Null Definition and append to combined Definition
-                    String changeColumnDefinition = sqlChangeColumnNotNullDefinition(savedColumnName, lookupDataTypes,
+                    String changeColumnDefinition = sqlChangeColumnNotNullDefinition(savedColumnName, savedDataTypes, lookupDataTypes,
                             savedConstraints, lookupConstraints);
                     if (combinedChangeColumnDefBuilder.length() > 0) {
                         combinedChangeColumnDefBuilder.append(", ");
@@ -4365,15 +4412,14 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    String mainDlId = rs.getString("DL_Id");
                     String columnName = rs.getString("DL_Column_Names");
-                    //String lookupColumnNames = rs.getString("lookup_column_names");
                     String lookupDataTypes = rs.getString("lookup_data_types");
+                    String mainDataTypes = rs.getString("main_data_types");
                     String mainConstraints = rs.getString("main_constraints");
                     String lookupConstraints = rs.getString("lookup_constraints");
                     // Forming Change Column Null Definition and append to combined Definition
-                    String changeColumnDefinition = sqlChangeColumnNullDefinition(columnName, lookupDataTypes,
-                    mainConstraints, lookupConstraints);
+                    String changeColumnDefinition = sqlChangeColumnNullDefinition(columnName, lookupDataTypes, mainDataTypes, 
+                        mainConstraints, lookupConstraints);
                     if (combinedChangeColumnDefBuilder.length() > 0) {
                         combinedChangeColumnDefBuilder.append(", ");
                     }
@@ -4386,7 +4432,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         return combinedChangeColumnDefBuilder.toString();
     }
 
-    private String sqlChangeColumnNotNullDefinition(String columnName, String lookupDataTypes, String savedConstraints,
+    private String sqlChangeColumnNotNullDefinition(String columnName, String savedDataTypes, String lookupDataTypes, String savedConstraints,
             String lookupConstraints) {
         final String CHANGE_COLUMN_DEF_START = "Change column ";
         final String NOT_NULL = " not NULL ";
@@ -4396,37 +4442,37 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 finalScriptBuilder.setLength(0); // ensuring start afresh
                 finalScriptBuilder.append(CHANGE_COLUMN_DEF_START).append(" ")
                         .append('`').append(columnName).append('`').append(" ")
-                        .append('`').append(columnName).append('`').append(" ")  
+                        .append(savedDataTypes).append(" ")  
                         .append(NOT_NULL);
             }
         }
         return finalScriptBuilder.toString();
     }
 
-    private String sqlChangeColumnNullDefinition(String columnName, String lookupDataTypes, String mainConstraints,
+    private String sqlChangeColumnNullDefinition(String columnName, String lookupDataTypes, String mainDataTypes, String mainConstraints,
             String lookupConstraints) {
         final String CHANGE_COLUMN_DEF_START = "Change column ";
-        final String NOT_NULL = " NULL ";
+        final String NULL_TEXT = " NULL ";
         StringBuilder finalScriptBuilder = new StringBuilder();
         if (lookupDataTypes != null) {
             if ("pk".equalsIgnoreCase(mainConstraints) && "".equalsIgnoreCase(lookupConstraints)) {
                 finalScriptBuilder.setLength(0); // ensuring start afresh
                 finalScriptBuilder.append(CHANGE_COLUMN_DEF_START).append(" ")
                         .append('`').append(columnName).append('`').append(" ")
-                        .append('`').append(columnName).append('`').append(" ")
-                        .append(NOT_NULL);
+                        .append(mainDataTypes).append(" ")
+                        .append(NULL_TEXT);
             }
         }
         return finalScriptBuilder.toString();
     }
 
-    public boolean buildAndExecuteCompleteAlterScript(Connection conn, String dlId, Timestamp maxUpdatedDate) {
+    public String buildAndStoreCompleteAlterScript(Connection conn, String dlId, Timestamp maxUpdatedDate, String deleteAlterString, String pkColumns, String changeFlag) {
         String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED;
     
         StringBuilder finalAlterScriptBuilder = new StringBuilder();
         StringBuilder combinedAlterScriptDefBuilder = new StringBuilder();
 
-        StringBuilder sb = new StringBuilder();
+        StringBuilder columnDefinition = new StringBuilder();
         try (PreparedStatement pstmt = conn.prepareStatement(query)) {
             pstmt.setString(1, dlId);
             pstmt.setTimestamp(2, maxUpdatedDate); // TBD: date vs Timestamp
@@ -4443,64 +4489,116 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     String lookupDataTypes = rs.getString("lookup_data_types");  
                     String lookupConstraints = rs.getString("lookup_constraints");
 
-                    // Change bit to Tinybit DL_dataTypes
+                    // Changing bit to Tinybit DL_dataTypes
                     if (savedDataTypes.contains("bit")) {
                         savedDataTypes = "tinyint(1)";
                     }
-
-                    sb.append("ADD COLUMN `").append(savedColumnNames).append("` ").append(lookupColumnNames);
-                    // TBD: these consditions have to be studied
-                    if ((!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes) || savedConstraints.equals("PK"))) {
-                        sb.append("CHANGE `").append(lookupColumnNames).append("` ").append(savedColumnNames).append("` ").append(savedDataTypes).append(" NOT NULL");
-                    } else if (!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes)) {
-                        sb.append("CHANGE `").append(lookupColumnNames).append("` ").append(savedColumnNames).append("` ").append(savedDataTypes);
+                    // Transformation
+                    if (lookupColumnNames == null) {
+                        columnDefinition.append("ADD COLUMN `").append(savedColumnNames).append("` ")
+                                .append(savedDataTypes);
                     } else {
-                        sb.append(""); // Do Nothing
-                    }
-
-                    if (!"".equals(combinedAlterScriptDefBuilder.toString())) {
-                        if (combinedAlterScriptDefBuilder.length() > 0) {
-                            combinedAlterScriptDefBuilder.append(", ");
+                        if (((!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes))
+                                && savedConstraints.equals("PK"))) {
+                            columnDefinition.append("CHANGE `").append(lookupColumnNames).append("` `")
+                                    .append(savedColumnNames).append("` ").append(savedDataTypes).append(" NOT NULL");
+                        } else if (!savedColumnNames.equals(lookupColumnNames)
+                                || !savedDataTypes.equals(lookupDataTypes)) {
+                            columnDefinition.append("CHANGE `").append(lookupColumnNames).append("` `")
+                                    .append(savedColumnNames).append("` ").append(savedDataTypes);
+                        } else {
+                            columnDefinition.append(""); // Do Nothing
                         }
-                        combinedAlterScriptDefBuilder.append(sb);
+                    }
+
+                    if (!columnDefinition.toString().isEmpty()) {
+                        if (!"".equals(combinedAlterScriptDefBuilder.toString())) {
+                            if (combinedAlterScriptDefBuilder.length() > 0) {
+                                combinedAlterScriptDefBuilder.append(", ");
+                            }
+                            combinedAlterScriptDefBuilder.append(columnDefinition.toString());
+                        }
                     }
                 }
-            // output from previous loop
-            String finalAddingColumn = combinedAlterScriptDefBuilder.toString();
-            // TBD: in exceptional cases, value must be ""
-            String notNullFinalStatement = buildChangeColumnNotNullQuery(conn, dlId, dlName);
-            finalAlterScriptBuilder.append(notNullFinalStatement).append(", ");
-            String nullFinalStatement = buildChangeColumnNullQuery(conn, dlId, dlName);
-            finalAlterScriptBuilder.append(nullFinalStatement).append(", ");
-            // Check conditions if wither of them is "", null, empty or so on
-            String finalStatement = notNullFinalStatement + nullFinalStatement;
-            // Delete or Drop Column Script similar to above
-            String deleteAlterString = ""; // TBD
-            boolean dropFlag = true;
-            if (deleteAlterString == null || "".equals(deleteAlterString)) {
-                dropFlag = false;
-            }
-
-            StringBuilder sb2 = new StringBuilder();
-            if (finalAddingColumn == null || "".equals(finalAddingColumn) || finalAddingColumn.isEmpty() ) {
-                if (dropFlag == false) {
-                    sb2.append("");
-                } else // Drop Flag == true
-                    sb2.append("ALTER TABLE `").append(dlName).append("` ").append(deleteAlterString);
-            } else {
-                if (dropFlag == false) {
-                    sb2.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(finalAddingColumn);
-                } else {
-                    sb2.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(deleteAlterString).append(", ").append(finalAddingColumn);
+                // output from previous loop
+                String finalAddingColumn = combinedAlterScriptDefBuilder.toString(); // TODO only if previous loop has some data
+                if (finalAddingColumn.isEmpty()) { // Nothing to do, return
+                    return "";
                 }
-            }
+                // Common stuff processed previously independent of previous loop functionality
+                String notNullFinalStatement = buildChangeColumnNotNullQuery(conn, dlId, dlName);
+                if (notNullFinalStatement != null && !notNullFinalStatement.isEmpty() 
+                        && !notNullFinalStatement.equals(null) && !notNullFinalStatement.equals("NULL"))
+                    finalAlterScriptBuilder.append(notNullFinalStatement).append(", ");
+                
+                String nullFinalStatement = buildChangeColumnNullQuery(conn, dlId, dlName);
+                if(nullFinalStatement != null && !nullFinalStatement.isEmpty()
+                        && !nullFinalStatement.equals(null) && !nullFinalStatement.equals("NULL"))
+                    finalAlterScriptBuilder.append(nullFinalStatement).append(", ");
 
+                // Check conditions if wither of them is "", null, empty or so on - Done now
+                String finalStatement = finalAlterScriptBuilder.toString();
+                // Delete or Drop Column Script similar to above
+                //String deleteAlterString = ""; // TBD  Extract from earlier or dropColumn
+                boolean dropFlag = true;
+                if (deleteAlterString == null || "".equals(deleteAlterString)) {
+                    dropFlag = false;
+                }
+
+                StringBuilder scriptsBuilder = new StringBuilder();
+                if (finalAddingColumn == null || "".equals(finalAddingColumn) || finalAddingColumn.isEmpty() ) {
+                    if (dropFlag == false) {
+                        scriptsBuilder.append("");
+                    } else // Drop Flag == true
+                    scriptsBuilder.append("ALTER TABLE `").append(dlName).append("` ").append(deleteAlterString);  // TODO where is ""
+                } else {
+                    if (dropFlag == false) {
+                        scriptsBuilder.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(finalAddingColumn);
+                    } else {
+                        scriptsBuilder.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(deleteAlterString).append(", ").append(finalAddingColumn);
+                    }
+                }
+
+                StringBuilder dlScriptSB = new StringBuilder();
+                String scripts = scriptsBuilder.toString();
+                //String changeFlag = (String) globalMap.get("Change_Flag");
+                //String dlName = Saved.DL_Name;
+               //String finalStatement = Var.notnull_flag;
+                //String pkColumns = (String) globalMap.get("PKColumns");
+
+                if (scripts == null || scripts.isEmpty()) {
+                    if (changeFlag.equals("N")) {
+                        dlScriptSB.append("");
+                    } else if (changeFlag.equals("Y")) {
+                        dlScriptSB.append("ALTER TABLE `").append(dlName).append("`\n ")
+                            .append(finalStatement).append("\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (").append(pkColumns).append(");");
+                    }
+                } else {  // scripts is not null or empty
+                    if (changeFlag.equals("Y")) { // TODO seems last character is getting remvoed below, not needed in our case
+                        dlScriptSB.append(scripts).append(",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (")
+                            .append(pkColumns).append(");");
+                    } else {
+                        dlScriptSB.append(scripts).append(";");
+                    }
+                }
+
+                String dlScript = dlScriptSB.toString();
+                String finalAlterScript = (dlScript == null || dlScript.equals("NULL") || dlScript.isEmpty() || dlScript.equals("")) ? "N" : dlScript;
+
+
+                // // Now sb contains the final SQL command
+                // String finalSqlCommand = dlScriptSB.toString();
+
+                return finalAlterScript;
+                //return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
             }
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        return true;
+        return "";
     }
+    }
+
     
 
     public class DataMartSavedScriptGenerator {
@@ -4782,6 +4880,8 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
         public static final String SELECT_MAX_UPDATED_DATE = "SELECT MAX(Updated_Date) FROM ELT_DL_Mapping_Info WHERE DL_Id = ?";
 
+        public static final String SELECT_MAX_UPDATED_DATE_FOR_DL_NAME = "SELECT MAX(Updated_Date) FROM ELT_DL_Mapping_Info WHERE DL_Name = ?";
+
 
         // SQL Query for retrieving distinct table and column information
         public static final String SELECT_DISTINCT_FROM_ELT_DL_MAPPING_INFO_SAVED_QUERY = "SELECT DISTINCT " +
@@ -4805,6 +4905,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         public static final String INSERT_INTO_ELT_DL_CREATE_INFO_QUERY = "INSERT INTO ELT_DL_Create_Info (DL_ID, DL_NAME, script) VALUES (?, ?, ?)";
 
         // Query to retrieve unique columns from joined tables
+        // Anti Join case
         public static final String SELECT_UNIQUE_MAPPING_INFO_QUERY = 
                 "SELECT DISTINCT " +
                 "    mi.DL_Id, " +
@@ -4814,12 +4915,15 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 "    mi.DL_Data_Types " +
                 "FROM " +
                 "    ELT_DL_Mapping_Info mi " +
-                "INNER JOIN " +
+                "LEFT OUTER JOIN " +
                 "    ELT_DL_Mapping_Info_Saved mis " +
                 "ON " +
-                "    mi.DL_Id = mis.DL_Id " +
+                "    mi.DL_Id = mis.DL_Id AND " +
+                "    mi.DL_Name = mis.DL_Name AND " +
+                "    mi.DL_Column_Names = mis.DL_Column_Names " +
                 "WHERE " +
-                "    mi.DL_Id = ?";
+                "    mi.DL_Id = ? " +
+                "    AND mis.DL_Column_Names is NULL";
 
         // Query to insert a record into ELT_DL_Alter_Script_Info
         public static final String INSERT_ALTER_SCRIPT_INFO_QUERY = 
@@ -4841,7 +4945,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 "SELECT DISTINCT " +
                         "    saved.DL_Id, " +
                         "    saved.DL_Column_Names, " +
-                        // "    CONCAT('`', saved.DL_Column_Names, '`') AS tilt_columns, " + // redundant Used removed
+                        // "    CONCAT('`', saved.DL_Column_Names, '`') AS tilt_columns, " + // processed locally
                         "    saved.Constraints AS saved_constraints, " + // Used
                         "    lookup.Constraints AS lookup_constraints, " + // Used
                         "    saved.DL_Data_Types AS saved_data_types, " + // Used
@@ -4853,13 +4957,10 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         "ON " +
                         "    saved.DL_Id = lookup.DL_Id " +
                         "    AND saved.DL_Column_Names = lookup.DL_Column_Names " +
-                        // " AND saved.DL_Data_Types = lookup.DL_Data_Types " + #TBD this check is not
-                        // required??
-                        // TBD Check what should eb the functionality, check on types will become very
-                        // restrictive
+                        "    AND saved.DL_Data_Types = lookup.DL_Data_Types " + 
                         "WHERE " +
-                        "    saved.DL_Id = ? " + // DL_Id as a parameter
-                        "    AND saved.DL_Name = ? " + // DL_Name as a parameter
+                        "    saved.DL_Id = ? " +
+                        "    AND saved.DL_Name = ? " +
                         "    AND saved.Constraints = 'PK' " +
                         "ORDER BY saved.DL_Column_Names";
         public static final String JOIN_OUTER_ELT_DL_MAPPING_INFO_AS_MAIN_AND_SAVED_AS_LOOKUP =
@@ -4877,13 +4978,13 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         "ON " +
                         "    main.DL_Id = lookup.DL_Id " +
                         "    AND main.DL_Column_Names = lookup.DL_Column_Names " +
+                        "    AND main.DL_Data_Types = lookup.DL_Data_Types " + 
                         "WHERE " +
-                        "    main.DL_Id = ? " + // DL_Id as a parameter
-                        "    AND main.DL_Name = ? " + // DL_Name as a parameter
+                        "    main.DL_Id = ? " +
+                        "    AND main.DL_Name = ? " +
                         "    AND main.Constraints = 'PK' " +
                         "ORDER BY main.DL_Column_Names";
-                        // TBD: refer above counterpart query. Optionally remove this if matching data types isn't required:
-                        // " AND main.DL_Data_Types = lookup.DL_Data_Types " +
+
         public static final String JOIN_ELT_DL_MAPPING_INFO_TABLES_FOR_PK_COLUMNS =
                 "SELECT DISTINCT " +
                         "    main.DL_Id, " +
@@ -4897,7 +4998,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         "    main.DL_Id = lookup.DL_Id " +
                         "    AND main.DL_Column_Names = lookup.DL_Column_Names " +
                         "WHERE " +
-                        "    main.DL_Id = ? " + // A parameter
+                        "    main.DL_Id = ? " +
                         "    AND main.Constraints = 'PK' " +
                         "ORDER BY main.DL_Column_Names";
         // It's alternative to above query. try to execute this. Check the results and execution timing.
@@ -4916,7 +5017,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         "    main.DL_Id = lookup.DL_Id " +
                         "    AND main.DL_Column_Names = lookup.DL_Column_Names " +
                         "WHERE " +
-                        "    main.DL_Id = ? " + // A parameter
+                        "    main.DL_Id = ? " +
                         "    AND main.Constraints = 'PK'";
                     
         public static final String JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED =
@@ -4936,10 +5037,11 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         "    ELT_DL_Mapping_Info lookup " +
                         "ON " +
                         "    saved.DL_Id = lookup.DL_Id " +
+                        "    AND saved.DL_Name = lookup.DL_Name " +
                         "    AND saved.DL_Column_Names = lookup.DL_Column_Names " +
                         "WHERE " +
-                        "    saved.DL_Id = ? " +  // A parameter
-                        "    AND saved.Updated_Date > ? " +  // A parameter
+                        "    saved.DL_Id = ? " +
+                        "    AND saved.Updated_Date > ? " + 
                         "ORDER BY " +
                         "    saved.DL_Column_Names";
 
@@ -5081,7 +5183,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 "FROM " +
                 "    `ELT_DL_FilterGroupBy_Info` " +
                 "WHERE " +
-                "    Settings_Position = ? " + // Parameter for Settings_Position
+                "    Settings_Position = ? " +
                 "    AND Job_Id = ? " +
                 "    AND DL_Id = ?";
 
