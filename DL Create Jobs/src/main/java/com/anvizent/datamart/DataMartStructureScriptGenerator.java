@@ -1066,6 +1066,20 @@ public class DataMartStructureScriptGenerator {
                 return false;
             }
         }
+        
+        // deleting records from ELT_DL_CONFIG_PROPERTIES
+        private boolean deleteFromEltDlConfigProperties(Connection conn, long dlId, long jobId) {
+            String sql = SQLQueries.DELETE_FROM_ELT_DL_CONFIG_PROPERTIES;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, dlId);
+                ps.setLong(2, jobId);
+                int rowsAffected = ps.executeUpdate();
+                return rowsAffected > 0;
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
     }
 
     public class DataMartValueScriptGenerator {
@@ -1096,7 +1110,6 @@ public class DataMartStructureScriptGenerator {
             // Job 4 Recoercing
             String componentEmptyRecoercing = COMPONENT_EMPTY_RECOERCING;
             String RecoercingValue = componentRecoercing(componentEmptyRecoercing); // Output
-            //String propsEmptyRecoercing = fetchAndFormatProperties(conn, componentEmptyRecoercing);
 
             // Job 5 NullReplacement
             String tgtPwd = ""; // TBD: TODO use input, replace literal $
@@ -1106,7 +1119,7 @@ public class DataMartStructureScriptGenerator {
 
             // Job 6 FilterValue
             String componentFilterGroupBy = COMPONENT_EXECUTESQL_FILTERGROUPBY;
-            Map<String, String> values = componentFilterGroupBy(componentFilterGroupBy);
+            Map<String, String> values = componentFilterGroupByValue(componentFilterGroupBy);
             String joinFilterGroupbyValue = values.get("JoinFilterGroupby");
             String derivedFilterGroupbyValue = values.get("DerivedFilterGroupby");
 
@@ -1238,7 +1251,7 @@ public class DataMartStructureScriptGenerator {
 
                     // part 4:
                     StringBuilder javaDataTypeBuilder = new StringBuilder();
-                    String columnArguments = performInMemoryJoin(connection, null);
+                    String columnArguments = performInMemoryJoin(connection, javaDataTypeBuilder); // TODO check the updated value is coming out 
                     String javaDataType = javaDataTypeBuilder.toString();
 
                     // part 5:
@@ -1444,12 +1457,12 @@ public class DataMartStructureScriptGenerator {
                 String dataType = mainRs.getString("Data_Type").toLowerCase();
                 String columnArguments = mainRs.getString("Column_Arguments");
     
-                String javaDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO: what should be default value
+                String javaDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO: what should be default value // Left Outer Joinn
     
                 if (javaDataTypeBuilder.length() > 0) {
                     javaDataTypeBuilder.append(",");
                 }
-                javaDataTypeBuilder.append(javaDataType);
+                javaDataTypeBuilder.append(javaDataType); // TODO Check where it has to be used, argument
     
                 if (columnArgumentsBuilder.length() > 0) {
                     columnArgumentsBuilder.append(",");
@@ -1487,7 +1500,7 @@ public class DataMartStructureScriptGenerator {
             while (mainRs.next()) {
                 String columnName = mainRs.getString("Column_Name");
                 String dataType = mainRs.getString("Data_Type").toLowerCase();
-                String sourceDataType = lookupMap.getOrDefault(dataType, "Unknown");
+                String sourceDataType = lookupMap.getOrDefault(dataType, "Unknown"); // TODO Left Outer Join, default value
     
                 String expressions = derivedValue.replace("${Dynamic_Expression_Name.expressions}", 
                             "Expression_" + level + ".expressions=" + expression.replace("$", "\\\\\\$"));
@@ -1523,7 +1536,7 @@ public class DataMartStructureScriptGenerator {
             return executeSQLExpressionValue;
         }
 
-        //  Function to execute the query and group results by Level
+        //  Value SQL Expression. Function to execute the query and group results by Level
         public String fetchAndProcessColumnInfoForSQLExpression(Connection connection, String executeSqlValue, String queryColumns, String dlId, String jobId) throws SQLException {
             String sqlQuery = "SELECT `ELT_DL_Derived_Column_Info`.Level, " +
                             "Column_Name AS Level_Columns, " +
@@ -2917,7 +2930,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         private String componentRecoercing(String component) {
            try {
                 String emptyRecoercingValue = getValueNamesFromJobPropertiesInfo(conn, component);
-                Map<String, RecoercingAggregationData> recoercingMap = executeJoinQuery(conn, String.valueOf(dlId), String.valueOf(jobId));
+                Map<String, RecoercingAggregationData> recoercingMap = executeRecoercingJoinQuery(conn, String.valueOf(dlId), String.valueOf(jobId));
                 emptyRecoercingValue = executeAndJoinRecoercingAggregation(conn, String.valueOf(dlId), String.valueOf(jobId), emptyRecoercingValue, recoercingMap); // Output
                 return emptyRecoercingValue;
             } catch (SQLException e) {
@@ -2956,7 +2969,8 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             }
         }
         // Value 4. Recoercing
-        public Map<String, RecoercingAggregationData> executeJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
+        // #AntiJoin
+        public Map<String, RecoercingAggregationData> executeRecoercingJoinQuery(Connection conn, String dlId, String jobId) throws SQLException {
             // Note It is Anti Join or opposite of Inner Join
             String query = "SELECT " +
                            "m.DL_Id, " +
@@ -3103,7 +3117,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
 
         // Value 6. filterGroupByValue
-        private Map<String, String> componentFilterGroupBy(String component) {
+        private Map<String, String> componentFilterGroupByValue(String component) {
             Map<String, String> out = new HashMap<String, String>();
             try {
                 // Part 1
@@ -3359,6 +3373,20 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             String suffix = getTimeStamp();
             String valueFileName = clientId + dlName + "_Value_File_" + suffix + ".values.properties";
             return valueFileName;
+        }
+
+        // deleting records from ELT_DL_VALUES_PROPERTIES
+        public boolean deleteFromEltDlValuesProperties(Connection conn, long dlId, long jobId) {
+            String sql = SQLQueries.DELETE_FROM_ELT_DL_VALUES_PROPERTIES;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, dlId);
+                ps.setLong(2, jobId);
+                int rowsAffected = ps.executeUpdate();
+                return rowsAffected > 0;
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return false;
+            }
         }
 
         class JoinAggregationData {
@@ -3730,22 +3758,22 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             }
 
             Map<String, String> out = new HashMap<>();
-            // Merge Column_Name_Alias
+            // Merging Column_Name_Alias
             String columnNameAlias = (value2.getColumnNameAlias() == null) 
             ? value1.getColumnNameAlias() 
             : value1.getColumnNameAlias() + ", " + value2.getColumnNameAlias();
 
-            // Merge Cleansing_Value
+            // Merging Cleansing_Value
             String cleansingValue = (value2.getCleansingValue() == null) 
             ? value1.getCleansingValue() 
             : value1.getCleansingValue() + ", " + value2.getCleansingValue();
 
-            // Merge cleansing_Validations
+            // Merging cleansing_Validations
             String cleansingValidations = (value2.getCleansingValidations() == null) 
             ? value1.getCleansingValidations() 
             : value1.getCleansingValidations() + ", " + value2.getCleansingValidations();
 
-            // Merge date_formats
+            // Merging date_formats
             String dateFormats = (value2.getDateFormats() == null) 
             ? value1.getDateFormats() 
             : value1.getDateFormats() + ", " + value2.getDateFormats();
@@ -3850,7 +3878,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
 
         public List<Map<String, Object>> fetchReplacementIncludeConstraintsInfo(Connection conn, String jobId, String dlId) throws SQLException {
-            String query = sqlQueries.getReplacementIncludeConstraintsQuery(dlId, jobId);
+            String query = sqlQueries.getNullReplacementIncludeConstraintsQuery(dlId, jobId);
 
             try (PreparedStatement ps = conn.prepareStatement(query)) {
                 try (ResultSet rs = ps.executeQuery()) {
@@ -3872,7 +3900,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         }
 
         public List<Map<String, Object>> fetchReplacementExcludeConstraintsInfo(Connection conn, String jobId, String dlId) throws SQLException {
-             String query = sqlQueries.getReplacementExcludeConstraintsQuery(dlId, jobId);
+             String query = sqlQueries.getNullReplacementExcludeConstraintsQuery(dlId, jobId);
  
              try (PreparedStatement ps = conn.prepareStatement(query)) {
                  try (ResultSet rs = ps.executeQuery()) {
@@ -4602,60 +4630,32 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
             return status? Status.SUCCESS : Status.FAILURE;
          }
-    }
 
-    // deleting records from ELT_DL_Mapping_Info
-    public boolean deleteFromEltDlMappingInfo(Connection conn, String dlId) {
-        String sql = SQLQueries.DELETE_FROM_ELT_DL_MAPPING_INFO;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, dlId);
-            int rowsAffected = ps.executeUpdate();
-            return rowsAffected > 0;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return false;
-        }
-    }
-    
-    // deleting records from ELT_DL_VALUES_PROPERTIES
-    public boolean deleteFromEltDlValuesProperties(Connection conn, long dlId, long jobId) {
-        String sql = SQLQueries.DELETE_FROM_ELT_DL_VALUES_PROPERTIES;        
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, dlId);
-            ps.setLong(2, jobId);
-            int rowsAffected = ps.executeUpdate();
-            return rowsAffected > 0;            
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return false;
-        }
-    }
+         // deleting records from ELT_DL_Mapping_Info
+         public boolean deleteFromEltDlMappingInfo(Connection conn, String dlId) {
+             String sql = SQLQueries.DELETE_FROM_ELT_DL_MAPPING_INFO;
+             try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                 ps.setString(1, dlId);
+                 int rowsAffected = ps.executeUpdate();
+                 return rowsAffected > 0;
+             } catch (SQLException e) {
+                 e.printStackTrace();
+                 return false;
+             }
+         }
 
-    // deleting records from ELT_DL_CONFIG_PROPERTIES
-    public boolean deleteFromEltDlConfigProperties(Connection conn, long dlId, long jobId) {
-        String sql = SQLQueries.DELETE_FROM_ELT_DL_CONFIG_PROPERTIES;        
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, dlId);
-            ps.setLong(2, jobId);
-            int rowsAffected = ps.executeUpdate();
-            return rowsAffected > 0;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return false;
-        }
-    }
-    
-    // Copying the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
-    public boolean insertMappingInfoFromSaved(Connection conn, String dlId) {
-        String sql = SQLQueries.INSERT_INTO_ELT_DL_MAPPING_INFO_FROM_SAVED;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, dlId);
-            int rowsAffected = ps.executeUpdate();
-            return rowsAffected > 0;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return false;
-        }
+         // Copying the data from `ELT_DL_Mapping_Info_Saved` to `ELT_DL_Mapping_Info`
+         public boolean insertMappingInfoFromSaved(Connection conn, String dlId) {
+             String sql = SQLQueries.INSERT_INTO_ELT_DL_MAPPING_INFO_FROM_SAVED;
+             try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                 ps.setString(1, dlId);
+                 int rowsAffected = ps.executeUpdate();
+                 return rowsAffected > 0;
+             } catch (SQLException e) {
+                 e.printStackTrace();
+                 return false;
+             }
+         }
     }
 
     public class DataMartCreateScriptGenerator {
@@ -5114,7 +5114,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 "AND Active_Flag=1 AND Dynamic_Flag=1";
         
         // Nullreplacement
-        public String getReplacementExcludeConstraintsQuery(String dlId, String jobId) {
+        public String getNullReplacementExcludeConstraintsQuery(String dlId, String jobId) {
             return "SELECT DISTINCT " +
                     "'' AS Table_Name, " +
                     "main.DL_Column_Names, " +
@@ -5137,7 +5137,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                     "AND lookup.Join_Column IS NULL";
         }
 
-        public String getReplacementIncludeConstraintsQuery(String dlId, String jobId) {
+        public String getNullReplacementIncludeConstraintsQuery(String dlId, String jobId) {
             return "SELECT DISTINCT " +
                     "'' AS Table_Name, " +
                     "main.DL_Column_Names, " +
