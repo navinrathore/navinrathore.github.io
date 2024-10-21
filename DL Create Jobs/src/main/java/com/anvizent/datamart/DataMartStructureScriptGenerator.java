@@ -100,20 +100,20 @@ public class DataMartStructureScriptGenerator {
     // Method to trigger generation of different child scripts
     public void generateScripts() {
         // The config script generator
-        // if (new DataMartConfigScriptGenerator().generateConfigScript() != Status.SUCCESS ) {
-        //     System.out.println("Create script generation failed. Stopping process.");
-        //     return;
-        // }
-        // // The value script generator
-        // if (new DataMartValueScriptGenerator().generateValueScript() != Status.SUCCESS) {
-        //     System.out.println("Value script generation failed. Stopping process.");
-        //     return;
-        // }
-        // // The create script generator
-        // if (new DataMartCreateScriptGenerator().generateCreateScript() != Status.SUCCESS) {
-        //     System.out.println("Create script generation failed. Stopping process.");
-        //     return;
-        // }
+        if (new DataMartConfigScriptGenerator().generateConfigScript() != Status.SUCCESS ) {
+            System.out.println("Create script generation failed. Stopping process.");
+            return;
+        }
+        // The value script generator
+        if (new DataMartValueScriptGenerator().generateValueScript() != Status.SUCCESS) {
+            System.out.println("Value script generation failed. Stopping process.");
+            return;
+        }
+        // The create script generator
+        if (new DataMartCreateScriptGenerator().generateCreateScript() != Status.SUCCESS) {
+            System.out.println("Create script generation failed. Stopping process.");
+            return;
+        }
         // The alter script generator
         if (new DataMartAlterScriptGenerator().generateAlterScript() != Status.SUCCESS) {
             System.out.println("Alter script generation failed. Stopping process.");
@@ -2183,11 +2183,11 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 String tableName = mainRecord.getTableName();
                 String tablenameAlias = mainRecord.getTableNameAlias();
 
-                // Lookup in groupByInfoData
+                // Lookup in groupByInfoData #OuterJoined
                 SourceGroupByAggregationData groupBy = groupByInfoData.getOrDefault(key, new SourceGroupByAggregationData(Long.valueOf(dlId), Long.valueOf(jobId), tableName, tablenameAlias));
-                // Lookup in filterGroupByInfoData
+                // Lookup in filterGroupByInfoData #OuterJoined
                 SourceFilterByAggregationData filter = filterGroupByInfoData.getOrDefault(key, new SourceFilterByAggregationData(dlId, jobId, tableName, tablenameAlias));
-                // Lookup in tmpTableDataMap
+                // Lookup in tmpTableDataMap #OuterJoined
                 Map<String, String> tmpTableData = tmpTableDataMap.getOrDefault(key, new HashMap<String, String>());
 
                 String whereCondition = (filter.getFilterCondition() != null) ?
@@ -4083,6 +4083,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         public Status generateAlterScript() {
             boolean status = false;
             System.out.println("Generating alter script for DL_ID: " + dlId);
+            
             // Step 1:
             status = updateActiveFlag(conn, String.valueOf(dlId));
             // Format of the dateTime is supposed to be "yyyy-MM-dd HH:mm:ss", Hence TimeStamp is used.
@@ -4091,7 +4092,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             //TBD: Note: Below check moved earlier to be reused elsewhere
             String TargetDB = Context.getContext().getTgtDbName(); // Input Param
             boolean tableExists = doesTableExist(conn, dlName, TargetDB);
-            String createTableString = null; // TODO Initialization or ""
+            String createTableString = ""; // TODO Initialization or ""
             // Step 2:
             if (dlIdExists) {
                 // call Alter delete funcitons (subjob delete)
@@ -4103,13 +4104,14 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                         status = insertAlterScriptInfo(conn, String.valueOf(dlId), dlName, deleteScript);
                 } else {
                     System.out.println("Table Doesn't Exists. Proceed with Create Statement.");
+                    // createTableString = "Y";
                     // TBD: This case is not specified properly. Is it redundant?
                     // TODO seems come out of the function. do nothing
                 }
             }
             // Step 3:
             boolean hasRecentUpdateForDLId = checkDLIdExistsWithUpdatedDate(conn, String.valueOf(dlId), dateTime);
-            hasRecentUpdateForDLId = true; // TODO temporary
+            // hasRecentUpdateForDLId = true; // TODO temporary
             String pkColumns = "";
             String changeFlag = "";
 
@@ -4126,6 +4128,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             // Step 4:
             if (tableExists)
                 status = updateActiveFlag(conn, String.valueOf(dlId));
+            
             // Step 5:
             // TBD: Table Exists or not (tableExists)
             if (tableExists) { // TBD: any other check? Done below
@@ -4142,17 +4145,15 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                 // TODO come out of the loop???
             }
 
-            // createTableString = "N"
-            if ( createTableString.equals("N")) {
+            if (createTableString.equals("N")) {
                 // Step 6:
                 String deleteAlterScript = fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(conn, String.valueOf(dlId));
-                // TBD: it's date or time? refer to database. Though, script shows timestamp format.
                 
                 // Step 7:
                 Timestamp maxUpdatedDate = getMaxUpdatedDateForTableName(conn, dlName);
 
                 // Step 8:
-                String finalAlterScript = buildAndStoreCompleteAlterScript(conn, String.valueOf(dlId), maxUpdatedDate, deleteAlterScript, pkColumns, changeFlag);
+                String finalAlterScript = buildCompleteAlterScript(conn, String.valueOf(dlId), maxUpdatedDate, deleteAlterScript, pkColumns, changeFlag);
                 if (!finalAlterScript.isEmpty())
                     status = insertAlterScriptInfo(conn, String.valueOf(dlId), dlName, finalAlterScript);
             }
@@ -4186,7 +4187,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return null;
         }
 
-        //  Retrieves the maximum updated date (as a Timestamp) from the database for a given dlName
+        // Retrieves the maximum updated date (as a Timestamp) from the ELT_DL_Mapping_Info for a given dlName
         private Timestamp getMaxUpdatedDateForTableName(Connection conn, String dlName) {
             String selectQuery = SQLQueries.SELECT_MAX_UPDATED_DATE_FOR_DL_NAME;
             try (PreparedStatement stmt = conn.prepareStatement(selectQuery)) {
@@ -4250,7 +4251,10 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             return false;
         }
     
-        // Function to retrieve unique column values from Mapping_info table. Also, inserting the alter script into ELT_DL_Alter_Script_Info
+        // Function to build Alter Table Drop Column script. The column values from
+        // ELT_DL_Mapping_Info table that are missing in the table ELT_DL_Mapping_Info_Saved
+        // are retrived and a script to drop all these columns is formed.
+        // #AntiJoin
         public String fetchUniqueMappingInfoAndInsertIntoAlterScriptInfo(Connection conn, String dlId) {
             String query = SQLQueries.SELECT_UNIQUE_MAPPING_INFO_QUERY;
             StringBuilder combinedDropColumnDefinition = new StringBuilder();
@@ -4282,10 +4286,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
                             .append(!combinedDropColumnDefinition.toString().isEmpty() ? "\n" : "")
                             .append(END_OF_SCRIPT_TEXT);
 
-                    //String finalAlterScript = finalAlterScriptBuilder.toString();
-                    // Inserting the record into the table "ELT_DL_Alter_Script_Info"
                     return finalAlterScriptBuilder.toString();
-                    //return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
                 }
             } catch (SQLException e) {
                 e.printStackTrace();
@@ -4466,140 +4467,127 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         return finalScriptBuilder.toString();
     }
 
-    public String buildAndStoreCompleteAlterScript(Connection conn, String dlId, Timestamp maxUpdatedDate, String deleteAlterString, String pkColumns, String changeFlag) {
-        String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED;
-    
-        StringBuilder finalAlterScriptBuilder = new StringBuilder();
-        StringBuilder combinedAlterScriptDefBuilder = new StringBuilder();
+        // #OuterJoin
+        public String buildCompleteAlterScript(Connection conn, String dlId, Timestamp maxUpdatedDate, String deleteAlterString, String pkColumns, String changeFlag) {
+            String query = SQLQueries.JOIN_ELT_DL_MAPPING_INFO_TABLES_RECENTLY_UPDATED;
+        
+            StringBuilder finalAlterScriptBuilder = new StringBuilder();
+            StringBuilder combinedAlterScriptDefBuilder = new StringBuilder();
 
-        StringBuilder columnDefinition = new StringBuilder();
-        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
-            pstmt.setString(1, dlId);
-            pstmt.setTimestamp(2, maxUpdatedDate); // TBD: date vs Timestamp
-    
-            try (ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    String savedDLName = rs.getString("DL_Name");
-                    String savedColumnNames = rs.getString("DL_Column_Names");
-                    String savedDataTypes = rs.getString("saved_data_types");
-                    String savedConstraints = rs.getString("saved_constraints");
+            StringBuilder columnDefinition = new StringBuilder();
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setString(1, dlId);
+                pstmt.setTimestamp(2, maxUpdatedDate);
+        
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String savedDLName = rs.getString("DL_Name");
+                        String savedColumnNames = rs.getString("DL_Column_Names");
+                        String savedDataTypes = rs.getString("saved_data_types");
+                        String savedConstraints = rs.getString("saved_constraints");
 
-                    String lookupDLName = rs.getString("lookup_DL_Name");
-                    String lookupColumnNames = rs.getString("lookup_column_names"); 
-                    String lookupDataTypes = rs.getString("lookup_data_types");  
-                    String lookupConstraints = rs.getString("lookup_constraints");
+                        String lookupDLName = rs.getString("lookup_DL_Name");
+                        String lookupColumnNames = rs.getString("lookup_column_names"); 
+                        String lookupDataTypes = rs.getString("lookup_data_types");  
+                        String lookupConstraints = rs.getString("lookup_constraints");
 
-                    // Changing bit to Tinybit DL_dataTypes
-                    if (savedDataTypes.contains("bit")) {
-                        savedDataTypes = "tinyint(1)";
-                    }
-                    // Transformation
-                    if (lookupColumnNames == null) {
-                        columnDefinition.append("ADD COLUMN `").append(savedColumnNames).append("` ")
-                                .append(savedDataTypes);
-                    } else {
-                        if (((!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes))
-                                && savedConstraints.equals("PK"))) {
-                            columnDefinition.append("CHANGE `").append(lookupColumnNames).append("` `")
-                                    .append(savedColumnNames).append("` ").append(savedDataTypes).append(" NOT NULL");
-                        } else if (!savedColumnNames.equals(lookupColumnNames)
-                                || !savedDataTypes.equals(lookupDataTypes)) {
-                            columnDefinition.append("CHANGE `").append(lookupColumnNames).append("` `")
-                                    .append(savedColumnNames).append("` ").append(savedDataTypes);
+                        // Changing bit to Tinybit DL_dataTypes
+                        if (savedDataTypes.contains("bit")) {
+                            savedDataTypes = "tinyint(1)";
+                        }
+                        // Transformation
+                        if (lookupColumnNames == null) {
+                            columnDefinition.append("ADD COLUMN `").append(savedColumnNames).append("` ")
+                                    .append(savedDataTypes);
                         } else {
-                            columnDefinition.append(""); // Do Nothing
-                        }
-                    }
-
-                    if (!columnDefinition.toString().isEmpty()) {
-                        if (!"".equals(combinedAlterScriptDefBuilder.toString())) {
-                            if (combinedAlterScriptDefBuilder.length() > 0) {
-                                combinedAlterScriptDefBuilder.append(", ");
+                            if (((!savedColumnNames.equals(lookupColumnNames) || !savedDataTypes.equals(lookupDataTypes))
+                                    && savedConstraints.equals("PK"))) {
+                                columnDefinition.append("CHANGE `").append(lookupColumnNames).append("` `")
+                                        .append(savedColumnNames).append("` ").append(savedDataTypes).append(" NOT NULL");
+                            } else if (!savedColumnNames.equals(lookupColumnNames)
+                                    || !savedDataTypes.equals(lookupDataTypes)) {
+                                columnDefinition.append("CHANGE `").append(lookupColumnNames).append("` `")
+                                        .append(savedColumnNames).append("` ").append(savedDataTypes);
+                            } else {
+                                columnDefinition.append(""); // Doing Nothing
                             }
-                            combinedAlterScriptDefBuilder.append(columnDefinition.toString());
+                        }
+
+                        if (!columnDefinition.toString().isEmpty()) {
+                            if (!"".equals(combinedAlterScriptDefBuilder.toString())) {
+                                if (combinedAlterScriptDefBuilder.length() > 0) {
+                                    combinedAlterScriptDefBuilder.append(", ");
+                                }
+                                combinedAlterScriptDefBuilder.append(columnDefinition.toString());
+                            }
                         }
                     }
-                }
-                // output from previous loop
-                String finalAddingColumn = combinedAlterScriptDefBuilder.toString(); // TODO only if previous loop has some data
-                if (finalAddingColumn.isEmpty()) { // Nothing to do, return
-                    return "";
-                }
-                // Common stuff processed previously independent of previous loop functionality
-                String notNullFinalStatement = buildChangeColumnNotNullQuery(conn, dlId, dlName);
-                if (notNullFinalStatement != null && !notNullFinalStatement.isEmpty() 
-                        && !notNullFinalStatement.equals(null) && !notNullFinalStatement.equals("NULL"))
-                    finalAlterScriptBuilder.append(notNullFinalStatement).append(", ");
-                
-                String nullFinalStatement = buildChangeColumnNullQuery(conn, dlId, dlName);
-                if(nullFinalStatement != null && !nullFinalStatement.isEmpty()
-                        && !nullFinalStatement.equals(null) && !nullFinalStatement.equals("NULL"))
-                    finalAlterScriptBuilder.append(nullFinalStatement).append(", ");
+                    // output from previous loop
+                    String finalAddingColumn = combinedAlterScriptDefBuilder.toString();
+                    if (finalAddingColumn.isEmpty()) { // Nothing to do, early return
+                        return "";
+                    }
+                    // Common stuff processed previously independent of previous loop functionality
+                    String notNullFinalStatement = buildChangeColumnNotNullQuery(conn, dlId, dlName);
+                    if (notNullFinalStatement != null && !notNullFinalStatement.isEmpty() 
+                            && !notNullFinalStatement.equals(null) && !notNullFinalStatement.equals("NULL"))
+                        finalAlterScriptBuilder.append(notNullFinalStatement).append(", ");
+                    
+                    String nullFinalStatement = buildChangeColumnNullQuery(conn, dlId, dlName);
+                    if(nullFinalStatement != null && !nullFinalStatement.isEmpty()
+                            && !nullFinalStatement.equals(null) && !nullFinalStatement.equals("NULL"))
+                        finalAlterScriptBuilder.append(nullFinalStatement).append(", ");
 
-                // Check conditions if wither of them is "", null, empty or so on - Done now
-                String finalStatement = finalAlterScriptBuilder.toString();
-                // Delete or Drop Column Script similar to above
-                //String deleteAlterString = ""; // TBD  Extract from earlier or dropColumn
-                boolean dropFlag = true;
-                if (deleteAlterString == null || "".equals(deleteAlterString)) {
-                    dropFlag = false;
-                }
+                    String finalStatement = finalAlterScriptBuilder.toString();
+                    boolean dropFlag = true;
+                    if (deleteAlterString == null || "".equals(deleteAlterString)) {
+                        dropFlag = false;
+                    }
 
-                StringBuilder scriptsBuilder = new StringBuilder();
-                if (finalAddingColumn == null || "".equals(finalAddingColumn) || finalAddingColumn.isEmpty() ) {
-                    if (dropFlag == false) {
-                        scriptsBuilder.append("");
-                    } else // Drop Flag == true
-                    scriptsBuilder.append("ALTER TABLE `").append(dlName).append("` ").append(deleteAlterString);  // TODO where is ""
-                } else {
-                    if (dropFlag == false) {
-                        scriptsBuilder.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(finalAddingColumn);
+                    StringBuilder scriptsBuilder = new StringBuilder();
+                    if (finalAddingColumn == null || "".equals(finalAddingColumn) || finalAddingColumn.isEmpty() ) {
+                        if (dropFlag == false) {
+                            scriptsBuilder.append("");
+                        } else // Drop Flag == true
+                        scriptsBuilder.append("ALTER TABLE `").append(dlName).append("` ").append(deleteAlterString);  // TODO where is ""
                     } else {
-                        scriptsBuilder.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(deleteAlterString).append(", ").append(finalAddingColumn);
+                        if (dropFlag == false) {
+                            scriptsBuilder.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(finalAddingColumn);
+                        } else {
+                            scriptsBuilder.append("ALTER TABLE `").append(dlName).append("`\n").append(finalStatement).append(deleteAlterString).append(", ").append(finalAddingColumn);
+                        }
                     }
+
+                    StringBuilder dlScriptSB = new StringBuilder();
+                    String scripts = scriptsBuilder.toString();
+
+                    if (scripts == null || scripts.isEmpty()) {
+                        if (changeFlag.equals("N")) {
+                            dlScriptSB.append("");
+                        } else if (changeFlag.equals("Y")) {
+                            dlScriptSB.append("ALTER TABLE `").append(dlName).append("`\n ")
+                                .append(finalStatement).append("\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (").append(pkColumns).append(");");
+                        }
+                    } else {  // scripts is not null or empty
+                        if (changeFlag.equals("Y")) { // seems last character is remvoed below in Talend, not needed in our case
+                            dlScriptSB.append(scripts).append(",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (")
+                                .append(pkColumns).append(");");
+                        } else {
+                            dlScriptSB.append(scripts).append(";");
+                        }
+                    }
+
+                    String dlScript = dlScriptSB.toString();
+                    String finalAlterScript = (dlScript == null || dlScript.equals("NULL") || dlScript.isEmpty() || dlScript.equals("")) ? "N" : dlScript;
+
+                    return finalAlterScript;
                 }
-
-                StringBuilder dlScriptSB = new StringBuilder();
-                String scripts = scriptsBuilder.toString();
-                //String changeFlag = (String) globalMap.get("Change_Flag");
-                //String dlName = Saved.DL_Name;
-               //String finalStatement = Var.notnull_flag;
-                //String pkColumns = (String) globalMap.get("PKColumns");
-
-                if (scripts == null || scripts.isEmpty()) {
-                    if (changeFlag.equals("N")) {
-                        dlScriptSB.append("");
-                    } else if (changeFlag.equals("Y")) {
-                        dlScriptSB.append("ALTER TABLE `").append(dlName).append("`\n ")
-                            .append(finalStatement).append("\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (").append(pkColumns).append(");");
-                    }
-                } else {  // scripts is not null or empty
-                    if (changeFlag.equals("Y")) { // TODO seems last character is getting remvoed below, not needed in our case
-                        dlScriptSB.append(scripts).append(",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY (")
-                            .append(pkColumns).append(");");
-                    } else {
-                        dlScriptSB.append(scripts).append(";");
-                    }
-                }
-
-                String dlScript = dlScriptSB.toString();
-                String finalAlterScript = (dlScript == null || dlScript.equals("NULL") || dlScript.isEmpty() || dlScript.equals("")) ? "N" : dlScript;
-
-
-                // // Now sb contains the final SQL command
-                // String finalSqlCommand = dlScriptSB.toString();
-
-                return finalAlterScript;
-                //return insertAlterScriptInfo(conn, dlId, dlName, finalAlterScript);
+            } catch (SQLException e) {
+                e.printStackTrace();
             }
-        } catch (SQLException e) {
-            e.printStackTrace();
+            return "";
         }
-        return "";
     }
-    }
-
-    
 
     public class DataMartSavedScriptGenerator {
         public DataMartSavedScriptGenerator() {
@@ -4674,7 +4662,7 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
         public DataMartCreateScriptGenerator() {
         }
 
-         public Status generateCreateScript() {
+        public Status generateCreateScript() {
             try {
                 Connection conn = DBHelper.getConnection(DataSourceType.MYSQL);
     
