@@ -3182,10 +3182,10 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
 
         public String processFilterGroupBy(String filterGroupby, Map<String, Object> row, String settingsPosition) {
 
-            long dlIdValue = (long) row.get("DL_Id");
-            long jobIdValue = (long) row.get("Job_Id");
-            long groupByIdValue = (long) row.get("Group_By_Id");
-            long filterIdValue = (long) row.get("Filter_Id");
+            //long dlIdValue = (long) row.get("DL_Id");
+            //long jobIdValue = (long) row.get("Job_Id");
+            Long groupByIdValue = Long.valueOf((String) row.get("Group_By_Id"));
+            Long filterIdValue = Long.valueOf((String) row.get("Filter_Id"));
             String flowValue = (String) row.get("Flow");
             String filterConditionValue = (String) row.get("Filter_Condition");
             AggregationData groupByData = (AggregationData) row.get("Group_By_Data");
@@ -3213,13 +3213,13 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             String statement;
             String aliasName;
             String query;
-            if ("'Join_Columns'".equals(settingsPosition)) {
+            if ("Join_Columns".equals(settingsPosition)) {
                 statement = "select " + columns + " from Join_FilterGroupby " + whereCondition;
                 aliasName = filterGroupby.replace("${Dynamic_FilterGroupby_Name.source.alias.names}",
                         "Join_Aggregation.source.alias.names=Join_FilterGroupby");
                 query = aliasName.replace("${Dynamic_FilterGroupby_Name.query}",
                         "Join_Aggregation.query=" + statement);
-            } else if ("'Derived_Columns'".equals(settingsPosition)) {
+            } else if ("Derived_Columns".equals(settingsPosition)) {
                 statement = "select " + columns + " from Derived_FilterGroupby " + whereCondition;
                 aliasName = filterGroupby.replace("${Dynamic_FilterGroupby_Name.source.alias.names}",
                         "Derived_Aggregation.source.alias.names=Derived_FilterGroupby");
@@ -3274,7 +3274,8 @@ tableNameAlias.replace("$", "\\$") + ".src.jdbc.url=jdbc:mysql://" + tgtHost + "
             while (resultSet.next()) {
                 // String dlId = resultSet.getString("DL_Id");
                 // String jobId = resultSet.getString("Job_Id");
-                String groupId = resultSet.getString("Group_Id");
+                //String groupId = resultSet.getString("Group_Id");
+                String groupId = resultSet.getString("Group_By_Id");
 
                 String aggregation = resultSet.getString("Aggregation");
                 String columnNameAlias = resultSet.getString("Column_Name_Alias");
