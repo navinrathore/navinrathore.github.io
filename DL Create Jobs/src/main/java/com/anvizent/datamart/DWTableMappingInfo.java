@@ -57,7 +57,7 @@ public class DWTableMappingInfo {
 			context.put("APP_PW", "Tt5526");
 			context.put("Schema_Name", "");
 			context.put("Table_Name","");
-			context.put("CONNECTION_ID", "2"); // 2,3,4
+			context.put("CONNECTION_ID", "41"); // 2,3,4
 			context.put("DATASOURCENAME","syspro");
 			context.put("CLIENT_ID", "1009427");
 			context.put("TableType", "D");
@@ -708,17 +708,21 @@ public class DWTableMappingInfo {
                     .append("AND Active_Flag = '1' ")
                     .append("AND Connection_Id = ? ").append(querySchemaCondition1);
 
-            List<Map<String, Object>> dfEltSelective = fetchDataFromDb(queryEltSelective, connectionId,connection);
-            List<Map<String, Object>> dfEltIlSettings = fetchDataFromDb(queryEltIlSettings, connectionId,connection);
+            // List<Map<String, Object>> dfEltSelective = fetchDataFromDb(queryEltSelective, connectionId,connection);
+            // List<Map<String, Object>> dfEltIlSettings = fetchDataFromDb(queryEltIlSettings, connectionId,connection);
 
-            List<Map<String, Object>> dfOut = mergeData(dfEltSelective, dfEltIlSettings);
+            List<Map<String, Object>> dfOut = fetchJoinedData(selectTables, connectionId, querySchemaCondition1, connection);
 
-            for (Map<String, Object> row : dfOut) {
-                String tableName = (String) row.get("Table_Name");
-                String settingValue = (String) row.get("Setting_Value");
-                String dwTableName = settingValue == null ? tableName : tableName + "_" + settingValue;
-                globalMap.put("DW_Table_Name", dwTableName);
-            }
+            //List<Map<String, Object>> dfOut = mergeData(dfEltSelective, dfEltIlSettings);
+
+            // Done inside the function
+
+            // for (Map<String, Object> row : dfOut) {
+            //     String tableName = (String) row.get("Table_Name");
+            //     String settingValue = (String) row.get("Setting_Value");
+            //     String dwTableName = settingValue == null ? tableName : tableName + "_" + settingValue;
+            //     globalMap.put("DW_Table_Name", dwTableName);
+            // }
 
             System.out.println(dfOut);
         }
@@ -742,6 +746,99 @@ public class DWTableMappingInfo {
             return results;
         }
 
+        // TODO : rename function Name
+        public static List<Map<String, Object>> fetchJoinedData2(
+                String selectiveTables, String connectionId, String querySchemaCond1, Connection con) throws SQLException {
+
+            List<Map<String, Object>> results = new ArrayList<>();
+            String query = "SELECT DISTINCT " +
+                        "    main.Connection_Id, " +
+                        "    main.Schema_Name, " +
+                        "    main.Table_Name, " +
+                        "    main.Dimension_Transaction, " +
+                        "    main.Custom_Type, " +
+                        "    il.Setting_Value AS IL_Setting_Value, " +
+                        "    shared.suffix AS Shared_Folder_Suffix, " +
+                        "    ws.suffix AS Webservice_Suffix " +
+                        "FROM " +
+                        "    ELT_Selective_Source_Metadata AS main " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_IL_Settings_Info AS il " +
+                        "ON " +
+                        "    main.Connection_Id = il.Connection_Id " +
+                        "    AND main.Schema_Name = il.Schema_Name " +
+                        "    AND il.Settings_Category = 'Suffix' " +
+                        "    AND il.Active_Flag = '1' " +
+                        "LEFT OUTER JOIN " +
+                        "    sharedconnections_file_path_info AS shared " +
+                        "ON " +
+                        "    main.Connection_Id = shared.Connection_Id " +
+                        "    AND main.Schema_Name = shared.param_or_schema_name " +
+                        "LEFT OUTER JOIN " +
+                        "    minidwcs_ws_connections_mst AS ws " +
+                        "ON " +
+                        "    main.Connection_Id = ws.id " +
+                        "WHERE " +
+                        "    main.Table_Name IN (" + selectiveTables + ") " + // TODO what if multiple files single quotes support
+                        "    AND main.Isfileupload != '1' " +
+                        "    AND main.Custom_Type <> 'Common' " +
+                        "    AND main.Connection_Id = ? " +
+                        querySchemaCond1 + ";";
+
+            try (PreparedStatement stmt = con.prepareStatement(query)) {
+                stmt.setString(1, connectionId);
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+
+                        for (int i = 1; i <= columnCount; i++) {
+                            row.put(metaData.getColumnName(i), rs.getObject(i));
+                        }
+                        // "    main.Connection_Id, " +
+                        // "    main.Schema_Name, " +
+                        // "    main.Table_Name, " +
+                        // "    main.Dimension_Transaction, " +
+                        // "    main.Custom_Type, " +
+                        // "    il.Setting_Value AS IL_Setting_Value, " +
+                        // "    shared.suffix AS Shared_Folder_Suffix, " +
+                        // "    ws.suffix AS Webservice_Suffix " +
+
+                        String schemaName = (String) row.get("Schema_Name");
+                        //String tableName = (String) row.get("Table_Name");
+                        //String settingValue = (String) row.get("Setting_Value");
+
+                        String settingValue;
+                        String customType = ""; // or null // TO Context variable ; intialize in context
+                        if (customType == null) {
+                            settingValue = (String) row.get("Shared_Folder_Suffix");
+                        } else if (customType.equals("shared_folder")) {
+                            settingValue = (String) row.get("Shared_Folder_Suffix");
+                        } else if (customType.equals("web_service") ||
+                            customType.equals("OneDrive") ||
+                            customType.equals("SageIntacct")) {
+                            settingValue = (String) row.get("Webservice_Suffix");
+                        } else {
+                            settingValue = (String) row.get("IL_Setting_Value");
+                        }
+
+                        String tableName = (String) row.get("Table_Name");  // ELT_Selective_Source_Metadata.Table_Name
+                        String dwTableName = (settingValue != null) ? tableName + "_" + settingValue : tableName;
+
+                        // Additional Output
+// Setting_Value
+// DW_Table_Name
+                        results.add(row);
+                    }
+                }
+            }
+
+            return results;
+        }
+
         private static List<Map<String, Object>> mergeData(List<Map<String, Object>> df1, List<Map<String, Object>> df2) {
             // Implement merging logic here
             // This is a simplified version and may need to be adjusted based on your specific requirements
@@ -762,6 +859,59 @@ public class DWTableMappingInfo {
             }
 
             return new ArrayList<>(mergedMap.values());
+        }
+
+
+        // TODO: Name change
+        public static List<Map<String, Object>> fetchJoinedData(String selectiveTables, String connectionId, String querySchemaCond1, Connection con) throws SQLException {
+            List<Map<String, Object>> results = new ArrayList<>();
+            // Left Outer Join
+            String query = "SELECT DISTINCT " +
+                        "    src.Connection_Id, " +
+                        "    src.Schema_Name, " +
+                        "    src.Table_Name, " +
+                        "    src.Dimension_Transaction, " +
+                        "    il.Setting_Value " +
+                        "FROM " +
+                        "    ELT_Selective_Source_Metadata AS src " +
+                        "LEFT OUTER JOIN " +
+                        "    ELT_IL_Settings_Info AS il " +
+                        "ON " +
+                        "    src.Connection_Id = il.Connection_Id " +
+                        "    AND src.Schema_Name = il.Schema_Name " +
+                        "    AND il.Settings_Category = 'Suffix' " +
+                        "    AND il.Active_Flag = '1'" +
+                        "WHERE " +
+                        "    src.Table_Name IN (" + selectiveTables + ") " + // TODO if more than table
+                        "    AND src.Isfileupload != '1' " +
+                        "    AND src.Connection_Id = " + connectionId + " " +
+                        querySchemaCond1 + ";";// TODO see how to  relate to first table
+;
+
+            try (PreparedStatement stmt = con.prepareStatement(query)) {
+                //stmt.setString(1, connectionId);
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            row.put(metaData.getColumnName(i), rs.getObject(i));
+                        }
+                        //String connectionId = (String) row.get("Connection_Id");
+                        String schemaName = (String) row.get("Schema_Name");
+                        String tableName = (String) row.get("Table_Name");
+                        String settingValue = (String) row.get("Setting_Value");
+                        String dimensionTransaction = (String) row.get("Dimension_Transaction");
+                        String dwTableName = (settingValue == null) ? tableName : tableName + "_" + settingValue;
+                        row.put("DW_Table_Name", dwTableName);
+                        results.add(row);
+                    }
+                }
+            }
+            return results;
         }
 
         private static Map<String, Object> updateIncrementalColumnAndPrepareBulk(Connection connection) throws SQLException, IOException {
