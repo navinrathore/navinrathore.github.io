@@ -162,7 +162,7 @@ public class DWTableMappingInfo {
 
     
           
-        static void mainProcessForFlagZero() {
+        public static void mainProcessForFlagZero() {
             Connection dbConnection = getDbConnection();
             if (dbConnection == null) {
                 System.out.println("Failed to establish database connection. Exiting.");
@@ -175,6 +175,12 @@ public class DWTableMappingInfo {
                 System.out.println("Selective tables processing completed successfully.");
 
                 // Step 2 - iteration
+
+                // call setACtiveFlag()
+                // TODO approproate arguments inside iterative loop
+                Map<String, Map<String, Object>> resultMetadata = processSelectiveSourceMetadata(dbConnection, null, null, null);
+
+
 
 
 
@@ -1293,10 +1299,356 @@ public class DWTableMappingInfo {
             return resultMap;
         }
 
+        // Navin Saved comp1 start
+        // For Inner Join + Anti Join
+        public Map<String, Map<String, Object>> processSelectiveSourceMetadata(
+                Connection connection,
+                String tableName,
+                String connectionId,
+                String querySchemaCond) {
 
+            String query = "SELECT Connection_Id, Schema_Name, Table_Name, Column_Name, Dimension_Transaction" +
+                    "FROM ELT_Selective_Source_Metadata " +
+                    "WHERE Table_Name = ? AND IsFileUpload != '1' AND Connection_Id = ? " + querySchemaCond;
+
+            // Joining Table data
+            Map<String, Map<String, Object>> ilSourceMappingData = getILSourceMappingInfo(connection, query, query, query);
+
+            Map<String, Map<String, Object>> innerJoinResultMap = new HashMap<>(); // Inner Join Result Map; Store into a file
+            Map<String, Map<String, Object>> antiInnerJoinResultMap = new HashMap<>(); // Anti-Inner Join Result Map; output for further processing
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, tableName);
+                preparedStatement.setString(2, connectionId);
+
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String key = String.join("_",
+                                resultSet.getString("Connection_Id"),
+                                resultSet.getString("Schema_Name"),
+                                resultSet.getString("Table_Name"),
+                                resultSet.getString("Column_Name"));
+
+                        // inner join with the ilSourceMappingData map (inner join logic)
+                        if (ilSourceMappingData.containsKey(key)) {
+                            Map<String, Object> valueMap = new HashMap<>();
+                            Map<String, Object> ilmappingValue = ilSourceMappingData.get(key);
+
+                            String icremental_Column = ilmappingValue.get("Dimension_Transaction") == null ? "N"
+                                    : ("T".equals(resultSet.getString("Dimension_Transaction"))
+                                            && "D".equals(ilmappingValue.get("Dimension_Transaction"))) ? "Y"
+                                                    : (String) ilmappingValue.get("Incremental_Column");
+
+                            // components of the key
+                            valueMap.putAll(ilSourceMappingData.get(key));
+                            // Updated values
+                            valueMap.put("Dimension_Transaction", resultSet.getString("Dimension_Transaction"));
+                            valueMap.put("Incremental_Column", icremental_Column);
+                            valueMap.put("Active_Flag", false);
+
+                            innerJoinResultMap.put(key, valueMap);
+                        }
+                        // anti-join with the ilSourceMappingData map (!ilSourceMappingData.containsKey(key))
+                        else {
+                            Map<String, Object> valueMap = new HashMap<>();
+                            valueMap.put("Connection_Id", resultSet.getString("Connection_Id"));
+                            valueMap.put("Schema_Name", resultSet.getString("Schema_Name"));
+                            valueMap.put("Table_Name", resultSet.getString("Table_Name"));
+                            valueMap.put("Column_Name", resultSet.getString("Column_Name"));
+                            valueMap.put("Dimension_Transaction", resultSet.getString("Dimension_Transaction"));
+
+                            antiInnerJoinResultMap.put(key, valueMap);
+                        }
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+
+            // TODO Save innerJoinResultMap into the table; The data doesn't comprise all the fields
+            return antiInnerJoinResultMap;
+        }
+
+        public Map<String, Map<String, Object>> getILSourceMappingInfo(
+                Connection connection,
+                String tableName,
+                String connectionId,
+                String querySchemaCond) {
+
+            String query = "SELECT Connection_Id, Table_Schema, Source_Table_Name, Source_Column_Name, " +
+                    "Dimension_Transaction, Incremental_Column " +
+                    "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                    "WHERE Source_Table_Name = ? AND Connection_Id = ? " + querySchemaCond;
+
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, tableName);
+                preparedStatement.setString(2, connectionId);
+
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String key = String.join("_",
+                                resultSet.getString("Connection_Id"),
+                                resultSet.getString("Table_Schema"),
+                                resultSet.getString("Source_Table_Name"),
+                                resultSet.getString("Source_Column_Name"));
+
+                        Map<String, Object> valueMap = new HashMap<>();
+                        valueMap.put("Dimension_Transaction", resultSet.getString("Dimension_Transaction"));
+                        valueMap.put("Incremental_Column", resultSet.getString("Incremental_Column"));
+
+                        resultMap.put(key, valueMap);
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace(); // Log or handle the exception as needed
+            }
+
+            return resultMap;
+        }
+
+        public Map<String, Map<String, Object>> getSourceMetadata(Connection connection, String tableName, String connectionId, String querySchemaCond) throws SQLException {
+            // Define the query using StringBuilder for compactness
+            StringBuilder querySourceMetadata = new StringBuilder();
+            querySourceMetadata.append("SELECT ")
+                        .append("`Connection_Id`, ").append("`TABLE_SCHEMA`, ").append(".`Table_Name`, ").append(".`Column_Name`, ")
+                        .append("LOWER(Data_Type) AS Data_Type, ")
+                        .append("`PK_Column_Name`, ").append("`PK_Constraint`, ")
+                        .append("`FK_Column_Name`, ").append("`FK_Constraint`, ")
+                        .append("`Prefix_Suffix_Flag`, ").append("`Prefix_Suffix`, ")
+                        .append("`Added_Date`, ").append("`Added_User`, ").append("`Updated_Date`, ").append("`Updated_User`, ")
+                        .append("CASE WHEN Character_Max_Length < 0 THEN `Character_Max_Length` ")
+                        .append("WHEN Data_Type LIKE '%char%' AND Character_Max_Length < 7 THEN '7' ELSE `Character_Max_Length` END AS Character_Max_Length, ")
+                        .append("`Character_Octet_Length`, ")
+                        .append("`Numeric_Precision`, ")
+                        .append("CASE WHEN `Numeric_Scale` IS NULL THEN Numeric_Precision_Radix ELSE Numeric_Scale END AS Numeric_Scale ")
+                        .append("FROM `ELT_Source_Metadata` ")
+                        .append("WHERE Table_Name = ? AND Connection_Id = ? ")
+                        .append(querySchemaCond); // Add dynamic schema condition
+        
+                        // Query for ELT_Source_Metadata from other source
+            StringBuilder querySourceMetadataDummy = new StringBuilder();
+            querySourceMetadata.append("SELECT Connection_Id, TABLE_SCHEMA, Table_Name, Column_Name, ")
+                               .append("LOWER(Data_Type) AS Data_Type, PK_Column_Name, PK_Constraint, ")
+                               .append("FK_Column_Name, FK_Constraint, Prefix_Suffix_Flag, Prefix_Suffix, ")
+                               .append("Added_Date, Added_User, Updated_Date, Updated_User, ")
+                               .append("CASE ")
+                               .append("    WHEN Character_Max_Length < 0 THEN Character_Max_Length ")
+                               .append("    WHEN Data_Type LIKE '%char%' AND Character_Max_Length < 7 THEN 7 ")
+                               .append("    ELSE Character_Max_Length ")
+                               .append("END AS Character_Max_Length, ")
+                               .append("Character_Octet_Length, Numeric_Precision, ")
+                               .append("CASE ")
+                               .append("    WHEN Numeric_Scale IS NULL THEN Numeric_Precision_Radix ")
+                               .append("    ELSE Numeric_Scale ")
+                               .append("END AS Numeric_Scale ")
+                               .append("FROM ELT_Source_Metadata ")
+                               .append("WHERE Table_Name = ? ")
+                               .append("AND Connection_Id = ? ")
+                               .append(querySchemaCond);
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(querySourceMetadata.toString())) {
+                preparedStatement.setString(1, tableName);
+                preparedStatement.setString(2, connectionId);
+        
+                ResultSet resultSet = preparedStatement.executeQuery();
+                Map<String, Map<String, Object>> resultMap = new HashMap<>();
+                
+                while (resultSet.next()) {
+                    String connectionIdResult = resultSet.getString("Connection_Id");
+                    String tableSchema = resultSet.getString("TABLE_SCHEMA");
+                    String tableNameResult = resultSet.getString("Table_Name");
+                    String columnName = resultSet.getString("Column_Name");
+        
+                    String key = connectionIdResult + "_" + tableSchema + "_" + tableNameResult + "_" + columnName;
+        
+                    // Put the result set data into the map
+                    Map<String, Object> valueMap = new HashMap<>();
+                    
+                    String dataType = resultSet.getString("Data_Type");
+                    valueMap.put("Source_Data_Type", dataType);
+                    String transformedDataType = getTransformedDataType(dataType);
+                    valueMap.put("Data_Type", transformedDataType);
+
+                    valueMap.put("Connection_Id", resultSet.getString("Connection_Id"));
+                    valueMap.put("TABLE_SCHEMA", resultSet.getString("TABLE_SCHEMA"));
+                    valueMap.put("Table_Name", resultSet.getString("Table_Name"));
+                    valueMap.put("Column_Name", resultSet.getString("Column_Name"));
+
+                    //valueMap.put("Data_Type", resultSet.getString("LOWER(Data_Type)"));
+                    valueMap.put("PK_Column_Name", resultSet.getString("PK_Column_Name"));
+                    valueMap.put("PK_Constraint", resultSet.getString("PK_Constraint"));
+                    valueMap.put("FK_Column_Name", resultSet.getString("FK_Column_Name"));
+                    valueMap.put("FK_Constraint", resultSet.getString("FK_Constraint"));
+                    valueMap.put("Prefix_Suffix_Flag", resultSet.getString("Prefix_Suffix_Flag"));
+                    valueMap.put("Prefix_Suffix", resultSet.getString("Prefix_Suffix"));
+                    valueMap.put("Added_Date", resultSet.getTimestamp("Added_Date"));
+                    valueMap.put("Added_User", resultSet.getString("Added_User"));
+                    valueMap.put("Updated_Date", resultSet.getTimestamp("Updated_Date"));
+                    valueMap.put("Updated_User", resultSet.getString("Updated_User"));
+                    valueMap.put("Character_Max_Length", resultSet.getInt("Character_Max_Length"));
+                    valueMap.put("Character_Octet_Length", resultSet.getInt("Character_Octet_Length"));
+                    valueMap.put("Numeric_Precision", resultSet.getInt("Numeric_Precision"));
+                    valueMap.put("Numeric_Scale", resultSet.getInt("Numeric_Scale"));
+        
+                    // Add the key-value pair to the map
+                    resultMap.put(key, valueMap);
+                }
+                return resultMap;
+            }
+        }
+
+        // Original but difficult to maintaim
+
+        // private void getTransformedDataType(String dataType) {
+        //     dataType = (dataType.equals("smallidentity") || dataType.equals("identity") ||
+        //             dataType.equals("bigidentity") || dataType.equals("ubigint"))
+        //                     ? "bigint"
+        //                     : (dataType.contains("float")) ? "float"
+        //                             : (dataType.equals("longvarbinary")
+        //                                     || dataType.contains("longvarchar"))
+        //                                             ? "blob"
+        //                                             : (dataType.contains("integer")) ? "int"
+        //                                                     : (dataType.contains("numeric")) ? "numeric"
+        //                                                             : (dataType.contains("tinyint"))
+        //                                                                     ? "tinyint"
+        //                                                                     : (dataType
+        //                                                                             .contains("smallint"))
+        //                                                                                     ? "smallint"
+        //                                                                                     : (dataType.contains("currency")) ? "decimal" : dataType;
+        // }
+        
+        private String getTransformedDataType(String dataType) {
+            if (dataType.equals("smallidentity") || dataType.equals("identity") ||
+                dataType.equals("bigidentity") || dataType.equals("ubigint")) {
+                dataType = "bigint";
+            } else if (dataType.contains("float")) {
+                dataType = "float";
+            } else if (dataType.equals("longvarbinary") || dataType.contains("longvarchar")) {
+                dataType = "blob";
+            } else if (dataType.contains("integer")) {
+                dataType = "int";
+            } else if (dataType.contains("numeric")) {
+                dataType = "numeric";
+            } else if (dataType.contains("tinyint")) {
+                dataType = "tinyint";
+            } else if (dataType.contains("smallint")) {
+                dataType = "smallint";
+            } else if (dataType.contains("currency")) {
+                dataType = "decimal";
+            }
+
+            return dataType;
+        }
+        
+        public Map<String, Map<String, Object>> leftOuterJoin(
+                Map<String, Map<String, Object>> mainData,
+                Map<String, Map<String, Object>> lookupData) {
+
+            Map<String, Map<String, Object>> result = new HashMap<>();
+            Map<String, Object> resultMap = new HashMap<>();
+
+            for (Map.Entry<String, Map<String, Object>> entry : mainData.entrySet()) {
+                String mainKey = entry.getKey();
+                Map<String, Object> mainValue = entry.getValue();
+
+                Map<String, Object> lookupMetaData = lookupData.getOrDefault(mainKey, new HashMap<>());
+
+                // If a corresponding key exists in lookup data, perform a left outer join
+                String dataType = (String) lookupMetaData.get("Data_Type");
+                // Map<String, Object> lookupValue = lookupData.getOrDefault(mainKey, new
+                // HashMap<>());
+                // Retrieve the lookup value
+                Map<String, Object> lookupDataTypesCoverssions = lookupData.getOrDefault(dataType, new HashMap<>());
+
+                resultMap.putAll(lookupMetaData);
+                resultMap.putAll(mainValue);
+                // Put the joined data (main value + lookup value) into the result map
+                Map<String, Object> resultValue = new HashMap<>(mainValue);
+                resultValue.put("lookup_value", lookupMetaData); // Example key for lookup value
+
+                Map<String, Object> outputMap = new HashMap<>();
+                outputMap.put("Connection_Id", mainValue.get("Connection_Id"));
+                outputMap.put("Table_Name", mainValue.get("Table_Name"));
+                outputMap.put("Column_Name", mainValue.get("Column_Name"));
+
+                Integer maxLength = (Integer) lookupMetaData.get("Character_Max_Length");
+                int characterMaxLength = characterMaxLength(maxLength);
+                String ilDataType = getIlDataType(mainValue, characterMaxLength);
+                ilDataType = (maxLength == null) ? ilDataType
+                        : (maxLength == -1) ? "text" : ilDataType;
+                outputMap.put("Data_Type", ilDataType);
+
+                outputMap.put("TABLE_SCHEMA", lookupMetaData.get("TABLE_SCHEMA"));
+                outputMap.put("IL_Data_Type", lookupMetaData.get("Connection_Id"));
+                outputMap.put("PK_Column_Name", lookupMetaData.get("PK_Column_Name"));
+                outputMap.put("PK_Constraint", lookupMetaData.get("PK_Constraint"));
+                outputMap.put("FK_Column_Name", lookupMetaData.get("FK_Column_Name"));
+                outputMap.put("FK_Constraint", lookupMetaData.get("FK_Constraint"));
+                outputMap.put("Prefix_Suffix_Flag", lookupMetaData.get("Prefix_Suffix_Flag"));
+                outputMap.put("Prefix_Suffix", lookupMetaData.get("Prefix_Suffix"));
+
+                outputMap.put("Schema_Name", mainValue.get("Schema_Name"));
+                outputMap.put("Dimension_Transaction", mainValue.get("Dimension_Transaction"));
+
+                outputMap.put("Added_Date", ""); // TODO
+                outputMap.put("Added_User", ""); // TODO
+                outputMap.put("Updated_Date", ""); // TODO
+                outputMap.put("Updated_User", ""); // TODO
+
+                result.put(mainKey, resultValue);
+            }
+
+            return result;
+        }
+
+        private int characterMaxLength(Integer maxLength) {
+            //Integer characterMaxLength = Integer.parseInt(len);
+            int length =  (maxLength != null) ? 2 * maxLength : 0;
+            return (length > 255) ? 255 : length; 
+        }
+
+        private String getIlDataType(Map<String, Object> value, int maxLength) {
+            String dataType = (String) value.get("Data_Type");
+            String defaultFlag = (String) value.get("Default_Flag");
+            Integer numericPrecision = (Integer) value.get("Numeric_Precision");
+            Integer numericScale = (Integer) value.get("Numeric_Scale");
+            Integer characterMaxLength = (Integer) value.get("Character_Max_Length"); // transformed
+
+            if (defaultFlag == null) {
+                return dataType;
+            }
+            if ("y".equalsIgnoreCase(defaultFlag)) {
+                return (String) value.get("IL_Data_Type");
+            }
+            if ("decimal".equals(dataType) || "numeric".equals(dataType) || "number".equals(dataType) || "double".equals(dataType)) {
+                return String.format("decimal(%d,%d)", numericPrecision, numericScale);
+            }
+            if (dataType.contains("int")) {
+                return String.format("%s(%d)", dataType, numericPrecision);
+            }
+            if ("varchar".equals(dataType) || "char".equals(dataType) || "mediumtext".equals(dataType)) {
+                return String.format("%s(%d)", dataType, characterMaxLength); // TODO
+            }
+            if ("varchar2".equals(dataType) || "nvarchar".equals(dataType)) {
+                return String.format("varchar(%d)", maxLength);
+            }
+            if ("nchar".equals(dataType)) {
+                return String.format("char(%d)", maxLength);
+            }
+            if (dataType.contains("bit")) {
+                return "bit(1)";
+            }
+            if ("float".equals(dataType)) {
+                return String.format("float(%d,%d)", numericPrecision, numericScale);
+            }
+            return dataType;
+        }
         // Navin
         // FAS Unite comp 2  2
-        public static Map<String, Object> executeQueryAndBuildMapWithTransaction(
+        // Saved Comp1 - start Query
+        // SaVED cOMP2 - 2
+        public Map<String, Object> executeQueryAndBuildMapWithTransaction(
                 Connection connection,
                 String connectionId,
                 String tableName,
@@ -1428,7 +1780,33 @@ public class DWTableMappingInfo {
             }
             return resultMap;
         }
-    
+        // Navin
+        // FAS - Data Type Conversions - Outer joined but not effective in FAS
+        // SAVED - used and effective
+        public Map<String, Map<String, Object>> getDatatypeConversions(Connection connection) {
+            String query = "SELECT Source_Data_Type, IL_Data_Type, Default_Flag, Precision_Flag, Default_Length " +
+                           "FROM ELT_Datatype_Conversions";
+        
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                 ResultSet resultSet = preparedStatement.executeQuery()) {
+                while (resultSet.next()) {
+                    String sourceDataType = resultSet.getString("Source_Data_Type");
+        
+                    Map<String, Object> valueMap = new HashMap<>();
+                    valueMap.put("IL_Data_Type", resultSet.getString("IL_Data_Type"));
+                    valueMap.put("Default_Flag", resultSet.getString("Default_Flag"));
+                    valueMap.put("Precision_Flag", resultSet.getString("Precision_Flag"));
+                    valueMap.put("Default_Length", resultSet.getInt("Default_Length"));
+        
+                    resultMap.put(sourceDataType, valueMap);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
         private static List<Map<String, Object>> joinAndCalculateIlDataType(Connection connection, List<Map<String, Object>> OUT) throws SQLException {
             String tableName = context.get("Table_Name");
             String connectionId = context.get("CONNECTION_ID");
@@ -1857,6 +2235,63 @@ public class DWTableMappingInfo {
             }
         }
         
+        // Navin
+        // Common to Both iterations at the end
+        public boolean updateDimentionTransaction(Connection connection, String dimTransType, String dwTableName,
+                String connectionId, String querySchemaCond) {
+            if (connection == null || dimTransType == null || dwTableName == null || connectionId == null) {
+                throw new IllegalArgumentException("Input parameters must not be null");
+            }
+
+            String query = "UPDATE ELT_IL_Source_Mapping_Info_Saved " +
+                    "SET Dimension_Transaction=? " +
+                    "WHERE IL_Table_Name=? AND Connection_Id=? " +
+                    (querySchemaCond != null ? querySchemaCond : "");
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, dimTransType);
+                preparedStatement.setString(2, dwTableName);
+                preparedStatement.setString(3, connectionId);
+
+                int rowsAffected = preparedStatement.executeUpdate();
+                return rowsAffected > 0;
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+
+        // Navin
+        // Applicable to both iterations - Second delte operation outside
+
+        // Funciton remae needed
+
+        public boolean executeDeleteQuery(Connection connection, String connectionId, String tableName, String querySchemaCond) {
+            if (connection == null || connectionId == null || tableName == null) {
+                throw new IllegalArgumentException("Input parameters must not be null");
+            }
+            String query = "DELETE FROM ELT_IL_Source_Mapping_Info_Saved " +
+                        "WHERE Active_Flag=1 " +
+                        "AND (Constant_Insert_Column IS NULL OR " +
+                        "     (Constant_Insert_Column <> 'Y' OR IL_Column_Name = 'DataSource_Id') " +
+                        "     AND Constraints <> 'SK,PK') " +
+                        "AND Connection_Id = ? " +
+                        "AND Source_Table_Name = ? " +
+                        (querySchemaCond != null ? querySchemaCond : "");
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, connectionId);
+                preparedStatement.setString(2, tableName);
+
+                int rowsAffected = preparedStatement.executeUpdate();
+                return rowsAffected > 0;
+            } catch (SQLException e) {
+                e.printStackTrace(); // Log the exception or handle it appropriately
+                return false; // Return false in case of failure
+            }
+        }
+
+
         private static void bulk(Connection connection, List<Map<String, Object>> row1) throws SQLException, IOException {
             String clientId = context.get("CLIENT_ID");
             String packageId = context.get("PACKAGE_ID");
