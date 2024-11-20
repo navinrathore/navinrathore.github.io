@@ -1108,11 +1108,12 @@ public class DWTableMappingInfo {
         // SAVED UNite part 2
         // Used in SAved FAS also same query
 
-        public static Map<String, Object> getConstantAnvizentFields(
+        public static List <Map<String, Object>> getConstantAnvizentFields(
                 Connection connection,
                 String dataSourceName,
                 String tableName,
                 String companyId) {
+                    // ADD TODO schemaName and connectionID as input
 
             String query = "SELECT DISTINCT " +
                     "'DataSource_Id' AS IL_Column_Name, " +
@@ -1142,16 +1143,26 @@ public class DWTableMappingInfo {
                     "'" + companyId + "' AS Constant_Insert_Value " +
                     "FROM `ELT_Selective_Source_Metadata`";
 
-            Map<String, Object> resultMap = new HashMap<>();
+            List<Map<String, Object>> resultList = new ArrayList<>();
 
             try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
                 try (ResultSet resultSet = preparedStatement.executeQuery()) {
                     while (resultSet.next()) {
-                        String key = resultSet.getString("IL_Column_Name") + "_"
-                                + resultSet.getString("Constant_Insert_Column");
+                        // String key = resultSet.getString("IL_Column_Name") + "_"
+                        //         + resultSet.getString("Constant_Insert_Column");
+
+                        String key = resultSet.getString("Connection_Id") + "_"
+                                + resultSet.getString("TABLE_SCHEMA") + "_"
+                                + tableName;
+
                         Map<String, Object> transformedRow = new HashMap<>();
 
                         // Here, you can apply your transformations
+                        transformedRow.put("Connection_Id", resultSet.getString("IL_Column_Name")); // TODO 
+                        transformedRow.put("TABLE_SCHEMA", resultSet.getString("IL_Column_Name")); //TODO
+                        transformedRow.put("Source_Table_Name", resultSet.getString("IL_Column_Name")); //TO
+                        transformedRow.put("Active_Flag", true); //TODO
+            // From Query
                         transformedRow.put("IL_Column_Name", resultSet.getString("IL_Column_Name"));
                         transformedRow.put("IL_Data_Type", resultSet.getString("IL_Data_Type"));
                         transformedRow.put("Source_Data_Type", resultSet.getString("Source_Data_Type"));
@@ -1160,7 +1171,7 @@ public class DWTableMappingInfo {
                         transformedRow.put("Constant_Insert_Column", resultSet.getString("Constant_Insert_Column"));
                         transformedRow.put("Constant_Insert_Value", resultSet.getObject("Constant_Insert_Value"));
 
-                        resultMap.put(key, transformedRow); // Map key can be customized based on your transformation
+                        resultList.add(transformedRow); // Map key can be customized based on your transformation
                                                             // needs
                     }
                 }
@@ -1168,8 +1179,7 @@ public class DWTableMappingInfo {
                 e.printStackTrace();
                 // Handle exception appropriately (logging, rethrowing, etc.)
             }
-
-            return resultMap;
+            return resultList;
         }
 
         // Navin - Saved_FAS
@@ -1407,6 +1417,8 @@ public class DWTableMappingInfo {
             return resultMap;
         }
 
+        // Navin Saved
+        // for tMap_1 t (lookup)
         public Map<String, Map<String, Object>> getSourceMetadata(Connection connection, String tableName, String connectionId, String querySchemaCond) throws SQLException {
             // Define the query using StringBuilder for compactness
             StringBuilder querySourceMetadata = new StringBuilder();
@@ -1426,7 +1438,7 @@ public class DWTableMappingInfo {
                         .append("WHERE Table_Name = ? AND Connection_Id = ? ")
                         .append(querySchemaCond); // Add dynamic schema condition
         
-                        // Query for ELT_Source_Metadata from other source
+                        // Query for ELT_Source_Metadata from other source TBD deleted
             StringBuilder querySourceMetadataDummy = new StringBuilder();
             querySourceMetadata.append("SELECT Connection_Id, TABLE_SCHEMA, Table_Name, Column_Name, ")
                                .append("LOWER(Data_Type) AS Data_Type, PK_Column_Name, PK_Constraint, ")
@@ -1541,28 +1553,33 @@ public class DWTableMappingInfo {
             return dataType;
         }
         
-        public Map<String, Map<String, Object>> leftOuterJoin(
-                Map<String, Map<String, Object>> mainData,
-                Map<String, Map<String, Object>> lookupData) {
+        // Navin SAVED
+        // main flow - tMAp1;
+        // nOT CALLED YET
+        public List<Map<String, Object>> JoinWithMetadataAndDataTypeConversions(
+                Map<String, Map<String, Object>> mainDataMap,
+                Map<String, Map<String, Object>> lookupDataMap,
+                Map<String, Map<String, Object>> conversionDataTypesMap) {
 
-            Map<String, Map<String, Object>> result = new HashMap<>();
-            Map<String, Object> resultMap = new HashMap<>();
+            //Map<String, Map<String, Object>> result = new HashMap<>();
+            //Map<String, Object> resultMap = new HashMap<>();
+            List<Map<String, Object>> resultList = new ArrayList<>();
 
-            for (Map.Entry<String, Map<String, Object>> entry : mainData.entrySet()) {
+            for (Map.Entry<String, Map<String, Object>> entry : mainDataMap.entrySet()) {
                 String mainKey = entry.getKey();
                 Map<String, Object> mainValue = entry.getValue();
 
-                Map<String, Object> lookupMetaData = lookupData.getOrDefault(mainKey, new HashMap<>());
+                Map<String, Object> lookupMetaData = lookupDataMap.getOrDefault(mainKey, new HashMap<>());
 
                 // If a corresponding key exists in lookup data, perform a left outer join
                 String dataType = (String) lookupMetaData.get("Data_Type");
                 // Map<String, Object> lookupValue = lookupData.getOrDefault(mainKey, new
                 // HashMap<>());
                 // Retrieve the lookup value
-                Map<String, Object> lookupDataTypesCoverssions = lookupData.getOrDefault(dataType, new HashMap<>());
+                Map<String, Object> dataTypesConversions = conversionDataTypesMap.getOrDefault(dataType, new HashMap<>());
 
-                resultMap.putAll(lookupMetaData);
-                resultMap.putAll(mainValue);
+                // resultMap.putAll(lookupMetaData);
+                // resultMap.putAll(mainValue);
                 // Put the joined data (main value + lookup value) into the result map
                 Map<String, Object> resultValue = new HashMap<>(mainValue);
                 resultValue.put("lookup_value", lookupMetaData); // Example key for lookup value
@@ -1574,7 +1591,8 @@ public class DWTableMappingInfo {
 
                 Integer maxLength = (Integer) lookupMetaData.get("Character_Max_Length");
                 int characterMaxLength = characterMaxLength(maxLength);
-                String ilDataType = getIlDataType(mainValue, characterMaxLength);
+
+                String ilDataType = getIlDataType(lookupMetaData, dataTypesConversions, characterMaxLength);
                 ilDataType = (maxLength == null) ? ilDataType
                         : (maxLength == -1) ? "text" : ilDataType;
                 outputMap.put("Data_Type", ilDataType);
@@ -1596,10 +1614,11 @@ public class DWTableMappingInfo {
                 outputMap.put("Updated_Date", ""); // TODO
                 outputMap.put("Updated_User", ""); // TODO
 
-                result.put(mainKey, resultValue);
+                resultList.add(outputMap);
+                //result.put(mainKey, resultValue);
             }
 
-            return result;
+            return resultList;
         }
 
         private int characterMaxLength(Integer maxLength) {
@@ -1608,18 +1627,21 @@ public class DWTableMappingInfo {
             return (length > 255) ? 255 : length; 
         }
 
-        private String getIlDataType(Map<String, Object> value, int maxLength) {
-            String dataType = (String) value.get("Data_Type");
-            String defaultFlag = (String) value.get("Default_Flag");
-            Integer numericPrecision = (Integer) value.get("Numeric_Precision");
-            Integer numericScale = (Integer) value.get("Numeric_Scale");
-            Integer characterMaxLength = (Integer) value.get("Character_Max_Length"); // transformed
+        // Navin t_map 1 
+        // Saved
+        private String getIlDataType(Map<String, Object> metadata, Map<String, Object> dataTypes, int maxLength) {
+            String dataType = (String) metadata.get("Data_Type");
+            Integer numericPrecision = (Integer) metadata.get("Numeric_Precision");
+            Integer numericScale = (Integer) metadata.get("Numeric_Scale");
+            Integer characterMaxLength = (Integer) metadata.get("Character_Max_Length"); // transformed
+
+            String defaultFlag = (String) dataTypes.get("Default_Flag");
 
             if (defaultFlag == null) {
                 return dataType;
             }
             if ("y".equalsIgnoreCase(defaultFlag)) {
-                return (String) value.get("IL_Data_Type");
+                return (String) dataTypes.get("IL_Data_Type");
             }
             if ("decimal".equals(dataType) || "numeric".equals(dataType) || "number".equals(dataType) || "double".equals(dataType)) {
                 return String.format("decimal(%d,%d)", numericPrecision, numericScale);
@@ -1647,8 +1669,8 @@ public class DWTableMappingInfo {
         // Navin
         // FAS Unite comp 2  2
         // Saved Comp1 - start Query
-        // SaVED cOMP2 - 2
-        public Map<String, Object> executeQueryAndBuildMapWithTransaction(
+        // SaVED cOMP2 - 2  (Differnce is input querySchemaCondition vs querySchemaCondition1)
+        public Map<String, String> executeQueryAndBuildMapWithTransaction(
                 Connection connection,
                 String connectionId,
                 String tableName,
@@ -1665,7 +1687,7 @@ public class DWTableMappingInfo {
                     "AND `Connection_Id` = ? " +
                     querySchemaCondition;
 
-            Map<String, Object> resultMap = new HashMap<>();
+            Map<String, String> resultMap = new HashMap<>();
             try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
                 preparedStatement.setString(1, tableName);
                 preparedStatement.setString(2, connectionId);
@@ -1674,7 +1696,7 @@ public class DWTableMappingInfo {
                         String key = resultSet.getString("Connection_Id") + "_" +
                                 resultSet.getString("Schema_Name") + "_" +
                                 resultSet.getString("Table_Name");
-                        Object value = resultSet.getObject("Dimension_Transaction");
+                        String value = (String) resultSet.getObject("Dimension_Transaction");
                         resultMap.put(key, value);
                     }
                 }
@@ -1687,7 +1709,8 @@ public class DWTableMappingInfo {
 
         // Navin FAS comp2 tmap3
         // Settings 
-        public static Map<String, Object> getActiveAliasValues(
+        // Saved Comp2 part 3 (querySchemaCondition1 is called )
+        public static Map<String, String> getActiveAliasValues(
                 Connection connection,
                 String connectionId,
                 String querySchemaCondition) {
@@ -1702,7 +1725,7 @@ public class DWTableMappingInfo {
                     "AND `Connection_Id` = ? " +
                     querySchemaCondition;
 
-            Map<String, Object> resultMap = new HashMap<>();
+            Map<String, String> resultMap = new HashMap<>();
 
             try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
                 preparedStatement.setString(1, connectionId);
@@ -1710,7 +1733,7 @@ public class DWTableMappingInfo {
                 try (ResultSet resultSet = preparedStatement.executeQuery()) {
                     while (resultSet.next()) {
                         String key = resultSet.getString("Connection_Id") + "_" + resultSet.getString("Schema_Name");
-                        Object value = resultSet.getObject("Setting_Value");
+                        String value = (String) resultSet.getObject("Setting_Value");
                         resultMap.put(key, value);
                     }
                 }
@@ -1912,8 +1935,304 @@ public class DWTableMappingInfo {
                 return row;
             }).collect(Collectors.toList());
         }
+        // Navin
+        // Saved -> Settings comp 1
+        public Map<String, String> getActiveAliasValuesTables(Connection connection, String connectionId, String querySchemaCond1) throws SQLException {
+            // Define the SQL query using StringBuilder for readability
+            StringBuilder queryBuilder = new StringBuilder();
+            queryBuilder.append("SELECT ")
+                        .append("Connection_Id, ")
+                        .append("Schema_Name, ")
+                        .append("Setting_Value ")
+                        .append("FROM ELT_IL_Settings_Info ")
+                        .append("WHERE Settings_Category = 'Suffix' ")
+                        .append("AND Active_Flag = '1' ")
+                        .append("AND Connection_Id = '").append(connectionId).append("' ")
+                        .append(querySchemaCond1);
+            String query = queryBuilder.toString();
+        
+            Map<String, String> resultMap = new HashMap<>();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                 ResultSet resultSet = preparedStatement.executeQuery()) {
+        
+                while (resultSet.next()) {
+                    // Construct the key using Connection_Id and Schema_Name
+                    String key = resultSet.getString("Connection_Id") + "_" + resultSet.getString("Schema_Name");
+                    // Get the Setting_Value
+                    String value = resultSet.getString("Setting_Value");
+        
+                    // Store in the map
+                    resultMap.put(key, value);
+                }
+            }
+            return resultMap;
+        }
 
         
+        // NAVIN
+        // FK_Constraint_LKP  Saved aggreagtion logic
+        public Map<String, Map<String, Object>> getAggregatedFKConstraint(Connection connection,
+                String tableName,
+                String connectionId,
+                String querySchemaCond,
+                String querySchemaCond1) throws SQLException {
+            StringBuilder query = new StringBuilder();
+            query.append("SELECT ")
+                    .append("src.Connection_Id, ")
+                    .append("src.TABLE_SCHEMA, ")
+                    .append("src.Table_Name, ")
+                    .append("src.Column_Name, ")
+                    .append("src.PK_Column_Name AS FK_Column_Name, ")
+                    .append("src.PK_Constraint AS FK_Constraint ")
+                    .append("FROM ELT_Source_Metadata src ")
+                    .append("INNER JOIN ELT_Selective_Source_Metadata sel ")
+                    .append("ON src.Connection_Id = sel.Connection_Id ")
+                    .append("AND src.TABLE_SCHEMA = sel.Schema_Name ")
+                    .append("AND src.Table_Name = sel.Table_Name ")
+                    .append("AND src.Column_Name = sel.Column_Name ")
+                    .append("WHERE src.PK_Constraint = 'yes' ")
+                    .append("AND src.Table_Name = '").append(tableName).append("' ")
+                    .append("AND src.Connection_Id = '").append(connectionId).append("' ")
+                    .append(querySchemaCond).append(" ")
+                    .append("AND sel.IsFileUpload != '1' ")
+                    .append("AND sel.Table_Name = '").append(tableName).append("' ")
+                    .append("AND sel.Connection_Id = '").append(connectionId).append("' ")
+                    .append(querySchemaCond1).append(" ")
+                    .append("AND sel.Dimension_Transaction = 'T'");
+
+            Map<String, Map<String, Object>> aggregatedResults = new HashMap<>();
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query.toString());
+                    ResultSet resultSet = preparedStatement.executeQuery()) {
+
+                while (resultSet.next()) {
+                    String connectionIdResult = resultSet.getString("Connection_Id");
+                    String tableSchema = resultSet.getString("TABLE_SCHEMA");
+                    String columnName = resultSet.getString("Column_Name");
+                    String tableNameResult = resultSet.getString("Table_Name");
+                    String fkColumnName = resultSet.getString("FK_Column_Name");
+                    String fkConstraint = resultSet.getString("FK_Constraint");
+
+                    String key = connectionIdResult + "_" + tableSchema + "_" + columnName;
+
+                    Map<String, Object> groupData = aggregatedResults.getOrDefault(key, new HashMap<>());
+
+                    // Aggregate Table_Name as a comma-separated value
+                    String aggregatedTableNames = (String) groupData.getOrDefault("Table_Name", "");
+                    if (!aggregatedTableNames.isEmpty()) {
+                        aggregatedTableNames += ", ";
+                    }
+                    aggregatedTableNames += tableNameResult;
+
+                    // Update the group data with the last FK_Column_Name and FK_Constraint
+                    groupData.put("Table_Name", aggregatedTableNames);
+                    groupData.put("FK_Column_Name", fkColumnName);
+                    groupData.put("FK_Constraint", fkConstraint);
+
+                    // Put the updated group data back into the aggregated results map
+                    aggregatedResults.put(key, groupData);
+                }
+            }
+            return aggregatedResults;
+        }
+
+        // Navin - tmap 2
+        // Saved main flow comp1 -  output
+        public Map<String, Map<String, Object>> processJoinedData(
+                List<Map<String, Object>> metadataDataTypeList,
+                Map<String, String> aliasValuesTables,
+                Map<String, Map<String, Object>> aggregatedQueryResults) {
+
+            // Result map to store final joined data
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+
+            // Iterate over the metadata and data type conversions list
+            for (Map<String, Object> metadataEntry : metadataDataTypeList) {
+                // Extract the keys from metadataEntry
+                String connectionId = (String) metadataEntry.get("Connection_Id");
+                String schemaName = (String) metadataEntry.get("Table_Schema");
+                String tableName = (String) metadataEntry.get("Table_Name");
+                String columnName = (String) metadataEntry.get("Column_Name");
+
+                // Form the key for joining with aliasValuesTables
+                String aliasKey = connectionId + "_" + schemaName;
+
+                // Form the key for joining with aggregatedQueryResults
+                // Navin tableName removed
+                String aggregateKey = connectionId + "_" + schemaName + "_" + columnName;
+                // String aggregateKey = connectionId + "_" + schemaName + "_" + tableName + "_" + columnName;
+
+                // Create a map to hold joined data
+                Map<String, Object> joinedData = new HashMap<>(metadataEntry);
+
+                // LEFT OUTER JOIN with aliasValuesTables using getOrDefault
+                // joinedData.put("Alias_Setting_Value", aliasValuesTables.getOrDefault(aliasKey, null));
+                String aliasSettingValue = aliasValuesTables.getOrDefault(aliasKey, null);
+
+                // LEFT OUTER JOIN with aggregatedQueryResults using getOrDefault
+                Map<String, Object> aggregateData = aggregatedQueryResults.getOrDefault(aggregateKey, new HashMap<>());
+                for (Map.Entry<String, Object> entry : aggregateData.entrySet()) {
+                    joinedData.put(entry.getKey(), entry.getValue());
+                }
+
+                // Transformations
+                String pkConstraint = metadataEntry.get("PK_Constraint") == null ? ""
+                        : metadataEntry.get("PK_Constraint").equals("yes") ? "PK" : "";
+
+                
+                String col = (String) metadataEntry.get("PK_Column_Name");
+                String pkColumnName = col == null || col.equals("NULL") || col.isEmpty()
+                        ? "" : col;
+
+                String ilTableName = aliasSettingValue == null
+                        ? metadataEntry.get("Table_Name").toString()
+                        : metadataEntry.get("Table_Name") + "_" + aliasSettingValue; // TODO review Check
+
+                String ilColumnName = metadataEntry.get("Column_Name").toString();
+
+                String fkConstraint = aggregateData.getOrDefault("FK_Constraint", "").toString().isEmpty() ? "" : "FK";
+
+                String fkColumnName = aggregateData.getOrDefault("FK_Column_Name", "").toString().isEmpty()
+                        ? "" : aggregatedQueryResults.get("FK_Column_Name").toString();
+
+
+                //Map<String, Object> joinedData = new HashMap<>();
+                // TODO first four ar the keys ...
+                joinedData.put("Connection_Id", metadataEntry.get("Connection_Id"));
+                joinedData.put("TABLE_SCHEMA", metadataEntry.get("TABLE_SCHEMA"));
+                joinedData.put("IL_Table_Name", ilTableName); // Transformed from earlier step
+                joinedData.put("IL_Column_Name", ilColumnName); // Transformed from earlier step
+                joinedData.put("IL_Data_Type", metadataEntry.get("IL_Data_Type"));
+                joinedData.put("Constraints", pkConstraint); // Transformed from earlier step
+                joinedData.put("Source_Table_Name", metadataEntry.get("Table_Name"));
+                joinedData.put("Source_Column_Name", metadataEntry.get("Column_Name"));
+                joinedData.put("Source_Data_Type", metadataEntry.get("Data_Type"));
+                joinedData.put("PK_Constraint", pkConstraint); // Transformed from earlier step
+                joinedData.put("PK_Column_Name", pkColumnName); // Transformed from earlier step
+                joinedData.put("FK_Constraint", fkConstraint); // Transformed from earlier step
+                joinedData.put("FK_Column_Name", fkColumnName); // Transformed from earlier step
+                joinedData.put("Constant_Insert_Column", null);
+                joinedData.put("Constant_Insert_Value", null);
+                joinedData.put("Dimension_Transaction", metadataEntry.get("Dimension_Transaction"));
+                joinedData.put("Dimension_Key", null);
+                joinedData.put("Dimension_Name", null);
+                joinedData.put("Dimension_Join_Condition", null);
+                joinedData.put("Incremental_Column", 
+                    metadataEntry.get("Dimension_Transaction").equals("T") ? "Y" : null);
+                joinedData.put("Isfileupload", 0);
+                joinedData.put("File_Id", 0);
+                joinedData.put("Column_Type", "Source");
+                joinedData.put("Active_Flag", true);
+                joinedData.put("Added_Date", "TalendDate.getCurrentDate()"); // TODO
+                joinedData.put("Added_User", "ETL Admin"); // TODO
+                joinedData.put("Updated_Date", "TalendDate.getCurrentDate()"); // TODO 
+                joinedData.put("Updated_User", "ETL Admin"); // TODO
+                        
+                // // Perform LEFT OUTER JOIN with aliasValuesTables
+                // if (aliasValuesTables.containsKey(aliasKey)) {
+                //     joinedData.put("Alias_Setting_Value", aliasValuesTables.get(aliasKey));
+                // } else {
+                //     joinedData.put("Alias_Setting_Value", null); // No match, add null
+                // }
+
+                // // Perform LEFT OUTER JOIN with aggregatedQueryResults
+                // if (aggregatedQueryResults.containsKey(aggregateKey)) {
+                //     joinedData.putAll(aggregatedQueryResults.get(aggregateKey)); // Add all matching fields
+                // }
+
+                // Add the joined data to the result map
+                resultMap.put(aggregateKey, joinedData);
+            }
+
+            return resultMap;
+        }
+
+        // Navin
+        // SAVED Comp2 output 
+        public Map<String, Object> processConstantFieldsWithMetadataAndAliases (
+                Connection connection,
+                String dataSourceName,
+                String tableName,
+                String companyId,
+                String connectionId,
+                String querySchemaCondition) {
+
+            // Step 1: Call the functions and retrieve their results
+            List<Map<String, Object>> constantFields = getConstantAnvizentFields(connection, dataSourceName, tableName,
+                    companyId);
+            Map<String, String> transactionData = executeQueryAndBuildMapWithTransaction(connection, connectionId,
+                    tableName, querySchemaCondition);
+            Map<String, String> aliasValues = getActiveAliasValues(connection, connectionId, querySchemaCondition);
+
+            // Step 2: Create the result map
+            Map<String, Object> result = new HashMap<>();
+
+            // Step 3: Iterate over constantFields data and perform LEFT OUTER JOINs
+            for (Map<String, Object> constantEntry : constantFields) {
+                // String key = constantEntry.getKey();
+
+                String sourceTablename = (String) constantEntry.get("Source_Table_Name");
+                String key1 = (String) constantEntry.get("Connection_Id") + "_" // TO connectionID is long
+                + (String) constantEntry.get("TABLE_SCHEMA") + "_"
+                + sourceTablename;
+
+                String key2 = (String) constantEntry.get("Connection_Id") + "_" // TO connectionID is long
+                + (String) constantEntry.get("TABLE_SCHEMA");
+
+                // Map<String, Object> constantData = (Map<String, Object>) constantEntry.getValue();
+
+                // Fetch lookup data using keys, defaulting to empty map if key not found
+                String dimensionTransaction = transactionData.getOrDefault(key1, "");
+                String settingValue = aliasValues.getOrDefault(key2, "");
+
+
+                String ilTableName = (settingValue == null) || settingValue.equals("") ? sourceTablename : sourceTablename + "_" + settingValue;
+
+                // Create a combined map for the current key
+                //Map<String, Object> combinedData = new HashMap<>(constantData);
+
+                Map<String, Object> combinedData = new HashMap<>();
+
+                combinedData.put("Connection_Id", constantEntry.get("Connection_Id"));
+                combinedData.put("TABLE_SCHEMA", constantEntry.get("TABLE_SCHEMA"));
+                combinedData.put("IL_Table_Name", ilTableName); // from the earlier transformation
+                combinedData.put("IL_Column_Name", constantEntry.get("IL_Column_Name"));
+                combinedData.put("IL_Data_Type", constantEntry.get("IL_Data_Type"));
+                combinedData.put("Constraints", constantEntry.get("Constraints"));
+                combinedData.put("Source_Table_Name", null);
+                combinedData.put("Source_Column_Name", null);
+                combinedData.put("Source_Data_Type", constantEntry.get("Source_Data_Type"));
+                combinedData.put("PK_Constraint", constantEntry.get("PK_Constraint"));
+                combinedData.put("PK_Column_Name", null);
+                combinedData.put("FK_Constraint", null);
+                combinedData.put("FK_Column_Name", null);
+                combinedData.put("Constant_Insert_Column", constantEntry.get("Constant_Insert_Column"));
+                combinedData.put("Constant_Insert_Value", constantEntry.get("Constant_Insert_Value"));
+                combinedData.put("Dimension_Transaction", dimensionTransaction); // assuming sm is a valid object
+                combinedData.put("Dimension_Key", null);
+                combinedData.put("Dimension_Name", null);
+                combinedData.put("Dimension_Join_Condition", null);
+                combinedData.put("Incremental_Column", null);
+                combinedData.put("Isfileupload", 0);
+                combinedData.put("File_Id", 0);
+                combinedData.put("Column_Type", "Anvizent");
+                combinedData.put("Active_Flag", constantEntry.get("Active_Flag"));
+                combinedData.put("Added_Date", "TalendDate.getCurrentDate()");
+                combinedData.put("Added_User", "ETL Admin");
+                combinedData.put("Updated_Date", "TalendDate.getCurrentDate()"); // TODO
+                combinedData.put("Updated_User", "ETL Admin");
+
+                // combinedData.putAll(transactionLookup); // Merge transaction data
+                // combinedData.putAll(aliasLookup); // Merge alias data
+
+                // Add combined data to the result map
+                result.put(key, combinedData);
+            }
+
+            return result;
+        }
+
+
         private static List<Map<String, Object>> mergeMetadataAndCalculateConstraints(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
             String connectionId = context.get("CONNECTION_ID");
             String tableName = context.get("Table_Name");
