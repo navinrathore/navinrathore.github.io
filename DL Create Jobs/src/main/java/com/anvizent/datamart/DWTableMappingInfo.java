@@ -30,15 +30,18 @@ import java.util.stream.Stream;
 public class DWTableMappingInfo {
 
 	
-    private static final Map<String, String> context = new HashMap<>();
-    private static final Map<String, Object> globalMap = new HashMap<>();
+    private final Map<String, String> context = new HashMap<>();
+    private final Map<String, Object> globalMap = new HashMap<>();
+
+    // public static void main(String[] args) {
 
     public static void main(String[] args) {
-        loadContext();
-        mainProcess();
+        DWTableMappingInfo dWTableMappingInfo = new DWTableMappingInfo(); // TODO
+        dWTableMappingInfo.loadContext();
+        dWTableMappingInfo.mainProcess();
     }
     
-   public static void initiateJob(Map<String, String> newContext){
+   public void initiateJob(Map<String, String> newContext){
 	   if (newContext == null) {
            throw new IllegalArgumentException("Context cannot be null");
        }
@@ -50,14 +53,14 @@ public class DWTableMappingInfo {
     }
     
 
-    private static void loadContext() {
+    private void loadContext() {
     	 synchronized (context) {
 	    	context.put("APP_HOST", "172.25.25.124:4475");
 			context.put("APP_DBNAME", "Mysql8_2_1009427_appdb");
 			context.put("APP_UN", "Bk16Tt55");
 			context.put("APP_PW", "Tt5526");
-			context.put("Schema_Name", "");
-			context.put("Table_Name","");
+			context.put("Schema_Name", "FGB_1"); // FGB_1, 
+			context.put("Table_Name","Finished_Goods_BOM"); // Finished_Goods_BOM
 			context.put("CONNECTION_ID", "41"); // 2,3,4
 			context.put("DATASOURCENAME","syspro");
 			context.put("CLIENT_ID", "1009427");
@@ -69,7 +72,7 @@ public class DWTableMappingInfo {
     	 }
     }
 
-    private static Connection getDbConnection() {
+    private Connection getDbConnection() {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
             String url = "jdbc:mysql://" + context.get("APP_HOST") + "/" + context.get("APP_DBNAME");
@@ -81,7 +84,7 @@ public class DWTableMappingInfo {
     }
 
     // OK - Yes
-    private static void createQueryConditions() {
+    private void createQueryConditions() {
         String schemaName = context.get("Schema_Name");
         String querySchemaCondition = "";
         String querySchemaCondition1 = "";
@@ -107,7 +110,7 @@ public class DWTableMappingInfo {
      * @param querySchemaCond  The additional schema condition for the query.
      * @return true if the query executes successfully, false otherwise.
      */
-    public static boolean deleteExistingRecordsForSourceTableName(Connection connection, String connectionId, String sourceTableName, String querySchemaCond) {
+    public boolean deleteExistingRecordsForSourceTableName(Connection connection, String connectionId, String sourceTableName, String querySchemaCond) {
         String sql = "DELETE FROM ELT_IL_Source_Mapping_Info_Saved " +
                     "WHERE Active_Flag = 1 " +
                     "AND (Constant_Insert_Column IS NULL " +
@@ -137,7 +140,7 @@ public class DWTableMappingInfo {
      * @param suffixValue The suffix to append to the table name in the query.
      * @return true if the query executes successfully, false otherwise.
      */
-    public static boolean deleteRecordsForColumnTypeAnvizent(Connection connection, String tableName, String suffixValue) {
+    public boolean deleteRecordsForColumnTypeAnvizent(Connection connection, String tableName, String suffixValue) {
         String sql = "DELETE FROM ELT_IL_Source_Mapping_Info_Saved " +
                     "WHERE Column_Type = 'Anvizent' " +
                     "AND IL_Table_Name = ?";
@@ -157,11 +160,11 @@ public class DWTableMappingInfo {
         }
     }
 // TODO for SAved FAS
-    public static boolean deleteRecordsForColumnTypeAnvizent(Connection connection, String tableName) {
+    public boolean deleteRecordsForColumnTypeAnvizent(Connection connection, String tableName) {
         return deleteRecordsForColumnTypeAnvizent(connection, tableName, "");
     }
 
-    private static void deleteRecords(Connection connection) {
+    private void deleteRecords(Connection connection) {
         try (Statement stmt = connection.createStatement()) {
             String connectionId = context.get("CONNECTION_ID");
             String querySchemaCondition = context.get("query_schema_cond");
@@ -190,7 +193,7 @@ public class DWTableMappingInfo {
         }
     }
 
-    private static void mainProcess() {
+    private void mainProcess() {
         Connection connection = getDbConnection();
         if (connection == null) {
             System.out.println("Failed to establish database connection. Exiting.");
@@ -226,7 +229,7 @@ public class DWTableMappingInfo {
 
     
           
-        public static void mainProcessForFlagZero() {
+        public void mainProcessForFlagZero() {
             Connection dbConnection = getDbConnection();
             if (dbConnection == null) {
                 System.out.println("Failed to establish database connection. Exiting.");
@@ -241,8 +244,8 @@ public class DWTableMappingInfo {
                 // Step 2 - iteration
 
                 // call setACtiveFlag()
-                // TODO approproate arguments inside iterative loop
-                Map<String, Map<String, Object>> resultMetadata = processSelectiveSourceMetadata(dbConnection, null, null, null);
+                // TODO approproate arguments inside iterative loop// TODO Inputs - particularly querySchemaCond
+                Map<String, Map<String, Object>> resultMetadata = processSelectiveSourceMetadata(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), "");
 
 
 
@@ -279,7 +282,7 @@ public class DWTableMappingInfo {
         }
         
         
-        private static void processForFlagOne(Connection connection) {
+        private void processForFlagOne(Connection connection) {
             try {
 
                 // Done - Navin
@@ -322,7 +325,7 @@ public class DWTableMappingInfo {
             }
         }
 
-        private static List<Map<String, Object>> fetchEltMetadata(Connection connection) throws SQLException {
+        private List<Map<String, Object>> fetchEltMetadata(Connection connection) throws SQLException {
             String query = "SELECT Connection_Id, Schema_Name, Table_Name, Dimension_Transaction, IsWebService " +
                            "FROM ELT_Selective_Source_Metadata " +
                            "WHERE Connection_Id = ?";
@@ -345,7 +348,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static List<Map<String, Object>> fetchEltSettings(Connection connection) throws SQLException {
+        private List<Map<String, Object>> fetchEltSettings(Connection connection) throws SQLException {
             String query = "SELECT Setting_Value " +
                            "FROM ELT_IL_Settings_Info " +
                            "WHERE Settings_Category = 'Suffix' " +
@@ -367,7 +370,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static List<Map<String, Object>> fetchWsConnectionSuffix(Connection connection) throws SQLException {
+        private List<Map<String, Object>> fetchWsConnectionSuffix(Connection connection) throws SQLException {
             String query = "SELECT id, suffix " +
                            "FROM minidwcs_ws_connections_mst " +
                            "WHERE id = ?";
@@ -387,7 +390,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static List<Map<String, Object>> fetchSharedconnectionsInfo(Connection connection) throws SQLException {
+        private List<Map<String, Object>> fetchSharedconnectionsInfo(Connection connection) throws SQLException {
             String query = "SELECT File_Id, File_Path " +
                            "FROM sharedconnections_file_path_info " +
                            "WHERE Connection_Id = ?";
@@ -407,7 +410,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static Map<String, Object> transformTableNameAndSuffix(Map<String, Object> eltSelectiveSourceMetadata, 
+        private Map<String, Object> transformTableNameAndSuffix(Map<String, Object> eltSelectiveSourceMetadata, 
                                                                        Map<String, Object> row1, 
                                                                        Map<String, Object> row2, 
                                                                        Map<String, Object> row3) {
@@ -431,7 +434,7 @@ public class DWTableMappingInfo {
             return out;
         }
 
-        private static Map<String, Object> processAndTransformEltData(Connection connection) throws SQLException {
+        private Map<String, Object> processAndTransformEltData(Connection connection) throws SQLException {
             // Implementation for processAndTransformEltData
             // This method should execute the necessary SQL queries and data transformations
             // Similar to the Python implementation, but using JDBC and Java collections
@@ -445,7 +448,7 @@ public class DWTableMappingInfo {
         }
 
 
-        private static List<Map<String, Object>> mergeSettingsAndCalculateIlTableName(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
+        private List<Map<String, Object>> mergeSettingsAndCalculateIlTableName(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
             String connectionId = context.get("CONNECTION_ID");
             String customType = context.get("Custom_Type");
             String querySchemaCondition1 = context.get("query_schema_cond1");
@@ -532,7 +535,7 @@ public class DWTableMappingInfo {
                 .collect(Collectors.toList());
         }
 
-        private static Map<String, Object> calculateIlTableName(Map<String, Object> row, String customType) {
+        private Map<String, Object> calculateIlTableName(Map<String, Object> row, String customType) {
             String settingValue;
             if (customType == null) {
                 settingValue = (String) row.get("suffix");
@@ -555,7 +558,7 @@ public class DWTableMappingInfo {
             return row;
         }
 
-        private static List<Map<String, Object>> createConstantColumnsAndIlTableName(Connection connection) throws SQLException {
+        private List<Map<String, Object>> createConstantColumnsAndIlTableName(Connection connection) throws SQLException {
             final String connectionId = context.get("CONNECTION_ID");
             final String schemaName = context.get("Schema_Name");
             final String tableName = context.get("Table_Name");
@@ -598,7 +601,7 @@ public class DWTableMappingInfo {
                 .collect(Collectors.toList());
         }
 
-        private static Map<String, Object> processConstantRow(
+        private Map<String, Object> processConstantRow(
                 Map<String, Object> constRow, 
                 String connectionId, 
                 String schemaName, 
@@ -630,7 +633,7 @@ public class DWTableMappingInfo {
             return createFinalConstantRow(resultRow);
         }
         
-        private static Map<String, Object> createFinalConstantRow(Map<String, Object> row) {
+        private Map<String, Object> createFinalConstantRow(Map<String, Object> row) {
             Map<String, Object> finalRow = new HashMap<>();
             finalRow.put("Connection_Id", row.get("Connection_Id"));
             finalRow.put("TABLE_SCHEMA", row.get("TABLE_SCHEMA"));
@@ -664,7 +667,7 @@ public class DWTableMappingInfo {
         }
 
 
-        private static List<Map<String, Object>> fetchConstantMetadata(
+        private List<Map<String, Object>> fetchConstantMetadata(
                 Connection connection, String query, String dataSourceName, String tableName, String companyId) throws SQLException {
             List<Map<String, Object>> result = new ArrayList<>();
             try (PreparedStatement pstmt = connection.prepareStatement(query)) {
@@ -688,7 +691,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static List<Map<String, Object>> fetchSelectiveMetadata(
+        private List<Map<String, Object>> fetchSelectiveMetadata(
                 Connection connection, String query, String tableName, String connectionId) throws SQLException {
             List<Map<String, Object>> result = new ArrayList<>();
             try (PreparedStatement pstmt = connection.prepareStatement(query)) {
@@ -708,7 +711,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static List<Map<String, Object>> fetchIlSettings(
+        private List<Map<String, Object>> fetchIlSettings(
                 Connection connection, String query, String connectionId) throws SQLException {
             List<Map<String, Object>> result = new ArrayList<>();
             try (PreparedStatement pstmt = connection.prepareStatement(query)) {
@@ -727,7 +730,7 @@ public class DWTableMappingInfo {
         }
 
 
-        private static List<Map<String, Object>> uniteDataframes(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
+        private List<Map<String, Object>> uniteDataframes(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
             // Fetch Result dataframe
             List<Map<String, Object>> result = mergeSettingsAndCalculateIlTableName(connection, eltSourceMetadataAdd);
             
@@ -751,7 +754,7 @@ public class DWTableMappingInfo {
             return combinedList;
         }
 
-        private static void saveToCsv(List<Map<String, Object>> data, String filePath) throws IOException {
+        private void saveToCsv(List<Map<String, Object>> data, String filePath) throws IOException {
             if (data.isEmpty()) {
                 return;
             }
@@ -769,7 +772,7 @@ public class DWTableMappingInfo {
         }
 
 
-        private static void processSelectiveTables(Connection connection) throws SQLException {
+        private void processSelectiveTables(Connection connection) throws SQLException {
             String selectTables = context.get("Selective_Tables");
             String connectionId = context.get("CONNECTION_ID");
             String querySchemaCondition1 = context.get("query_schema_cond1");
@@ -814,7 +817,7 @@ public class DWTableMappingInfo {
             System.out.println(dfOut);
         }
         
-        private static List<Map<String, Object>> fetchDataFromDb(StringBuilder queryEltIlSettings, String connectionId, Connection con) throws SQLException {
+        private List<Map<String, Object>> fetchDataFromDb(StringBuilder queryEltIlSettings, String connectionId, Connection con) throws SQLException {
             List<Map<String, Object>> results = new ArrayList<>();
             try (PreparedStatement stmt = con.prepareStatement(queryEltIlSettings.toString())) {
                 stmt.setString(1, connectionId);
@@ -834,7 +837,7 @@ public class DWTableMappingInfo {
         }
 
         // TODO : rename function Name
-        public static List<Map<String, Object>> getSelectiveSourceMetadataWithSettingsSharedFolderWS (
+        public List<Map<String, Object>> getSelectiveSourceMetadataWithSettingsSharedFolderWS (
                 String selectiveTables, String connectionId, String querySchemaCond1, Connection con) throws SQLException {
 
             List<Map<String, Object>> results = new ArrayList<>();
@@ -918,7 +921,7 @@ public class DWTableMappingInfo {
             return results;
         }
 
-        private static List<Map<String, Object>> mergeData(List<Map<String, Object>> df1, List<Map<String, Object>> df2) {
+        private List<Map<String, Object>> mergeData(List<Map<String, Object>> df1, List<Map<String, Object>> df2) {
             // Implement merging logic here
             // This is a simplified version and may need to be adjusted based on your specific requirements
             Map<String, Map<String, Object>> mergedMap = new HashMap<>();
@@ -941,7 +944,7 @@ public class DWTableMappingInfo {
         }
 
         // Navin First non-iterative 
-        public static List<Map<String, Object>> getSelectiveSourceMetadataJoinedWithSettings(String selectiveTables, String connectionId, String querySchemaCond1, Connection con) throws SQLException {
+        public List<Map<String, Object>> getSelectiveSourceMetadataJoinedWithSettings(String selectiveTables, String connectionId, String querySchemaCond1, Connection con) throws SQLException {
             List<Map<String, Object>> results = new ArrayList<>();
             // Left Outer Join
             String query = "SELECT DISTINCT " +
@@ -989,7 +992,7 @@ public class DWTableMappingInfo {
             return results;
         }
 
-        private static Map<String, Object> updateIncrementalColumnAndPrepareBulk(Connection connection) throws SQLException, IOException {
+        private Map<String, Object> updateIncrementalColumnAndPrepareBulk(Connection connection) throws SQLException, IOException {
             String tableName = context.get("Table_Name");
             String connectionId = context.get("CONNECTION_ID");
             String querySchemaCondition = context.get("query_schema_cond");
@@ -1096,7 +1099,7 @@ public class DWTableMappingInfo {
             return result;
         }
 
-        private static String calculateIncrementalColumn(Map<String, Object> row) {
+        private String calculateIncrementalColumn(Map<String, Object> row) {
             String dimensionTransactionY = (String) row.get("Dimension_Transaction");
             String dimensionTransactionX = (String) row.get("Dimension_Transaction");
             String incrementalColumn = (String) row.get("Incremental_Column");
@@ -1112,7 +1115,7 @@ public class DWTableMappingInfo {
 
         // Navin 
         // Custome Type is missing  case as well
-        public static Map<String, Map<String, String>> fetchSelectiveSourceMetadata(
+        public Map<String, Map<String, String>> fetchSelectiveSourceMetadata(
             Connection connection, 
             String tableNameList, 
             String connectionId, 
@@ -1172,7 +1175,7 @@ public class DWTableMappingInfo {
         // SAVED UNite part 2
         // Used in SAved FAS also same query
 
-        public static List <Map<String, Object>> getConstantAnvizentFields(
+        public List <Map<String, Object>> getConstantAnvizentFields(
                 Connection connection,
                 String dataSourceName,
                 String tableName,
@@ -1248,7 +1251,7 @@ public class DWTableMappingInfo {
 
         // Navin - Saved_FAS
         // ELT_Custom_Source_mapping
-        public static Map<String, Map<String, String>> fetchCustomSourceMetadata(
+        public Map<String, Map<String, String>> fetchCustomSourceMetadata(
                 Connection connection,
                 String tableName,
                 String connectionId,
@@ -1306,7 +1309,7 @@ public class DWTableMappingInfo {
         // navin -Saved_FAS
         // row9 - Source_mapping_info_saved
         // first merge 3rd input
-        public static Map<String, Map<String, String>> fetchILSourceMappingInfoSaved(
+        public Map<String, Map<String, String>> fetchILSourceMappingInfoSaved(
                 Connection connection,
                 String tableName,
                 String connectionId,
@@ -1386,7 +1389,7 @@ public class DWTableMappingInfo {
                     "WHERE Table_Name = ? AND IsFileUpload != '1' AND Connection_Id = ? " + querySchemaCond;
 
             // Joining Table data
-            Map<String, Map<String, Object>> ilSourceMappingData = getILSourceMappingInfo(connection, query, query, query);
+            Map<String, Map<String, Object>> ilSourceMappingData = getILSourceMappingInfo(connection, tableName, connectionId, querySchemaCond);
 
             Map<String, Map<String, Object>> innerJoinResultMap = new HashMap<>(); // Inner Join Result Map; Store into a file
             Map<String, Map<String, Object>> antiInnerJoinResultMap = new HashMap<>(); // Anti-Inner Join Result Map; output for further processing
@@ -1774,7 +1777,7 @@ public class DWTableMappingInfo {
         // Navin FAS comp2 tmap3
         // Settings 
         // Saved Comp2 part 3 (querySchemaCondition1 is called )
-        public static Map<String, String> getActiveAliasValues(
+        public Map<String, String> getActiveAliasValues(
                 Connection connection,
                 String connectionId,
                 String querySchemaCondition) {
@@ -1811,7 +1814,7 @@ public class DWTableMappingInfo {
 
         // Navin
         // Sharedfolder compoennt
-        public static Map<String, Object> executeQueryAndBuildMap(
+        public Map<String, Object> executeQueryAndBuildMap(
                 Connection connection,
                 String connectionId) {
 
@@ -1841,7 +1844,7 @@ public class DWTableMappingInfo {
 
         // Navin FAS
         // webservice
-        public static Map<String, Object> getWSConnectionData(
+        public Map<String, Object> getWSConnectionData(
                 Connection connection,
                 String connectionId) {
 
@@ -1894,7 +1897,7 @@ public class DWTableMappingInfo {
             return resultMap;
         }
 
-        private static List<Map<String, Object>> joinAndCalculateIlDataType(Connection connection, List<Map<String, Object>> OUT) throws SQLException {
+        private List<Map<String, Object>> joinAndCalculateIlDataType(Connection connection, List<Map<String, Object>> OUT) throws SQLException {
             String tableName = context.get("Table_Name");
             String connectionId = context.get("CONNECTION_ID");
             String querySchemaCondition = context.get("query_schema_cond");
@@ -2297,7 +2300,7 @@ public class DWTableMappingInfo {
         }
 
 
-        private static List<Map<String, Object>> mergeMetadataAndCalculateConstraints(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
+        private List<Map<String, Object>> mergeMetadataAndCalculateConstraints(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
             String connectionId = context.get("CONNECTION_ID");
             String tableName = context.get("Table_Name");
             String querySchemaCondition = context.get("query_schema_cond");
@@ -2410,7 +2413,7 @@ public class DWTableMappingInfo {
         }
         
         
-        private static List<Map<String, Object>> createMetadataConstants(Connection connection) throws SQLException {
+        private List<Map<String, Object>> createMetadataConstants(Connection connection) throws SQLException {
             String connectionId = context.get("CONNECTION_ID");
             String schemaName = context.get("Schema_Name");
             String tableName = context.get("Table_Name");
@@ -2587,7 +2590,7 @@ public class DWTableMappingInfo {
         
         // Navin - reused existing
         // Uniting the two result sets
-        private static List<Map<String, Object>> uniteResultOut2(List<Map<String, Object>> result, List<Map<String, Object>> out2) {
+        private List<Map<String, Object>> uniteResultOut2(List<Map<String, Object>> result, List<Map<String, Object>> out2) {
             // Determine the common set of keys
             Set<String> commonKeys = new HashSet<>(result.get(0).keySet());
             commonKeys.retainAll(out2.get(0).keySet());
@@ -2601,7 +2604,7 @@ public class DWTableMappingInfo {
         }
 // Navin - New
 // Used in both the flows 
-        public static boolean updateActiveFlag(Connection connection, String connectionId, String querySchemaCondition, boolean activeFlagValue) {
+        public boolean updateActiveFlag(Connection connection, String connectionId, String querySchemaCondition, boolean activeFlagValue) {
             String query = "UPDATE ELT_IL_Source_Mapping_Info_Saved " +
                            "SET Active_Flag = ? " +
                            "WHERE Connection_Id = ? " + querySchemaCondition;
@@ -2679,7 +2682,7 @@ public class DWTableMappingInfo {
         // Navin
         // To insert data into the table
         // Final step
-        public static void insertData(Connection connection, String tableName, List<Map<String, Object>> data) throws SQLException {
+        public void saveDataSourceMappingInfoIntoDB(Connection connection, String tableName, List<Map<String, Object>> data) throws SQLException {
             if (data == null || data.isEmpty()) {
                 throw new IllegalArgumentException("Data list cannot be null or empty");
             }
@@ -2719,7 +2722,7 @@ public class DWTableMappingInfo {
             }
         }
 
-        private static void bulk(Connection connection, List<Map<String, Object>> row1) throws SQLException, IOException {
+        private void bulk(Connection connection, List<Map<String, Object>> row1) throws SQLException, IOException {
             String clientId = context.get("CLIENT_ID");
             String packageId = context.get("PACKAGE_ID");
             String jobName = context.get("JOB_NAME");
@@ -2796,7 +2799,7 @@ public class DWTableMappingInfo {
 
        
         
-        private static Map<String, Object> filterCommonKeys(Map<String, Object> row, Set<String> commonKeys) {
+        private Map<String, Object> filterCommonKeys(Map<String, Object> row, Set<String> commonKeys) {
             return row.entrySet().stream()
                 .filter(entry -> commonKeys.contains(entry.getKey()))
                 .collect(Collectors.toMap(
@@ -2807,7 +2810,7 @@ public class DWTableMappingInfo {
                 ));
         }
 
-        private static Map<String, Object> calculateConstraints(Map<String, Object> row) {
+        private Map<String, Object> calculateConstraints(Map<String, Object> row) {
             String pkConstraint = (row.get("PK_Constraint") != null && "yes".equals(row.get("PK_Constraint"))) ? "PK" : "";
             String pkColumnName = (row.get("PK_Column_Name") != null && !"NULL".equals(row.get("PK_Column_Name"))
                                    && !"".equals(row.get("PK_Column_Name"))) ? (String) row.get("PK_Column_Name") : "";
@@ -2829,7 +2832,7 @@ public class DWTableMappingInfo {
             return row;
         }
 
-        private static List<Map<String, Object>> createFinalResult(List<Map<String, Object>> mergedData) {
+        private List<Map<String, Object>> createFinalResult(List<Map<String, Object>> mergedData) {
             return mergedData.stream().map(row -> {
                 Map<String, Object> resultRow = new HashMap<>();
                 resultRow.put("Connection_Id", row.get("Connection_Id"));
@@ -2865,12 +2868,12 @@ public class DWTableMappingInfo {
         }
         
         
-        private static int calculateVar1(Map<String, Object> row) {
+        private int calculateVar1(Map<String, Object> row) {
             Integer characterMaxLength = (Integer) row.get("Character_Max_Length");
             return (characterMaxLength != null) ? 2 * characterMaxLength : 0;
         }
 
-        private static String calculateIlDataType(Map<String, Object> row) {
+        private String calculateIlDataType(Map<String, Object> row) {
             String dataType = (String) row.get("Data_Type");
             String defaultFlag = (String) row.get("Default_Flag");
             Integer numericPrecision = (Integer) row.get("Numeric_Precision");
