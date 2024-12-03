@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -95,6 +96,69 @@ public class DWTableMappingInfo {
 
         context.put("query_schema_cond", querySchemaCondition);
         context.put("query_schema_cond1", querySchemaCondition1);
+    }
+
+    /**
+     * Executes the delete query on the database.
+     *
+     * @param connection       The database connection.
+     * @param connectionId     The connection ID to filter the query.
+     * @param sourceTableName  The source table name to filter the query.
+     * @param querySchemaCond  The additional schema condition for the query.
+     * @return true if the query executes successfully, false otherwise.
+     */
+    public static boolean deleteExistingRecordsForSourceTableName(Connection connection, String connectionId, String sourceTableName, String querySchemaCond) {
+        String sql = "DELETE FROM ELT_IL_Source_Mapping_Info_Saved " +
+                    "WHERE Active_Flag = 1 " +
+                    "AND (Constant_Insert_Column IS NULL " +
+                    "OR (Constant_Insert_Column <> 'Y' OR IL_Column_Name = 'DataSource_Id') " +
+                    "AND Constraints <> 'SK,PK') " +
+                    "AND Connection_Id = ? " +
+                    "AND Source_Table_Name = ? " +
+                    querySchemaCond;
+
+        try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+            preparedStatement.setString(1, connectionId);
+            preparedStatement.setString(2, sourceTableName);
+
+            int rowsAffected = preparedStatement.executeUpdate();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            System.err.println("SQL Exception while executing query: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Executes the delete query for rows with a specific Column_Type (Anvizent) and IL_Table_Name.
+     *
+     * @param connection  The database connection.
+     * @param tableName   The base table name to filter the query.
+     * @param suffixValue The suffix to append to the table name in the query.
+     * @return true if the query executes successfully, false otherwise.
+     */
+    public static boolean deleteRecordsForColumnTypeAnvizent(Connection connection, String tableName, String suffixValue) {
+        String sql = "DELETE FROM ELT_IL_Source_Mapping_Info_Saved " +
+                    "WHERE Column_Type = 'Anvizent' " +
+                    "AND IL_Table_Name = ?";
+        // TODO check if suffx value is not present. Other places this check is done
+        try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+            if (!suffixValue.isEmpty())
+                preparedStatement.setString(1, tableName + "_" + suffixValue); // TODO verify
+            else 
+                preparedStatement.setString(1, tableName);
+
+
+            int rowsAffected = preparedStatement.executeUpdate();
+            return rowsAffected > 0;
+        } catch (SQLException e) {
+            System.err.println("SQL Exception while executing query: " + e.getMessage());
+            return false;
+        }
+    }
+// TODO for SAved FAS
+    public static boolean deleteRecordsForColumnTypeAnvizent(Connection connection, String tableName) {
+        return deleteRecordsForColumnTypeAnvizent(connection, tableName, "");
     }
 
     private static void deleteRecords(Connection connection) {
@@ -2149,7 +2213,7 @@ public class DWTableMappingInfo {
 
         // Navin
         // SAVED Comp2 output 
-        public Map<String, Object> processConstantFieldsWithMetadataAndAliases (
+        public List<Map<String, Object>> processConstantFieldsWithMetadataAndAliases (
                 Connection connection,
                 String dataSourceName,
                 String tableName,
@@ -2165,7 +2229,7 @@ public class DWTableMappingInfo {
             Map<String, String> aliasValues = getActiveAliasValues(connection, connectionId, querySchemaCondition);
 
             // Step 2: Create the result map
-            Map<String, Object> result = new HashMap<>();
+            List<Map<String, Object>> result = new ArrayList<>();
 
             // Step 3: Iterate over constantFields data and perform LEFT OUTER JOINs
             for (Map<String, Object> constantEntry : constantFields) {
@@ -2225,8 +2289,8 @@ public class DWTableMappingInfo {
                 // combinedData.putAll(transactionLookup); // Merge transaction data
                 // combinedData.putAll(aliasLookup); // Merge alias data
 
-                // Add combined data to the result map
-                result.put(key, combinedData);
+                // Add combined data to the result list of maps
+                result.add(combinedData);
             }
 
             return result;
@@ -2521,6 +2585,8 @@ public class DWTableMappingInfo {
             }).collect(Collectors.toList());
         }
         
+        // Navin - reused existing
+        // Uniting the two result sets
         private static List<Map<String, Object>> uniteResultOut2(List<Map<String, Object>> result, List<Map<String, Object>> out2) {
             // Determine the common set of keys
             Set<String> commonKeys = new HashSet<>(result.get(0).keySet());
@@ -2610,6 +2676,48 @@ public class DWTableMappingInfo {
             }
         }
 
+        // Navin
+        // To insert data into the table
+        // Final step
+        public static void insertData(Connection connection, String tableName, List<Map<String, Object>> data) throws SQLException {
+            if (data == null || data.isEmpty()) {
+                throw new IllegalArgumentException("Data list cannot be null or empty");
+            }
+    
+            // Build SQL query dynamically
+            String[] columns = data.get(0).keySet().toArray(new String[0]);
+            // String placeholders = String.join(", ", new String[new String(columns.length).replace("\0", "?")]);
+            // String placeholders = String.join(", ", new String[new String(columns.length).replace("\0", "?")]);
+            // Create the placeholders for the SQL query
+            StringJoiner placeholders = new StringJoiner(",", "(", ")");
+            for (int i = 0; i < columns.length; i++) {
+                placeholders.add("?");
+        
+            }
+
+            String sql = "INSERT INTO " + tableName + " (" + String.join(", ", columns) + ") VALUES (" + placeholders + ")";
+            boolean originalAutoCommit = connection.getAutoCommit();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+                connection.setAutoCommit(false); // Enable transaction for batch insert
+    
+                for (Map<String, Object> row : data) {
+                    int i = 1;
+                    for (String column : columns) {
+                        preparedStatement.setObject(i++, row.get(column));
+                    }
+                    preparedStatement.addBatch();
+                }
+    
+                preparedStatement.executeBatch();
+                connection.commit();
+            } catch (SQLException e) {
+                connection.rollback(); //TOdo really need it
+                throw e;
+            } finally {
+                // Restore the original auto-commit setting
+                connection.setAutoCommit(originalAutoCommit);
+            }
+        }
 
         private static void bulk(Connection connection, List<Map<String, Object>> row1) throws SQLException, IOException {
             String clientId = context.get("CLIENT_ID");
