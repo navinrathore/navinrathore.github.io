@@ -12,15 +12,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.StringJoiner;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -40,7 +32,8 @@ public class DWTableMappingInfo {
         dWTableMappingInfo.loadContext();
         dWTableMappingInfo.mainProcess();
     }
-    
+
+
    public void initiateJob(Map<String, String> newContext){
 	   if (newContext == null) {
            throw new IllegalArgumentException("Context cannot be null");
@@ -59,14 +52,22 @@ public class DWTableMappingInfo {
 			context.put("APP_DBNAME", "Mysql8_2_1009427_appdb");
 			context.put("APP_UN", "Bk16Tt55");
 			context.put("APP_PW", "Tt5526");
-			context.put("Schema_Name", "FGB_1"); // FGB_1, 
-			context.put("Table_Name","Finished_Goods_BOM"); // Finished_Goods_BOM
-			context.put("CONNECTION_ID", "41"); // 2,3,4
-			context.put("DATASOURCENAME","syspro");
+            // set 1
+             context.put("Schema_Name", "dbo"); // FGB_1, AbcAnalysis
+             context.put("Table_Name","SorDetail"); // SorDetail, AbcAnalysis
+             context.put("CONNECTION_ID", "2"); // 2,3,4
+
+             // set 2
+//			context.put("Schema_Name", "FGB_1"); // FGB_1,
+//			context.put("Table_Name","Finished_Goods_BOM"); // Finished_Goods_BOM
+//			context.put("CONNECTION_ID", "41"); // 2,3,4
+
+             context.put("DATASOURCENAME","syspro");
 			context.put("CLIENT_ID", "1009427");
 			context.put("TableType", "D");
             context.put("Custom_Flag", "0");
             context.put("Selective_Tables","'Finished_Goods_BOM'");
+             context.put("Company_Id","syspro");
 
             
     	 }
@@ -247,11 +248,27 @@ public class DWTableMappingInfo {
                 // TODO approproate arguments inside iterative loop// TODO Inputs - particularly querySchemaCond
                 Map<String, Map<String, Object>> resultMetadata = processSelectiveSourceMetadata(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), "");
 
+                // This looks fine - data in anti jion is nil
+                Map<String, Map<String, Object>> y = getSourceMetadata(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), ""); // TODO querySchemaCond
+                Map<String, Map<String, Object>> z = getDatatypeConversions(dbConnection);
+                List<Map<String, Object>> x = JoinWithMetadataAndDataTypeConversions(resultMetadata, y, z);
 
+                // Looks fine but good connection IDs are 2 (has values),3,4,114  but 41 does not have values
+                Map<String, String> activeAliasValuesTables = getActiveAliasValuesTables(dbConnection, context.get("CONNECTION_ID"), "");
+                Map<String, Map<String, Object>> fkConstraintLookup = getAggregatedFKConstraint(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), "", "");
+                List<Map<String, Object>> xx = processJoinedData(x, activeAliasValuesTables, fkConstraintLookup);
 
+                // Here ends first part of UNITE
 
+                // Here starts second part of UNITE
+                // Other function are inside. does return  value
+                List<Map<String, Object>> ans = processConstantFieldsWithMetadataAndAliases (dbConnection, context.get("DATASOURCENAME"),
+                        context.get("Table_Name"), context.get("Company_Id"), context.get("CONNECTION_ID"), "");
 
-                Map<String, Object> updateResult = updateIncrementalColumnAndPrepareBulk(dbConnection); //Incremental Column updations D, T 
+                // Unite the records
+                List<Map<String, Object>> unitedResult = uniteResultOut2(xx,  ans);
+
+                Map<String, Object> updateResult = updateIncrementalColumnAndPrepareBulk(dbConnection); //Incremental Column updations D, T
                 System.out.println("update_incremental_column_and_prepare_bulk completed successfully.");
 
                 List<Map<String, Object>> eltSourceMetadataAdd = joinAndCalculateIlDataType(dbConnection, (List<Map<String, Object>>) updateResult.get("OUT")); // Compute Datatype Mapping
@@ -744,6 +761,7 @@ public class DWTableMappingInfo {
                 commonKeys.retainAll(out2.get(0).keySet());
             }
 
+
             // Combine the two lists, keeping only the common keys
             List<Map<String, Object>> combinedList = Stream.concat(
                     result.stream().map(row -> filterCommonKeys(row, commonKeys)),
@@ -961,12 +979,12 @@ public class DWTableMappingInfo {
                         "    src.Connection_Id = il.Connection_Id " +
                         "    AND src.Schema_Name = il.Schema_Name " +
                         "    AND il.Settings_Category = 'Suffix' " +
-                        "    AND il.Active_Flag = '1'" +
+                        "    AND il.Active_Flag = '1' " +
                         "WHERE " +
                         "    src.Table_Name IN (" + selectiveTables + ") " + // TODO if more than table
                         "    AND src.Isfileupload != '1' " +
-                        "    AND src.Connection_Id = " + connectionId + " " +
-                        querySchemaCond1 + ";";// TODO see how to  relate to first table
+                        "    AND src.Connection_Id = " + connectionId + " AND src.Schema_Name = 'FGB_1'"; // + // TODO proper clause to add below
+                        // querySchemaCond1 + ";";// TODO see how to  relate to first table
 ;
 
             try (PreparedStatement stmt = con.prepareStatement(query)) {
@@ -1192,8 +1210,8 @@ public class DWTableMappingInfo {
                     "'" + dataSourceName + "' AS Constant_Insert_Value " +
                     "FROM `ELT_Selective_Source_Metadata` " +
                     "UNION ALL " +
-                    "SELECT DISTINCT '" + tableName + "_Key' AS IL_Column_Name, " +
-                    "'bigint(32)' AS IL_Data_Type, " +
+                    "SELECT DISTINCT '" + tableName + "_Key' AS IL_Column_Name, " + //TODO distinct needed ot not SAved
+                    "'bigint(32)' AS IL_Data_Type, " + // TODO bigint(32) not needed SAved
                     "'bigint' AS Source_Data_Type, " +
                     "'SK' AS Constraints, " +
                     "'SK' AS PK_Constraint, " +
@@ -1206,8 +1224,8 @@ public class DWTableMappingInfo {
                     "'varchar' AS Source_Data_Type, " +
                     "'PK' AS Constraints, " +
                     "'PK' AS PK_Constraint, " +
-                    "'Y' AS Constant_Insert_Column, " +
-                    "'" + companyId + "' AS Constant_Insert_Value " +
+                    "'Y' AS Constant_Insert_Column, " + // TODO NULL SAved
+                    "'" + companyId + "' AS Constant_Insert_Value " + // TODO NULL SAved
                     "FROM `ELT_Selective_Source_Metadata`";
 
             List<Map<String, Object>> resultList = new ArrayList<>();
@@ -1218,16 +1236,16 @@ public class DWTableMappingInfo {
                         // String key = resultSet.getString("IL_Column_Name") + "_"
                         //         + resultSet.getString("Constant_Insert_Column");
 
-                        String key = resultSet.getString("Connection_Id") + "_"
-                                + resultSet.getString("TABLE_SCHEMA") + "_"
+                        String key = context.get("Connection_Id") + "_"
+                                + context.get("Schema_Name") + "_"
                                 + tableName;
 
                         Map<String, Object> transformedRow = new HashMap<>();
 
                         // Here, you can apply your transformations
-                        transformedRow.put("Connection_Id", resultSet.getString("IL_Column_Name")); // TODO 
-                        transformedRow.put("TABLE_SCHEMA", resultSet.getString("IL_Column_Name")); //TODO
-                        transformedRow.put("Source_Table_Name", resultSet.getString("IL_Column_Name")); //TO
+                        transformedRow.put("Connection_Id", context.get("Connection_Id")); // TODO
+                        transformedRow.put("TABLE_SCHEMA", context.get("Schema_Name") ); // TODO
+                        transformedRow.put("Source_Table_Name", tableName); //TODO
                         transformedRow.put("Active_Flag", true); //TODO
             // From Query
                         transformedRow.put("IL_Column_Name", resultSet.getString("IL_Column_Name"));
@@ -1384,7 +1402,7 @@ public class DWTableMappingInfo {
                 String connectionId,
                 String querySchemaCond) {
 
-            String query = "SELECT Connection_Id, Schema_Name, Table_Name, Column_Name, Dimension_Transaction" +
+            String query = "SELECT Connection_Id, Schema_Name, Table_Name, Column_Name, Dimension_Transaction " +
                     "FROM ELT_Selective_Source_Metadata " +
                     "WHERE Table_Name = ? AND IsFileUpload != '1' AND Connection_Id = ? " + querySchemaCond;
 
@@ -1490,7 +1508,7 @@ public class DWTableMappingInfo {
             // Define the query using StringBuilder for compactness
             StringBuilder querySourceMetadata = new StringBuilder();
             querySourceMetadata.append("SELECT ")
-                        .append("`Connection_Id`, ").append("`TABLE_SCHEMA`, ").append(".`Table_Name`, ").append(".`Column_Name`, ")
+                        .append("`Connection_Id`, ").append("`TABLE_SCHEMA`, ").append("`Table_Name`, ").append("`Column_Name`, ")
                         .append("LOWER(Data_Type) AS Data_Type, ")
                         .append("`PK_Column_Name`, ").append("`PK_Constraint`, ")
                         .append("`FK_Column_Name`, ").append("`FK_Constraint`, ")
@@ -1504,27 +1522,27 @@ public class DWTableMappingInfo {
                         .append("FROM `ELT_Source_Metadata` ")
                         .append("WHERE Table_Name = ? AND Connection_Id = ? ")
                         .append(querySchemaCond); // Add dynamic schema condition
-        
+        // TODO check if '7' or just 7 make difference just 7 is recommended
                         // Query for ELT_Source_Metadata from other source TBD deleted
-            StringBuilder querySourceMetadataDummy = new StringBuilder();
-            querySourceMetadata.append("SELECT Connection_Id, TABLE_SCHEMA, Table_Name, Column_Name, ")
-                               .append("LOWER(Data_Type) AS Data_Type, PK_Column_Name, PK_Constraint, ")
-                               .append("FK_Column_Name, FK_Constraint, Prefix_Suffix_Flag, Prefix_Suffix, ")
-                               .append("Added_Date, Added_User, Updated_Date, Updated_User, ")
-                               .append("CASE ")
-                               .append("    WHEN Character_Max_Length < 0 THEN Character_Max_Length ")
-                               .append("    WHEN Data_Type LIKE '%char%' AND Character_Max_Length < 7 THEN 7 ")
-                               .append("    ELSE Character_Max_Length ")
-                               .append("END AS Character_Max_Length, ")
-                               .append("Character_Octet_Length, Numeric_Precision, ")
-                               .append("CASE ")
-                               .append("    WHEN Numeric_Scale IS NULL THEN Numeric_Precision_Radix ")
-                               .append("    ELSE Numeric_Scale ")
-                               .append("END AS Numeric_Scale ")
-                               .append("FROM ELT_Source_Metadata ")
-                               .append("WHERE Table_Name = ? ")
-                               .append("AND Connection_Id = ? ")
-                               .append(querySchemaCond);
+//            StringBuilder querySourceMetadataDummy = new StringBuilder();
+//            querySourceMetadata.append("SELECT Connection_Id, TABLE_SCHEMA, Table_Name, Column_Name, ")
+//                               .append("LOWER(Data_Type) AS Data_Type, PK_Column_Name, PK_Constraint, ")
+//                               .append("FK_Column_Name, FK_Constraint, Prefix_Suffix_Flag, Prefix_Suffix, ")
+//                               .append("Added_Date, Added_User, Updated_Date, Updated_User, ")
+//                               .append("CASE ")
+//                               .append("    WHEN Character_Max_Length < 0 THEN Character_Max_Length ")
+//                               .append("    WHEN Data_Type LIKE '%char%' AND Character_Max_Length < 7 THEN 7 ")
+//                               .append("    ELSE Character_Max_Length ")
+//                               .append("END AS Character_Max_Length, ")
+//                               .append("Character_Octet_Length, Numeric_Precision, ")
+//                               .append("CASE ")
+//                               .append("    WHEN Numeric_Scale IS NULL THEN Numeric_Precision_Radix ")
+//                               .append("    ELSE Numeric_Scale ")
+//                               .append("END AS Numeric_Scale ")
+//                               .append("FROM ELT_Source_Metadata ")
+//                               .append("WHERE Table_Name = ? ")
+//                               .append("AND Connection_Id = ? ")
+//                               .append(querySchemaCond);
 
             try (PreparedStatement preparedStatement = connection.prepareStatement(querySourceMetadata.toString())) {
                 preparedStatement.setString(1, tableName);
@@ -1596,7 +1614,7 @@ public class DWTableMappingInfo {
         //                                                                                     ? "smallint"
         //                                                                                     : (dataType.contains("currency")) ? "decimal" : dataType;
         // }
-        
+        // navin internal call above
         private String getTransformedDataType(String dataType) {
             if (dataType.equals("smallidentity") || dataType.equals("identity") ||
                 dataType.equals("bigidentity") || dataType.equals("ubigint")) {
@@ -1876,10 +1894,11 @@ public class DWTableMappingInfo {
         public Map<String, Map<String, Object>> getDatatypeConversions(Connection connection) {
             String query = "SELECT Source_Data_Type, IL_Data_Type, Default_Flag, Precision_Flag, Default_Length " +
                            "FROM ELT_Datatype_Conversions";
-        
+        // TODO Source_Data_Type to be lower()
             Map<String, Map<String, Object>> resultMap = new HashMap<>();
             try (PreparedStatement preparedStatement = connection.prepareStatement(query);
                  ResultSet resultSet = preparedStatement.executeQuery()) {
+                int i = 1;
                 while (resultSet.next()) {
                     String sourceDataType = resultSet.getString("Source_Data_Type");
         
@@ -1888,7 +1907,8 @@ public class DWTableMappingInfo {
                     valueMap.put("Default_Flag", resultSet.getString("Default_Flag"));
                     valueMap.put("Precision_Flag", resultSet.getString("Precision_Flag"));
                     valueMap.put("Default_Length", resultSet.getInt("Default_Length"));
-        
+                    System.out.println(i + ": " + sourceDataType);
+                    ++i;
                     resultMap.put(sourceDataType, valueMap);
                 }
             } catch (SQLException e) {
@@ -2105,14 +2125,14 @@ public class DWTableMappingInfo {
 
         // Navin - tmap 2
         // Saved main flow comp1 -  output
-        public Map<String, Map<String, Object>> processJoinedData(
+        public List<Map<String, Object>> processJoinedData(
                 List<Map<String, Object>> metadataDataTypeList,
                 Map<String, String> aliasValuesTables,
                 Map<String, Map<String, Object>> aggregatedQueryResults) {
 
             // Result map to store final joined data
-            Map<String, Map<String, Object>> resultMap = new HashMap<>();
-
+            //Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            List<Map<String, Object>> result = new ArrayList<>();
             // Iterate over the metadata and data type conversions list
             for (Map<String, Object> metadataEntry : metadataDataTypeList) {
                 // Extract the keys from metadataEntry
@@ -2208,10 +2228,11 @@ public class DWTableMappingInfo {
                 // }
 
                 // Add the joined data to the result map
-                resultMap.put(aggregateKey, joinedData);
+                //resultMap.put(aggregateKey, joinedData);
+                result.add(joinedData);
             }
 
-            return resultMap;
+            return result;
         }
 
         // Navin
@@ -2590,17 +2611,64 @@ public class DWTableMappingInfo {
         
         // Navin - reused existing
         // Uniting the two result sets
-        private List<Map<String, Object>> uniteResultOut2(List<Map<String, Object>> result, List<Map<String, Object>> out2) {
+        private List<Map<String, Object>> uniteResultOut2(List<Map<String, Object>> list1, List<Map<String, Object>> list2) {
             // Determine the common set of keys
-            Set<String> commonKeys = new HashSet<>(result.get(0).keySet());
-            commonKeys.retainAll(out2.get(0).keySet());
+            Set<String> keysList1 = new HashSet<>();
+            Set<String> keysList2 = new HashSet<>();
 
+            if (!list1.isEmpty()) {
+                keysList1 = new HashSet<>(list1.get(0).keySet());
+            }
+            if (!list2.isEmpty()) {
+                keysList2 = new HashSet<>(list2.get(0).keySet());
+            }
+
+            Set<String> commonKeys = getCommonKeys(keysList1, keysList2);
+//            List<Map<String, Object>> list1out = list1.stream().map(row -> filterCommonKeys(row, commonKeys)).collect(Collectors.toList());
+//            List<Map<String, Object>> list2out = list2.stream().map(row -> filterCommonKeys(row, commonKeys)).collect(Collectors.toList());
+
+            List<Map<String, Object>> list1out = new ArrayList<>();
+
+            for (Map<String, Object> row : list1) {
+                Map<String, Object> filteredRow = filterCommonKeys(row, commonKeys);
+                list1out.add(filteredRow);
+            }
+
+
+            List<Map<String, Object>> list2out = new ArrayList<>();
+
+            for (Map<String, Object> row : list2) {
+                Map<String, Object> filteredRow = filterCommonKeys(row, commonKeys);
+                list2out.add(filteredRow);
+            }
+
+
+            List<Map<String, Object>> combinedList = Stream.concat(list1out.stream(), list2out.stream())
+                    .collect(Collectors.toList());
+
+            return combinedList;
             // Combine the two lists, keeping only the common keys
-            return Stream.concat(
-                    result.stream().map(row -> filterCommonKeys(row, commonKeys)),
-                    out2.stream().map(row -> filterCommonKeys(row, commonKeys))
-                )
-                .collect(Collectors.toList());
+//            return Stream.concat(
+//                    list1.stream().map(row -> filterCommonKeys(row, commonKeys)),
+//                    list2.stream().map(row -> filterCommonKeys(row, commonKeys))
+//                )
+//                .collect(Collectors.toList());
+        }
+
+        private Set<String> getCommonKeys(Set<String> set1, Set<String> set2) {
+            if (set1.isEmpty() && set2.isEmpty()) {
+                return Collections.emptySet(); // if both are empty
+            } else if (set1.isEmpty()) {
+                return new HashSet<>(set2); // if set1 is empty
+            } else if (set2.isEmpty()) {
+                return new HashSet<>(set1); // if set2 is empty
+            }
+
+            // if both sets are non-empty, retain only the common elements
+            Set<String> commonKeys = new HashSet<>(set1);
+            commonKeys.retainAll(set2);
+
+            return commonKeys;
         }
 // Navin - New
 // Used in both the flows 
@@ -2800,14 +2868,32 @@ public class DWTableMappingInfo {
        
         
         private Map<String, Object> filterCommonKeys(Map<String, Object> row, Set<String> commonKeys) {
-            return row.entrySet().stream()
-                .filter(entry -> commonKeys.contains(entry.getKey()))
-                .collect(Collectors.toMap(
-                    Map.Entry::getKey,
-                    Map.Entry::getValue,
-                    (v1, v2) -> v1,
-                    LinkedHashMap::new
-                ));
+
+            if (row == null || row.isEmpty()) {
+                return Collections.emptyMap();  // Return an empty map if the input is null or empty
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            int i = 0;
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                System.out.println("i: " + i++);
+                if (commonKeys.contains(entry.getKey())) {
+                    System.out.println(entry.getKey());
+//                    System.out.println(entry.getKey());
+                    result.put(entry.getKey(), entry.getValue());
+                }
+            }
+
+            return result;
+
+//            return row.entrySet().stream()
+//                .filter(entry -> commonKeys.contains(entry.getKey()))
+//                .collect(Collectors.toMap(
+//                    Map.Entry::getKey,
+//                    Map.Entry::getValue,
+//                    (v1, v2) -> v1,
+//                    HashMap::new
+//                ));
         }
 
         private Map<String, Object> calculateConstraints(Map<String, Object> row) {
