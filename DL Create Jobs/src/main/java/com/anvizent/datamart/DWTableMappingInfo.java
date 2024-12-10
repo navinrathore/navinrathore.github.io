@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.sql.Timestamp;
 
 /*
  * Table Mapping Info, DW Table Mapping generation mapping 
@@ -25,16 +26,24 @@ public class DWTableMappingInfo {
     private final Map<String, String> context = new HashMap<>();
     private final Map<String, Object> globalMap = new HashMap<>();
     private Connection dbConnection;
+    private LocalDateTime startTime;
+    private String userName = "ETL Admin"; // default user
 
-    // public static void main(String[] args) {
+    // default ctor
+    public DWTableMappingInfo() {
+        startTime = LocalDateTime.now();
+    }
 
     public static void main(String[] args) {
         DWTableMappingInfo dWTableMappingInfo = new DWTableMappingInfo(); // TODO
         dWTableMappingInfo.loadContext();
+        dWTableMappingInfo.init();
         dWTableMappingInfo.mainProcess();
     }
 
-
+    private void init() {
+        userName = context.get("APP_UN");
+    }
    public void initiateJob(Map<String, String> newContext){
 	   if (newContext == null) {
            throw new IllegalArgumentException("Context cannot be null");
@@ -69,12 +78,10 @@ public class DWTableMappingInfo {
              context.put("DATASOURCENAME","syspro");
 			context.put("CLIENT_ID", "1009427");
 			context.put("TableType", "D");
-            //context.put("Custom_Flag", "0"); // TODO
+            //context.put("Custom_Flag", "0"); // Custom flag should be set to 0 or 1
              context.put("Custom_Flag", "1");
              context.put("Selective_Tables","'Finished_Goods_BOM'");
              context.put("Company_Id","syspro");
-
-            
     	 }
     }
 
@@ -153,7 +160,7 @@ public class DWTableMappingInfo {
         // TODO check if suffx value is not present. Other places this check is done
         try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
             if (!suffixValue.isEmpty())
-                preparedStatement.setString(1, tableName + "_" + suffixValue); // TODO verify
+                preparedStatement.setString(1, tableName + "_" + suffixValue);
             else 
                 preparedStatement.setString(1, tableName);
 
@@ -261,22 +268,24 @@ public class DWTableMappingInfo {
                 // Looks fine but good connection IDs are 2 (has values),3,4,114  but 41 does not have values
                 Map<String, String> activeAliasValuesTables = getActiveAliasValuesTables(dbConnection, context.get("CONNECTION_ID"), "");
                 Map<String, Map<String, Object>> fkConstraintLookup = getAggregatedFKConstraint(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), "", "");
-                List<Map<String, Object>> xx = processJoinedData(x, activeAliasValuesTables, fkConstraintLookup);
+                List<Map<String, Object>> tMap2Output = processJoinedData(x, activeAliasValuesTables, fkConstraintLookup);
 
                 // Here ends first part of UNITE
 
                 // Here starts second part of UNITE
-                // Other function are inside. does return  value
-                List<Map<String, Object>> ans = processConstantFieldsWithMetadataAndAliases (dbConnection, context.get("DATASOURCENAME"),
+                List<Map<String, Object>> tMap9Output = processConstantFieldsWithMetadataAndAliases (dbConnection, context.get("DATASOURCENAME"),
                         context.get("Table_Name"), context.get("Company_Id"), context.get("CONNECTION_ID"), "");
 
                 // Unite the records
-                List<Map<String, Object>> unitedResult = uniteResultOut2(xx,  ans);
+                List<Map<String, Object>> unitedResult = uniteResultOut2(tMap2Output,  tMap9Output);
 
                 // TODO delete the records from the table
+                //executeDeleteQuery(dbConnection, connectionId, tableName, querySchemaCondition);
 
-                // TODO Save into DB
-
+                // Save into DB
+                // success failure handling
+                String dbTable = "ELT_IL_Source_Mapping_Info_Saved";
+                saveDataSourceMappingInfoIntoDB(dbConnection, dbTable, unitedResult);
 
 //                Map<String, Object> updateResult = updateIncrementalColumnAndPrepareBulk(dbConnection); //Incremental Column updations D, T
 //                System.out.println("update_incremental_column_and_prepare_bulk completed successfully.");
@@ -347,7 +356,7 @@ public class DWTableMappingInfo {
 
                 // tmap3 - output join 1st part
                 // querySchemaCondition1
-                List<Map<String, Object>> tMap3Output = processJoinedDataForFlagOne(tMap2Output, dbConnection, connectionId, querySchemaCondition);
+                List<Map<String, Object>> tMap3Output = processJoinedDataForFlagOne(tMap2Output, dbConnection, connectionId, querySchemaCondition1);
 
                 // Component 2
                 String dataSourceName = context.get("DATASOURCENAME");
@@ -358,23 +367,14 @@ public class DWTableMappingInfo {
 
                 // Unite the records
                 List<Map<String, Object>> unitedResult = uniteResultOut2(tMap3Output,  tMap7Output);
-                for (Map<String, Object> map : tMap3Output) {
-                    for (Map.Entry<String, Object> entry : map.entrySet()) {
-                        System.out.println(entry.getKey() + " : " + entry.getValue());
-                    }
-                    System.out.println("-----"); // Separator for readability
-                }
+
                 // TODO delete the records from the table
-                for (Map<String, Object> map : tMap7Output) {
-                    for (Map.Entry<String, Object> entry : map.entrySet()) {
-                        System.out.println(entry.getKey() + " : " + entry.getValue());
-                    }
-                    System.out.println("-----"); // Separator for readability
-                }
-                // TODO Save into DB
-                // TODO success failure handling
+                executeDeleteQuery(dbConnection, connectionId, tableName, querySchemaCondition);
+                // Save into DB
+                // success failure handling
                 String dbTable = "ELT_IL_Source_Mapping_Info_Saved";
                 saveDataSourceMappingInfoIntoDB(dbConnection, dbTable, unitedResult);
+
 // Previous code below discard it
 //                List<Map<String, Object>> eltMetadata = fetchEltMetadata(dbConnection);
 //                Map<String, Object> row1 = fetchEltSettings(dbConnection).get(0);
@@ -1903,9 +1903,9 @@ public class DWTableMappingInfo {
                 outputMap.put("Schema_Name", mainValue.get("Schema_Name"));
                 outputMap.put("Dimension_Transaction", mainValue.get("Dimension_Transaction"));
 
-                outputMap.put("Added_Date", ""); // TODO
+                outputMap.put("Added_Date", Timestamp.valueOf(startTime)); // TODO
                 outputMap.put("Added_User", ""); // TODO
-                outputMap.put("Updated_Date", ""); // TODO
+                outputMap.put("Updated_Date", Timestamp.valueOf(startTime)); // TODO
                 outputMap.put("Updated_User", ""); // TODO
 
                 resultList.add(outputMap);
@@ -1962,11 +1962,12 @@ public class DWTableMappingInfo {
 
                 outputMap.put("Schema_Name", mainValue.get("Schema_Name"));
                 outputMap.put("Dimension_Transaction", mainValue.get("Dimension_Transaction"));
-
-                outputMap.put("Added_Date", ""); // TODO
-                outputMap.put("Added_User", ""); // TODO
-                outputMap.put("Updated_Date", ""); // TODO
-                outputMap.put("Updated_User", ""); // TODO
+                
+                String userName = context.get("APP_UN");
+                outputMap.put("Added_Date", Timestamp.valueOf(startTime));
+                outputMap.put("Added_User", userName);
+                outputMap.put("Updated_Date", Timestamp.valueOf(startTime));
+                outputMap.put("Updated_User", userName);
 
                 resultList.add(outputMap);
                 //result.put(mainKey, resultValue);
@@ -2479,10 +2480,11 @@ public class DWTableMappingInfo {
                 joinedData.put("File_Id", 0);
                 joinedData.put("Column_Type", "Source");
                 joinedData.put("Active_Flag", true);
-                joinedData.put("Added_Date", null); // TODO  "TalendDate.getCurrentDate()"
-                joinedData.put("Added_User", "ETL Admin"); // TODO
-                joinedData.put("Updated_Date", null); // TODO   "TalendDate.getCurrentDate()"
-                joinedData.put("Updated_User", "ETL Admin"); // TODO
+                String userName = context.get("APP_UN");
+                joinedData.put("Added_Date", Timestamp.valueOf(startTime));
+                joinedData.put("Added_User", userName);
+                joinedData.put("Updated_Date", Timestamp.valueOf(startTime));
+                joinedData.put("Updated_User", userName);
                         
                 // // Perform LEFT OUTER JOIN with aliasValuesTables
                 // if (aliasValuesTables.containsKey(aliasKey)) {
@@ -2585,10 +2587,11 @@ public class DWTableMappingInfo {
                 joinedData.put("File_Id", 0);
                 joinedData.put("Column_Type", "Source");
                 joinedData.put("Active_Flag", true);
-                joinedData.put("Added_Date", null); // TODO "TalendDate.getCurrentDate()"
-                joinedData.put("Added_User", "ETL Admin"); // TODO
-                joinedData.put("Updated_Date", null); // TODO "TalendDate.getCurrentDate()"
-                joinedData.put("Updated_User", "ETL Admin"); // TODO
+                String userName = context.get("APP_UN");
+                joinedData.put("Added_Date", Timestamp.valueOf(startTime));
+                joinedData.put("Added_User", userName);
+                joinedData.put("Updated_Date", Timestamp.valueOf(startTime));
+                joinedData.put("Updated_User", userName);
 
                 // Add the joined data to the result map
                 //resultMap.put(aggregateKey, joinedData);
@@ -2668,10 +2671,11 @@ public class DWTableMappingInfo {
                 combinedData.put("File_Id", 0);
                 combinedData.put("Column_Type", "Anvizent");
                 combinedData.put("Active_Flag", constantEntry.get("Active_Flag"));
-                combinedData.put("Added_Date", null); // TODO "TalendDate.getCurrentDate()"
-                combinedData.put("Added_User", "ETL Admin");
-                combinedData.put("Updated_Date", null); // TODO "TalendDate.getCurrentDate()"
-                combinedData.put("Updated_User", "ETL Admin");
+                String userName = context.get("APP_UN");
+                combinedData.put("Added_Date", Timestamp.valueOf(startTime));
+                combinedData.put("Added_User", userName);
+                combinedData.put("Updated_Date", Timestamp.valueOf(startTime));
+                combinedData.put("Updated_User", userName);
 
                 // combinedData.putAll(transactionLookup); // Merge transaction data
                 // combinedData.putAll(aliasLookup); // Merge alias data
@@ -2783,11 +2787,15 @@ public class DWTableMappingInfo {
                 combinedData.put("File_Id", 0);
                 combinedData.put("Column_Type", "Anvizent"); // Fixed string
                 combinedData.put("Active_Flag", constantEntry.get("Active_Flag"));
-                combinedData.put("Added_Date", null); // TODO DateTime "TalendDate.getCurrentDate()"
-                combinedData.put("Added_User", "ETL Admin"); // TODO
-                combinedData.put("Updated_Date", null); // TODO DateTime "TalendDate.getCurrentDate()"
-                combinedData.put("Updated_User", "ETL Admin"); // TODO
-
+                combinedData.put("Added_Date", Timestamp.valueOf(startTime));
+                combinedData.put("Added_User", userName);
+                combinedData.put("Updated_Date", Timestamp.valueOf(startTime));
+                combinedData.put("Updated_User", userName);
+                // TODO
+//                String addedUser = userName;
+//                Timestamp addedDate = Timestamp.valueOf(startTime);
+//                String updatedUser = userName;
+//                Timestamp updatedDate = Timestamp.valueOf(startTime);
                 // combinedData.putAll(transactionLookup); // Merge transaction data
                 // combinedData.putAll(aliasLookup); // Merge alias data
 
@@ -3195,9 +3203,7 @@ public class DWTableMappingInfo {
         }
 
         // Navin
-        // Applicable to both iterations - Second delte operation outside
-
-        // Funciton remae needed
+        // Applicable to both iterations - Second delete operation outside
 
         public boolean executeDeleteQuery(Connection connection, String connectionId, String tableName, String querySchemaCond) {
             if (connection == null || connectionId == null || tableName == null) {
