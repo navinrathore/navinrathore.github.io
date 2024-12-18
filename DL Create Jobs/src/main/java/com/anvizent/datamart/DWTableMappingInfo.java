@@ -17,6 +17,8 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.sql.Timestamp;
 
+import org.json.JSONObject;
+
 /*
  * Table Mapping Info, DW Table Mapping generation mapping 
  */
@@ -26,29 +28,62 @@ public class DWTableMappingInfo {
     private final Map<String, String> context = new HashMap<>();
     private final Map<String, Object> globalMap = new HashMap<>();
     private Connection dbConnection;
-    private LocalDateTime startTime;
+    private final LocalDateTime startTime;
     private String userName = "ETL Admin"; // default user
-    private String schemaName = null;
+    private String schemaName;
     private String customType;
+    private String companyId;
+    private String connectionId;
+    private String dataSourceName;
+    private int customFlag;
+    private String clientId;
+    private String selectTables;
     private String querySchemaCondition = ""; // based on TABLE_SCHEMA
     private String querySchemaCondition1 = ""; // based on Schema_Name
+
+    private String dbDetails;
 
     // default ctor
     public DWTableMappingInfo() {
         startTime = LocalDateTime.now();
+        //this.dbDetails = dbDetails;
+    }
+
+    public DWTableMappingInfo(String clientId,
+                              String schemaName,
+                              String connectionId,
+                              String dataSourceName,
+                              String customFlag,
+                              String customType,
+                              String companyId,
+                              String selectTables,
+                              String dbDetails) {
+        this.startTime = LocalDateTime.now();
+        this.dbDetails = dbDetails;
+        this.clientId = clientId;
+        this.schemaName = schemaName;
+        this.connectionId = connectionId;
+        this.dataSourceName = dataSourceName;
+        this.customFlag = Integer.parseInt(customFlag);
+        this.customType = customType;
+        this.companyId = companyId;
+        this.selectTables = selectTables;
     }
 
     public static void main(String[] args) {
         DWTableMappingInfo dWTableMappingInfo = new DWTableMappingInfo(); // TODO
+//        DWTableMappingInfo(clientId, schemaName, tableType, connectionId, dataSourceName,
+//                 customFlag, customType, companyId, tableString, dbDetails);
         dWTableMappingInfo.loadContext();
         dWTableMappingInfo.init();
         dWTableMappingInfo.mainProcess();
     }
 
     private void init() {
-        userName = context.get("APP_UN");
-        schemaName = context.get("Schema_Name"); // TODO should go to ctor
-        customType = context.get("Custom_Type");
+        // TODO uncomment
+//        JSONObject jsonDbDetails = new JSONObject(dbDetails);
+//        userName = jsonDbDetails.getString("appdb_username");
+
         // The Below function shall create two Schema Conditions which are used throughout the application
         Map<String, String> conditions  = createQueryConditions(null, schemaName);
         this.querySchemaCondition = conditions.get("query_schema_cond");
@@ -74,24 +109,37 @@ public class DWTableMappingInfo {
 			context.put("APP_PW", "Tt5526");
             // set 1 custom flag is ZERO
 //             context.put("Schema_Name", "dbo"); // FGB_1, AbcAnalysis
+//             schemaName = context.get("Schema_Name");
+//
 //             //context.put("Table_Name","SorDetail"); // SorDetail, AbcAnalysis, AbcElement
 //             context.put("Table_Name","AbcAnalysis"); // SorDetail, AbcAnalysis, AbcElement
 //
-//             context.put("CONNECTION_ID", "2"); // 2,3,4
+//             context.put("CONNECTION_ID", "4"); // 2,3,4
+//             connectionId = context.get("CONNECTION_ID");
 
              // set 2
 			context.put("Schema_Name", "FGB_1"); // FGB_1,
+             schemaName = context.get("Schema_Name");
 			context.put("Table_Name","Finished_Goods_BOM"); // Finished_Goods_BOM
+             //tableName = context.get("Table_Name");
 			context.put("CONNECTION_ID", "41"); // 2,3,4
+             connectionId = context.get("CONNECTION_ID");
              //String customType = "Common";
              context.put("Custom_Type","Common");
+             customType = context.get("Custom_Type");
              context.put("DATASOURCENAME","syspro");
+             dataSourceName = context.get("DATASOURCENAME");
 			context.put("CLIENT_ID", "1009427");
+            clientId = context.get("CLIENT_ID");
 			context.put("TableType", "D");
+            //tableType = context.get("TableType");
             //context.put("Custom_Flag", "0"); // Custom flag should be set to 0 or 1
              context.put("Custom_Flag", "1");
+             customFlag = Integer.parseInt(context.get("Custom_Flag"));
              context.put("Selective_Tables","'Finished_Goods_BOM'");
+             selectTables = context.get("Selective_Tables");
              context.put("Company_Id","syspro");
+             companyId = context.get("Company_Id");
     	 }
     }
 
@@ -197,7 +245,7 @@ public class DWTableMappingInfo {
         String sql = "DELETE FROM ELT_IL_Source_Mapping_Info_Saved " +
                     "WHERE Column_Type = 'Anvizent' " +
                     "AND IL_Table_Name = ?";
-        // TODO check if suffx value is not present. Other places this check is done
+        // TODO check if suffix value is not present. Other places this check is done
         try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
             if (suffixValue != null && !suffixValue.isEmpty())
                 preparedStatement.setString(1, tableName + "_" + suffixValue);
@@ -256,6 +304,7 @@ public class DWTableMappingInfo {
 
     private void mainProcess() {
         dbConnection = getDbConnection(); // initialize the member variable // TODO should be init()
+        // dbConnection= DBHelper.getConnection(DataSourceType.MYSQL, dbDetails); // TODO this one to be used
         if (dbConnection == null) {
             System.out.println("Failed to establish database connection. Exiting.");
             return;
@@ -264,16 +313,14 @@ public class DWTableMappingInfo {
         try {
             // Query Schema Conditions have been initialized in init() function
 
-            //deleteRecordsFromMappingInfoSaved(dbConnection);
-
-            int customFlag = Integer.parseInt(context.get("Custom_Flag"));
+            deleteRecordsFromMappingInfoSaved(dbConnection);
 
             if (customFlag == 0) { //DB,Metadata file
                 System.out.println("Running process when Custom_Flag = 0");
                 mainProcessForFlagZero();
             } else if (customFlag == 1) {  //SHARED_FOLDER, FLAT_FILE, WEB_SERVICE , ONEDRIVE, SAGE_INTACCT, SALESFORCESOAP
                 System.out.println("Running process when Custom_Flag = 1");
-                processForFlagOne();
+                mainProcessForFlagOne();
             } else {
                 System.out.println("Invalid Custom_Flag value. Exiting.");
             }
@@ -286,27 +333,15 @@ public class DWTableMappingInfo {
             }
         }
     }
-          // ... (previous code remains the same)
-
-
         // the main processing logic when custom flag is set to 0.
         public void mainProcessForFlagZero() {
-//            Connection dbConnection = getDbConnection();
-//            if (dbConnection == null) {
-//                System.out.println("Failed to establish database connection. Exiting.");
-//                return;
-//            }
-
             try {
                 int rowsDeleted = deleteRecordsFromMappingInfoSaved(dbConnection);
-                // Done navin
-                String connectionId = context.get("CONNECTION_ID");
 
                 List<Map<String, Object>> metadata = processSelectiveTables(dbConnection); //Form Table Name with Suffix
                 System.out.println("Selective tables processing completed successfully.");
 
                 // Step 2 - iteration
-
                 System.out.println("Size of metadata (custom type 0): " + metadata.size());
                 for (Map<String, Object> record : metadata) {
 
@@ -314,93 +349,54 @@ public class DWTableMappingInfo {
                     String tableType = (String) record.get("Dimension_Transaction");
                     String suffixValue = (String) record.get("Setting_Value");
                     String dwTableName = (String) record.get("DW_Table_Name");
+                    System.out.println("Table_Name: " + tableName + ", Dimension_Transaction: " + tableType + ", Setting_Value: " + suffixValue + ", dwTableName: " + dwTableName );
 
-                    // TODO call setACtiveFlag()
-                    // Update Active Flag in both custom flags
                     boolean activeFlagValue = true; // Type in DB is bit(1)
                     boolean updated = updateActiveFlag(this.dbConnection , connectionId, querySchemaCondition, activeFlagValue);
 
-                    // TODO approproate arguments inside iterative loop// TODO Inputs - particularly querySchemaCond
-                    Map<String, Map<String, Object>> resultMetadata = processSelectiveSourceMetadata(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), "");
+                    Map<String, Map<String, Object>> resultMetadata = processSelectiveSourceMetadata(dbConnection, tableName, connectionId, querySchemaCondition);
 
-                    // This looks fine - data in anti jion is nil
-                    Map<String, Map<String, Object>> y = getSourceMetadata(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), ""); // TODO querySchemaCond
+                    Map<String, Map<String, Object>> y = getSourceMetadata(dbConnection, tableName, connectionId, querySchemaCondition);
                     Map<String, Map<String, Object>> z = getDatatypeConversions(dbConnection);
                     List<Map<String, Object>> x = JoinWithMetadataAndDataTypeConversions(resultMetadata, y, z);
 
-                    // Looks fine but good connection IDs are 2 (has values),3,4,114  but 41 does not have values
-                    Map<String, String> activeAliasValuesTables = getActiveAliasValuesTables(dbConnection, context.get("CONNECTION_ID"), "");
-                    Map<String, Map<String, Object>> fkConstraintLookup = getAggregatedFKConstraint(dbConnection, context.get("Table_Name"), context.get("CONNECTION_ID"), "", "");
+                    Map<String, String> activeAliasValuesTables = getActiveAliasValuesTables(dbConnection, connectionId, querySchemaCondition1);
+                    Map<String, Map<String, Object>> fkConstraintLookup = getAggregatedFKConstraint(dbConnection, tableName, connectionId, querySchemaCondition, querySchemaCondition1);
                     List<Map<String, Object>> tMap2Output = processJoinedData(x, activeAliasValuesTables, fkConstraintLookup);
+                    // End of first part of UNITE
 
-                    // Here ends first part of UNITE
+                    // Start of second part of UNITE
+                    List<Map<String, Object>> tMap9Output = processConstantFieldsWithMetadataAndAliases (dbConnection, dataSourceName,
+                            tableName, companyId, connectionId, querySchemaCondition);
 
-                    // Here starts second part of UNITE
-                    List<Map<String, Object>> tMap9Output = processConstantFieldsWithMetadataAndAliases (dbConnection, context.get("DATASOURCENAME"),
-                            context.get("Table_Name"), context.get("Company_Id"), context.get("CONNECTION_ID"), "");
-
-                    // Unite the records
+                    // Unite the records from first and second parts
                     List<Map<String, Object>> unitedResult = uniteResultOut2(tMap2Output,  tMap9Output);
 
-                    // TODO delete the records from the table
-
-                    boolean rowsDeleted1 = deleteRecordsForColumnTypeAnvizent(dbConnection, tableName, "");
+                    // Delete the records from the table
+                    boolean rowsDeleted1 = deleteRecordsForColumnTypeAnvizent(dbConnection, tableName, suffixValue);
                     boolean rowsDeleted2 = deleteRecordsFromILSourceMappingInfoSaved(dbConnection, connectionId, tableName, querySchemaCondition);
 
                     // Save into DB
-                    // success failure handling
                     String dbTable = "ELT_IL_Source_Mapping_Info_Saved";
                     int rowsAdded = saveDataSourceMappingInfoIntoDB(dbConnection, dbTable, unitedResult);
 
                     // Set Dimension_Transaction for given IL_Table_name
-                    // TODO
-                     updateDimensionTransaction(dbConnection, tableType, dwTableName, connectionId, querySchemaCondition);
-
+                    updateDimensionTransaction(dbConnection, tableType, dwTableName, connectionId, querySchemaCondition);
                 }
-
-//                Map<String, Object> updateResult = updateIncrementalColumnAndPrepareBulk(dbConnection); //Incremental Column updations D, T
-//                System.out.println("update_incremental_column_and_prepare_bulk completed successfully.");
-//
-//                List<Map<String, Object>> eltSourceMetadataAdd = joinAndCalculateIlDataType(dbConnection, (List<Map<String, Object>>) updateResult.get("OUT")); // Compute Datatype Mapping
-//                System.out.println("join_and_calculate_il_data_type completed successfully.");
-//
-//                List<Map<String, Object>> result = mergeMetadataAndCalculateConstraints(dbConnection, eltSourceMetadataAdd); //Pk FK Column definations and formations
-//                System.out.println("merge_settings_and_calculate_il_table_name completed successfully.");
-//
-//                List<Map<String, Object>> out2 = createMetadataConstants(dbConnection);
-//                System.out.println("create_metadata_constants completed successfully.");
-//
-//                List<Map<String, Object>> row1 = uniteResultOut2(result, out2);
-//                System.out.println("tUnite_Result_out2 completed successfully.");
-//
-//                bulk(dbConnection, row1);
-//                System.out.println("Bulk operation completed successfully.");
-
+                System.out.println("Processing for custom_flag == 0 completed successfully.");
             } catch (Exception e) {
-                System.out.println("An error occurred during execution: " + e.getMessage());
+                System.out.println("An error occurred during processing for custom_flag == 0: " + e.getMessage());
+                e.printStackTrace();
             }
-            //finally {
-//                try {
-//                    dbConnection.close();
-//                    System.out.println("Database connection closed.");
-//                } catch (SQLException e) {
-//                    System.out.println("Error closing database connection: " + e.getMessage());
-//                }
-//            }
         }
 
         // the main processing logic when custom flag is set to 1.
-        private void processForFlagOne() {
+        private void mainProcessForFlagOne() {
             try {
                 int rowsDeleted = deleteRecordsFromMappingInfoSaved(dbConnection);
-                // Done - Navin
-                String selectTables = context.get("Selective_Tables");
-                String connectionId = context.get("CONNECTION_ID");
-//
-//                String querySchemaCondition1 = context.get("query_schema_cond1");
-//                querySchemaCondition1 = "" ; // TODO temporary for testing only
-//                String querySchemaCondition =""; // TODO
+
                 List<Map<String, Object>> metadata = getSelectiveSourceMetadataWithSettingsSharedFolderAndWS(selectTables, connectionId, dbConnection);
+                System.out.println("Selective tables processing completed successfully.");
 
                 // Step 2 - iteration
                 System.out.println("Size of metadata (custom type 1): " + metadata.size());
@@ -410,90 +406,53 @@ public class DWTableMappingInfo {
                     String tableType = (String) record.get("Dimension_Transaction");
                     String suffixValue = (String) record.get("Setting_Value");
                     String dwTableName = (String) record.get("DW_Table_Name");
+                    System.out.println("Table_Name: " + tableName + ", Dimension_Transaction: " + tableType + ", Setting_Value: " + suffixValue + ", dwTableName: " + dwTableName );
 
-
-                    // Update Active Flag in both custom flags
                     boolean activeFlagValue = true; // Type in DB is bit(1)
                     boolean updated = updateActiveFlag(this.dbConnection, connectionId, querySchemaCondition, activeFlagValue);
 
-                    // FAS - main
-                    //String tableNameList = context.get("Table_Name"); //TODO is list intended
-                    //String tableName = context.get("Table_Name");
                     String customTypeExcluded = "Common"; // Excluding this custom type
                     Map<String, Map<String, Object>> tMap1Output = processSelectiveSourceMetadataForFlagOne(tableName, connectionId, querySchemaCondition, querySchemaCondition1, customTypeExcluded, tableName);
 
-                    // tMapAnvizent _v2
-                    //querySchemaCond1
                     Map<String, Map<String, String>> customMappingData = getCustomSourceMappingInfo(dbConnection, tableName, connectionId, querySchemaCondition1);
                     // ELT_Datatype_conversion
                     Map<String, Map<String, Object>> conversionDataTypesMap = getDatatypeConversions(dbConnection);
+
                     // tmap2
                     List<Map<String, Object>> tMap2Output = JoinWithMetadataAndDataTypeConversionsForFlagOne(
                             tMap1Output,
                             customMappingData,
                             conversionDataTypesMap);
 
-                    // tmap3 - output join 1st part
-                    // querySchemaCondition1
+                    // tmap3
                     List<Map<String, Object>> tMap3Output = processJoinedDataForFlagOne(tMap2Output, dbConnection, connectionId, querySchemaCondition1);
+                    // End of first part of UNITE
 
-                    // Component 2
-                    String dataSourceName = context.get("DATASOURCENAME");
-                    String companyId = context.get("Company_Id");
+                    // Start of second part of UNITE
                     List<Map<String, Object>> tMap7Output = processConstantFieldsWithMetadataSharedFolderWebServiceAndAliases(
                             dbConnection, dataSourceName, tableName,
                             companyId, connectionId, querySchemaCondition);
 
-                    // Unite the records
+                    // Unite the records from first and second parts
                     List<Map<String, Object>> unitedResult = uniteResultOut2(tMap3Output, tMap7Output);
 
-                    // TODO delete the records from the table
-                    // Checked
+                    // Delete the records from the table
                     boolean rowsDeleted1 = deleteRecordsForColumnTypeAnvizent(dbConnection, tableName, suffixValue);
                     boolean rowsDeleted2 = deleteRecordsFromILSourceMappingInfoSaved(dbConnection, connectionId, tableName, querySchemaCondition);
+
                     // Save into DB
-                    // success failure handling
                     String dbTable = "ELT_IL_Source_Mapping_Info_Saved";
                     int rowsAdded = saveDataSourceMappingInfoIntoDB(dbConnection, dbTable, unitedResult);
 
                     // Set Dimension_Transaction for given IL_Table_name
-                    // TODO
                      updateDimensionTransaction(dbConnection, tableType, dwTableName, connectionId, querySchemaCondition);
                 }
-// Previous code below discard it
-//                List<Map<String, Object>> eltMetadata = fetchEltMetadata(dbConnection);
-//                Map<String, Object> row1 = fetchEltSettings(dbConnection).get(0);
-//                Map<String, Object> row2 = fetchWsConnectionSuffix(dbConnection).get(0);
-//                Map<String, Object> row3 = fetchSharedconnectionsInfo(dbConnection).get(0);
-//
-//                List<Map<String, Object>> transformedRows = eltMetadata.stream()
-//                    .map(row -> transformTableNameAndSuffix(row, row1, row2, row3))
-//                    .collect(Collectors.toList());
-//
-//                List<Map<String, Object>> eltIlSourceMappingInfoSavedUpload = transformedRows;
-//
-//                Map<String, Object> processResult = processAndTransformEltData(dbConnection);
-//                List<Map<String, Object>> updateDf = (List<Map<String, Object>>) processResult.get("update_df");
-//                List<Map<String, Object>> outDf = (List<Map<String, Object>>) processResult.get("OUT");
-//
-//                List<Map<String, Object>> eltSourceMetadataAdd = mergeMetadataAndCalculateConstraints(dbConnection, outDf);
-//
-//                List<Map<String, Object>> result = mergeSettingsAndCalculateIlTableName(dbConnection, eltSourceMetadataAdd);
-//
-//                List<Map<String, Object>> out2 = createConstantColumnsAndIlTableName(dbConnection);
-//
-//                List<Map<String, Object>> row1Final = uniteDataframes(dbConnection, eltSourceMetadataAdd);
-//
-//                bulk(dbConnection, row1Final);
-
-                System.out.println("Processing for custom_flag ==custom_flag 1 completed successfully.");
+                System.out.println("Processing for custom_flag == 1 completed successfully.");
             } catch (Exception e) {
                 System.out.println("An error occurred during processing for custom_flag == 1: " + e.getMessage());
                 e.printStackTrace();
             }
         }
-
-        // FAS - main flow start - tMap1
 
     /**
      * Processes selective source metadata for entries with Isfileupload flag set to '1'.
@@ -504,7 +463,6 @@ public class DWTableMappingInfo {
      *
      * @param tableNameList      Comma-separated list of table names to process.
      * @param connectionId       Identifier for the database connection.
-     * @param querySchemaCondition Additional query filters based on schema conditions.
      * @param customType         Custom type
      * @param tableName          Specific table name being processed.
      * @return A nested map of metadata details organized by categories and properties.
@@ -556,7 +514,7 @@ public class DWTableMappingInfo {
 
                 String updatedDate;
                 if (ilColumnNamechange) {
-                    updatedDate = startTime.toString();//TalendDate.getCurrentDate(); // TODO set date properly - done
+                    updatedDate = startTime.toString();
                 } else {
                     updatedDate = ilmappingValue.get("Updated_Date");
                 }
@@ -583,9 +541,7 @@ public class DWTableMappingInfo {
 
                 innerJoinResultList.add(valueMap);
 
-                // anti-join with the ilSourceMappingData map (!ilSourceMappingData.containsKey(key))
-            } else {
-
+            } else { // anti-join with the ilSourceMappingData map (!lookup2.containsKey(sourceKey))
                 Map<String, Object> valueMap = new HashMap<>();
                 valueMap.put("Connection_Id", sourceMap.get("Connection_Id"));
                 valueMap.put("Schema_Name", sourceMap.get("Schema_Name"));
@@ -596,13 +552,12 @@ public class DWTableMappingInfo {
                 antiInnerJoinResultMap.put(sourceKey, valueMap);
             }
         }
-        // TODO Save innerJoinResultMap into the table; The data doesn't comprise all the fields
-        
+        // Save innerJoinResultMap into the table
         saveInnerJoinedData(innerJoinResultList);
 
         return antiInnerJoinResultMap;
     }
-
+    // Save Inner join data into the table
     private void saveInnerJoinedData(List<Map<String, Object>> rowsData) throws SQLException {
         String dbTable = "ELT_IL_Source_Mapping_Info_Saved";
         if (rowsData != null && !rowsData.isEmpty()) {
@@ -636,106 +591,6 @@ public class DWTableMappingInfo {
             }
             return result;
         }
-
-        private List<Map<String, Object>> fetchEltSettings(Connection connection) throws SQLException {
-            String query = "SELECT Setting_Value " +
-                           "FROM ELT_IL_Settings_Info " +
-                           "WHERE Settings_Category = 'Suffix' " +
-                           "AND Active_Flag = '1' " +
-                           "AND Connection_Id = ? " +
-                           context.get("query_schema_cond1");
-            
-            List<Map<String, Object>> result = new ArrayList<>();
-            try (PreparedStatement pstmt = connection.prepareStatement(query)) {
-                pstmt.setString(1, context.get("CONNECTION_ID"));
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> row = new HashMap<>();
-                        row.put("Setting_Value", rs.getString("Setting_Value"));
-                        result.add(row);
-                    }
-                }
-            }
-            return result;
-        }
-
-        private List<Map<String, Object>> fetchWsConnectionSuffix(Connection connection) throws SQLException {
-            String query = "SELECT id, suffix " +
-                           "FROM minidwcs_ws_connections_mst " +
-                           "WHERE id = ?";
-            
-            List<Map<String, Object>> result = new ArrayList<>();
-            try (PreparedStatement pstmt = connection.prepareStatement(query)) {
-                pstmt.setString(1, context.get("CONNECTION_ID"));
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> row = new HashMap<>();
-                        row.put("id", rs.getString("id"));
-                        row.put("suffix", rs.getString("suffix"));
-                        result.add(row);
-                    }
-                }
-            }
-            return result;
-        }
-
-        private List<Map<String, Object>> fetchSharedconnectionsInfo(Connection connection) throws SQLException {
-            String query = "SELECT File_Id, File_Path " +
-                           "FROM sharedconnections_file_path_info " +
-                           "WHERE Connection_Id = ?";
-            
-            List<Map<String, Object>> result = new ArrayList<>();
-            try (PreparedStatement pstmt = connection.prepareStatement(query)) {
-                pstmt.setString(1, context.get("CONNECTION_ID"));
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> row = new HashMap<>();
-                        row.put("File_Id", rs.getString("File_Id"));
-                        row.put("File_Path", rs.getString("File_Path"));
-                        result.add(row);
-                    }
-                }
-            }
-            return result;
-        }
-
-        private Map<String, Object> transformTableNameAndSuffix(Map<String, Object> eltSelectiveSourceMetadata, 
-                                                                       Map<String, Object> row1, 
-                                                                       Map<String, Object> row2, 
-                                                                       Map<String, Object> row3) {
-            String suffix = null;
-            if (context.get("Custom_Type") == null) {
-                suffix = (String) row2.get("suffix");
-            } else if ("shared_folder".equals(context.get("Custom_Type"))) {
-                suffix = (String) row2.get("suffix");
-            } else if (Arrays.asList("web_service", "OneDrive", "SageIntacct").contains(context.get("Custom_Type"))) {
-                suffix = (String) row3.get("suffix");
-            } else {
-                suffix = (String) row1.get("Setting_Value");
-            }
-
-            Map<String, Object> out = new HashMap<>(eltSelectiveSourceMetadata);
-            out.put("Setting_Value", suffix);
-            out.put("DW_Table_Name", suffix != null ? 
-                    eltSelectiveSourceMetadata.get("Table_Name") + "_" + suffix : 
-                    eltSelectiveSourceMetadata.get("Table_Name"));
-
-            return out;
-        }
-
-        private Map<String, Object> processAndTransformEltData(Connection connection) throws SQLException {
-            // Implementation for processAndTransformEltData
-            // This method should execute the necessary SQL queries and data transformations
-            // Similar to the Python implementation, but using JDBC and Java collections
-            // ...
-
-            // Placeholder implementation
-            Map<String, Object> result = new HashMap<>();
-            result.put("update_df", new ArrayList<>());
-            result.put("OUT", new ArrayList<>());
-            return result;
-        }
-
 
         private List<Map<String, Object>> mergeSettingsAndCalculateIlTableName(Connection connection, List<Map<String, Object>> eltSourceMetadataAdd) throws SQLException {
             String connectionId = context.get("CONNECTION_ID");
@@ -1063,8 +918,8 @@ public class DWTableMappingInfo {
 
 
         private List<Map<String, Object>> processSelectiveTables(Connection connection) throws SQLException {
-            String selectTables = context.get("Selective_Tables");
-            String connectionId = context.get("CONNECTION_ID");
+            //String selectTables = context.get("Selective_Tables");
+            //String connectionId = context.get("CONNECTION_ID");
             String querySchemaCondition1 = context.get("query_schema_cond1");
 
             // StringBuilder queryEltSelective = new StringBuilder();
@@ -1318,10 +1173,10 @@ public class DWTableMappingInfo {
                         "    AND il.Settings_Category = 'Suffix' " +
                         "    AND il.Active_Flag = '1' " +
                         "WHERE " +
-                        "    src.Table_Name IN (" + selectiveTables + ") " + // TODO if more than table
+                    "    src.Table_Name IN (" + selectiveTables + ") " +
                         "    AND src.Isfileupload != '1' " +
-                        "    AND src.Connection_Id = " + connectionId +  // + // TODO proper clause to add below
-                         querySchemaCond1 + ";";// TODO see how to  relate to first table
+                        "    AND src.Connection_Id = " + connectionId +
+                         querySchemaCond1 + ";";
 ;
 
             try (PreparedStatement stmt = con.prepareStatement(query)) {
@@ -1800,8 +1655,6 @@ public class DWTableMappingInfo {
                 e.printStackTrace();
             }
 
-            // TODO Save innerJoinResultMap into the table; The data doesn't comprise all the fields
-            // Verify Once
             saveInnerJoinedData(innerJoinResultList);
 
             return antiInnerJoinResultMap;
@@ -3656,5 +3509,57 @@ public class DWTableMappingInfo {
             }
             return dataType;
         }
-    
+
+    static public class DBHelper {
+        // Helper function to return a Connection object
+        public static Connection getConnection(DataSourceType dataSourceType, String dbDetails) throws SQLException {
+            Connection connection = null;
+
+            JSONObject jsonDbDetails = new JSONObject(dbDetails);
+            String serverIP = jsonDbDetails.getString("appdb_hostname");
+            String serverPort = jsonDbDetails.getString("appdb_port");
+            String serverIPAndPort = serverIP + ":" + serverPort;
+            String schema = jsonDbDetails.getString("appdb_schema");
+            String userName = jsonDbDetails.getString("appdb_username");
+            String password = jsonDbDetails.getString("appdb_password");
+            String vendorType = jsonDbDetails.getString("appdb_vendor_type");
+
+
+            switch (dataSourceType) {
+                case MYSQL:
+                    // MySQL Connection
+                    String mysqlUrl = "jdbc:mysql://" + serverIPAndPort + "/" + schema + "?noDatetimeStringSync=true";
+                    // mysqlUrl = "jdbc:mysql://"+ serverIPAndPort +"/"+ schema +"?useUnicode=true&zeroDateTimeBehavior=convertToNull&characterEncoding=UTF-8&characterSetResults=UTF-8&autoReconnect=true";
+                    connection = DriverManager.getConnection(mysqlUrl, userName, password);
+
+                    // Enable auto-commit
+                    connection.setAutoCommit(true);
+                    if (connection != null) {
+                        System.out.println("DB Connection established");
+                    }
+                    break;
+                case SNOWFLAKE:
+                case SQLSERVER:
+                    throw new SQLException(dataSourceType + " is not supported yet.");
+                default:
+                    throw new SQLException("Unsupported DataSourceType: " + dataSourceType);
+            }
+
+            return connection;
+        }
+    }
 }
+
+// TODo Might need it when added into
+
+//// Enum to represent different data source types
+//enum DataSourceType {
+//    MYSQL,
+//    SNOWFLAKE,
+//    SQLSERVER
+//}
+// Enum to represent different return status
+//enum Status {
+//    SUCCESS,
+//    FAILURE
+//}
