@@ -16,6 +16,7 @@ import com.anvizent.datamart.DWScriptsGenerator.DWConfigScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWSourceInfoScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWTableInfoScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator;
+import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SourceFilterByAggregationData;
 
 public class DWScriptsGenerator {
 
@@ -207,7 +208,7 @@ public class DWScriptsGenerator {
                             ", IL_Table_Name: " + ilTableName);
 
                     // TODO to test only
-                    ilTableName = "SorMaster_Spark3";
+                    ilTableName = "AbcAnalysis_Spark3";
                     connectionId = "114";
                     System.out.println("Connection_Id: " + connectionIdResult +
                             ", Table_Schema: " + tableSchema +
@@ -236,6 +237,11 @@ public class DWScriptsGenerator {
                      Map<String, Object> incrementalParam = getIncrementalParam(ilTableName, loadProperties);
                      System.out.println("incremental name/type: " + incrementalParam);
 
+                     Map<Integer, Map<String, Object>> dwSettings = getDWSettings(conn, Integer.valueOf(connectionId));
+                     System.out.println("DW settings: " + dwSettings);
+
+                     Map<String, String> joinedData = aggregateColumnNames(conn, ilTableName, Integer.valueOf(connectionId), querySchemaCondition);
+                     System.out.println("Aggregated data: " + joinedData);
 
                 }
             } catch (SQLException e) {
@@ -316,6 +322,73 @@ public class DWScriptsGenerator {
             return resultMap;
         }
 
+
+
+        /**
+         * Aggregate IL_COLUMN_NAME for given coonetion id, table_schema, il_table_name
+         */
+        private Map<String, String> aggregateColumnNames(
+                Connection connection,
+                String ilTableName,
+                int connectionId,
+                String querySchemaCond) throws SQLException {
+            String query = "SELECT " +
+                    "`Connection_Id`, " +
+                    "`Table_Schema`, " +
+                    "`IL_Table_Name`, " +
+                    "`IL_Column_Name` " +
+                    "FROM `ELT_IL_Source_Mapping_Info_Saved` " +
+                    "WHERE Column_Type='Source' AND Constraints='PK' " +
+                    "AND IL_Table_Name = ? AND Connection_Id = ? " + querySchemaCond;
+
+            Map<String, String> joinedData = new HashMap<>();
+            Map<Integer, Map<String, Object>> dwSettings = getDWSettings(connection, connectionId);
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName);
+                preparedStatement.setInt(2, connectionId);
+
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        int connId = resultSet.getInt("Connection_Id");
+
+                        String tableSchema = resultSet.getString("Table_Schema");
+                        String ilTableNameRes = resultSet.getString("IL_Table_Name");
+                        Map<String, Object> rowMap = new HashMap<>();
+                        rowMap.put("Table_Schema", tableSchema);
+                        rowMap.put("IL_Table_Name", ilTableNameRes);
+
+                        // if (dwSettings.containsKey(connId)) {
+                        //     rowMap.putAll(dwSettings.get(connId));
+                        // }
+                        Map<String, Object> settingsMap = new HashMap<>(dwSettings.getOrDefault(connId, new HashMap<>()));
+                        String symbol = (String) settingsMap.get("symbol");
+                        symbol = (symbol == null) ? "[" : symbol;
+                        String ilColumnName = resultSet.getString("IL_Column_Name");
+                        if (symbol.equals("[")) {
+                            ilColumnName = "[" + ilColumnName + "]";
+                        } else if (symbol.equals("\"")) {
+                            ilColumnName = "\"" + ilColumnName + "\"";
+                        } else if (symbol.equals("`")) {
+                            ilColumnName = "`" + ilColumnName + "`";
+                        } else {
+                            ilColumnName = "[" + ilColumnName + "]";
+                        }
+
+                        rowMap.put("IL_Column_Name", ilColumnName);
+                        String keyLookup = connId + "-" + tableSchema + "-" + ilTableNameRes;
+                        String existingColumnName = joinedData.getOrDefault(keyLookup, ""); // Default value
+
+                        String aggregatedColumnName = existingColumnName.isEmpty()
+                            ? ilColumnName : existingColumnName + ", " + ilColumnName;
+
+                        joinedData.put(keyLookup, aggregatedColumnName);
+                    }
+                }
+            }
+
+            return joinedData;
+        }
         private Boolean getDeleteFlag(String ilTableName) throws SQLException {
             Map<String, Object> result = getLoadProperties(conn, connectionId,  ilTableName);
              Boolean deleteFlag = (Boolean) result.get("delete_flag");
@@ -567,6 +640,41 @@ public class DWScriptsGenerator {
             }
             return resultMap;
         }
+
+        /**
+         * Returns the DW settings for given connection_id
+         */
+        private Map<Integer, Map<String, Object>> getDWSettings(
+                Connection connection, int connectionId) throws SQLException {
+
+        String query = "SELECT a.connection_id, " +
+                       "Conditional_Date, Incremental_Date, Conditional_Limit, symbol " +
+                       "FROM minidwcs_database_connections a " +
+                       "INNER JOIN minidwcm_database_connectors b ON a.DB_type_id = b.id " +
+                       "INNER JOIN minidwcm_database_types c ON c.id = b.connector_id " +
+                       "INNER JOIN ELT_Connectors_Settings_Info d ON d.Connectors_Id = c.id " +
+                       "WHERE a.connection_id = ?";
+
+        Map<Integer, Map<String, Object>> resultMap = new HashMap<>();
+
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+            preparedStatement.setInt(1, connectionId);
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                while (resultSet.next()) {
+                    int connectionIdKey = resultSet.getInt("connection_id");
+
+                    Map<String, Object> rowMap = new HashMap<>();
+                    rowMap.put("Conditional_Date", resultSet.getObject("Conditional_Date"));
+                    rowMap.put("Incremental_Date", resultSet.getObject("Incremental_Date"));
+                    rowMap.put("Conditional_Limit", resultSet.getObject("Conditional_Limit"));
+                    rowMap.put("symbol", resultSet.getObject("symbol"));
+
+                    resultMap.put(connectionIdKey, rowMap);
+                }
+            }
+        }
+        return resultMap;
+    }
     }
     
     public class DWConfigScriptsGenerator {
