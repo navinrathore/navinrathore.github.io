@@ -1,12 +1,17 @@
 package com.anvizent.datamart;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -17,6 +22,7 @@ import com.anvizent.datamart.DWScriptsGenerator.DWConfigScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWSourceInfoScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWTableInfoScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator;
+import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator.ConstantField;
 import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator.PKColumnsData;
 import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SinkAggregationData;
 import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SourceFilterByAggregationData;
@@ -97,7 +103,7 @@ public class DWScriptsGenerator {
         // schemaName = "dbo";
         tmpTableName = dlName + dlId + jobId;
         startTime = LocalDateTime.now();
-        // startTimeString = getCurrentDateFormatted(startTime);
+        startTimeString = getCurrentDateFormatted(startTime);
         sqlQueries = new SQLQueries();
         try {
             // App DB connection
@@ -116,6 +122,9 @@ public class DWScriptsGenerator {
         this.querySchemaCondition1 = conditions.get("query_schema_cond1");
     }
 
+    public String getTimeStamp() {
+        return startTimeString;
+    }
     /**
      * Generates query conditions based on the provided schema name and optional
      * table alias.
@@ -265,6 +274,53 @@ public class DWScriptsGenerator {
                 return results;
             }
         }
+    }
+
+    // Timestamp in specific format
+    public String getCurrentDateFormatted(LocalDateTime now) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S");
+        String formattedDateTime = now.format(formatter);
+        formattedDateTime = formattedDateTime.replace(" ", "_");
+
+        // Removing dashes, colons and period
+        formattedDateTime = formattedDateTime.replace("-", "").replace(":", "");
+        formattedDateTime = formattedDateTime.replace(".", "");
+        System.out.println("Current Formatted Date and Time: " + formattedDateTime);
+        return formattedDateTime;
+    }
+
+    public static void writeToFile(String data, String fileName) {
+        try {
+            File file = new File(fileName);
+            if (fileName != null && !(fileName.isEmpty())) {
+                if (!file.exists()) {
+                    file.createNewFile();
+                }
+                FileWriter writer = new FileWriter(fileName);
+                writer.write(data);
+                System.out.println("Data successfully written to " + fileName);
+                writer.close();
+            }
+        } catch (IOException e) {
+            System.err.println("An error occurred while writing to the file: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Calculates the total number of rows affected based on the batch execution
+     * result.
+     *
+     * @param result The array returned by executeBatch(), indicating rows affected.
+     * @return Total number of rows affected.
+     */
+    private int getNumberOfRowsUpdated(int[] result) {
+        int totalRowsAffected = 0;
+        for (int count : result) {
+            if (count != Statement.EXECUTE_FAILED) {
+                totalRowsAffected += (count == Statement.SUCCESS_NO_INFO ? 0 : count);
+            }
+        }
+        return totalRowsAffected;
     }
 
     public class DWDBScriptsGenerator {
@@ -1738,7 +1794,6 @@ public class DWScriptsGenerator {
             // Only Delete Logic as of now
             // TODO specific to DIM delete Values
             String dimensionTransaction = "D";
-
             String limitFunct = "";
             try {
                 List<Map<String, String>> tableNames = getILTableNamesWithDimentionTransactionFilter(
@@ -1784,8 +1839,29 @@ public class DWScriptsGenerator {
                 String lhs = getValueNameFromJobPropertiesInfo2(connection, jobType);
                 System.out.println("    lhs: " + lhs);
 
+                // String fileName = getDeletesValueFileName(ilTableName);
+                // System.out.println("deletes value fileName: " + fileName);
 
-                Map<String, AggregatedData> dataMap = getAggregatedMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
+                Map<String, AggregatedData> mainDataMap = getAggregatedMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
+                System.out.println("mainDataMap: " + mainDataMap.size());
+                System.out.println("mainDataMap: " + mainDataMap);
+
+                Map<String, ConstantField> constantFieldsLookupMap = getConstantFieldsMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
+                System.out.println("constantFieldsLookupMap: " + constantFieldsLookupMap.size());
+                System.out.println("constantFieldsLookupMap: " + constantFieldsLookupMap);
+    
+                Map<String, PKColumnsData> pkColumnsLookupMap = getPKCo9lumnsMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
+                System.out.println("pkColumnsLookupMap: " + pkColumnsLookupMap.size());
+                System.out.println("pkColumnsLookupMap: " + pkColumnsLookupMap);
+    
+                List<Map<String, Object>> finalData = finalDataMapping(mainDataMap, constantFieldsLookupMap, pkColumnsLookupMap, lhs);
+                System.out.println("finalData: " + finalData.size());
+                System.out.println("finalData: " + finalData);
+
+                insertIntoEltValuesProperties(conn, finalData);
+
+
+
 
                 // System.out.println("IL_Table_Name: " + iLTableName);
 
@@ -1845,7 +1921,7 @@ public class DWScriptsGenerator {
         // DIM delete Values - main component start
         // row3, row4 (main)
         private Map<String, AggregatedData> getAggregatedMappingInfo(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
-            String query = "SELECT " +
+            String mainQuery = "SELECT " +
                            "  Connection_Id, " +
                            "  TABLE_SCHEMA, " +
                            "  IL_Table_Name, " +
@@ -1863,12 +1939,10 @@ public class DWScriptsGenerator {
             Map<String, Map<String, String>> dataTypeConversions = getDatatypeConversions(connection);
             System.out.println("dataTypeConversions: " + dataTypeConversions.size());
 
-            Map<String, PKColumnsData> pkColumnsLookupMap = getPKColumnsMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
-            System.out.println("pkColumnsLookupMap: " + pkColumnsLookupMap.size());
-            System.out.println("pkColumnsLookupMap: " + pkColumnsLookupMap);
 
 
-            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(mainQuery)) {
                 preparedStatement.setString(1, ilTableName);
                 preparedStatement.setString(2, connectionId);
         
@@ -1892,9 +1966,6 @@ public class DWScriptsGenerator {
                         data.addTiltIlColumnName(tiltIlColumnName);
                         //System.out.println(data.toString());
 
-
-
-
                     }
                     System.out.println("aggregatedResult size : " + aggregatedResult.size());
 
@@ -1902,6 +1973,110 @@ public class DWScriptsGenerator {
             }
         
             return aggregatedResult;
+        }
+
+        private List<Map<String, Object>> finalDataMapping(Map<String, AggregatedData> dataMap, Map<String, ConstantField> constantFieldsLookupMap, Map<String, PKColumnsData> pkColumnsLookupMap, String lhs) {
+           
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+
+            String addedUser = userName;
+            Timestamp addedDate = Timestamp.valueOf(startTime);
+            String updatedUser = userName;
+            Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+            for (Map.Entry<String, AggregatedData> entry : dataMap.entrySet()) {
+                String key = entry.getKey();
+                AggregatedData value = entry.getValue();
+                // Process the key
+                System.out.println("Key: " + key);
+                String connectionId = value.getConnectionId();
+                String tableSchema = value.getTableSchema();
+                String ilTableName = value.getIlTableName();
+                String tiltIlColumnName = value.getTiltIlColumnNames();
+
+                ConstantField constantFields = constantFieldsLookupMap.computeIfAbsent(key, k -> new ConstantField(connectionId, tableSchema, ilTableName));
+                PKColumnsData pkColumns = pkColumnsLookupMap.computeIfAbsent(key, k -> new PKColumnsData(connectionId, tableSchema, ilTableName));
+    
+                // Process the value (AggregatedData object)
+                if (value != null) {
+                    // Example: Access fields or methods of AggregatedData
+                    System.out.println("Value: " + value.toString()); // Adjust as per AggregatedData's fields
+                }
+
+                String var1 = lhs;
+                String query = "Select " + tiltIlColumnName + ", True as DeleteIndicator from Joined_Output where " 
+                            + pkColumns.getWhereCondition();
+                String columns = var1.replaceAll("\\$\\{columns}", "columns=" 
+                            + tiltIlColumnName.replaceAll("\\$", "\\\\\\$")); // Escaping '$' in a regex
+                String tableName = columns.replaceAll("\\$\\{table.name}",
+                        "table.name=`" + ilTableName + "`");
+                String mappingConstantFields = tableName.replaceAll("\\$\\{mapping.constants.fields}",
+                        "mapping.constants.fields=" + constantFields.getIlColumnName());
+                String mappingConstantFieldsTypes = mappingConstantFields.replaceAll(
+                        "\\$\\{mapping.constants.fields.types}",
+                        "mapping.constants.fields.types=" + constantFields.getJavaDataType());
+                String mappingConstantFieldsValues = mappingConstantFieldsTypes.replaceAll(
+                        "\\$\\{mapping.constants.fields.values}",
+                        "mapping.constants.fields.values=" + constantFields.getConstantInsertValue());
+                String sourceCoerceFields = mappingConstantFieldsValues.replaceAll(
+                        "\\$\\{source.coerce.fields}",
+                        "source.coerce.fields=" + pkColumns.getIlColumnName());
+                String sourceCoerceTo = sourceCoerceFields.replaceAll("\\$\\{source.coerce.to}",
+                        "source.coerce.to=" + pkColumns.getCoerceTo());
+                String sourceCoerceFormat = sourceCoerceTo.replaceAll("\\$\\{source.coerce.format}",
+                        "source.coerce.format=" + pkColumns.getCoerceFormat());
+                String whereStgFields = sourceCoerceFormat.replaceAll("\\$\\{where.stg.fields}",
+                        "where.stg.fields=" + pkColumns.getIlColumnName());
+                String whereS3Fields = whereStgFields.replaceAll("\\$\\{where.s3.fields}",
+                        "where.s3.fields=" + pkColumns.getIlColumnName());
+                String deleteFlagQuery = whereS3Fields.replaceAll("\\$\\{deleteflag.query}",
+                        "deleteflag.query=" + query);
+                String stgTargetTableDelete = deleteFlagQuery.replaceAll("\\$\\{stg.target.table.delete}",
+                        "stg.target.table.delete=" + ilTableName + "_Stg");
+                String dwTargetTableDelete = stgTargetTableDelete.replaceAll("\\$\\{dw.target.table.delete}",
+                        "dw.target.table.delete=" + ilTableName);
+                String dwTargetTableInsert = dwTargetTableDelete.replaceAll("\\$\\{dw.target.table.insert}",
+                        "dw.target.table.insert=" + ilTableName + "_Deletes");
+                String deleteFieldName = dwTargetTableInsert.replaceAll("\\$\\{delete.field.name}",
+                        "delete.field.name=DeleteIndicator");
+                String mappingRetainEmit = deleteFieldName.replaceAll("\\$\\{mapping.retain.emit}",
+                        "mapping.retain.emit=DeleteIndicator");
+                String insertConstantColumns = mappingRetainEmit.replaceAll("\\$\\{insert.constant.columns}",
+                        "insert.constant.columns=Added_Date,Added_User,Updated_Date,Updated_User");
+                String insertConstantStoreValues = insertConstantColumns.replaceAll(
+                        "\\$\\{insert.constant.store.values}",
+                        "insert.constant.store.values=\"CONVERT_TZ(sysdate(),\"\"UTC\"\",\"\"Africa/Abidjan\"\")\",'ELT_Admin',"
+                                +
+                                "\"CONVERT_TZ(sysdate(),\"\"UTC\"\",\"\"Africa/Abidjan\"\")\",'ELT_Admin'");
+                String insertConstantStoreTypes = insertConstantStoreValues.replaceAll(
+                        "\\$\\{insert.constant.store.types}",
+                        "insert.constant.store.types=java.util.Date,java.lang.String,java.util.Date,java.lang.String");
+                String batchType = insertConstantStoreTypes.replaceAll("\\$\\{batch.type}",
+                        "batch.type=BATCH_BY_SIZE");
+                String batchSize = batchType.replaceAll("\\$\\{batch.size}", "batch.size=10000");
+
+                // out4
+                String valueFile = batchSize;
+                System.out.println("...    valueFile  : " + valueFile);
+                String fileName = getDeletesValueFileName(ilTableName);
+                System.out.println("deletes value fileName: " + fileName);
+
+                // out3
+                Map<String, Object> resultRow = new HashMap<>();
+                resultRow.put("Connection_Id", connectionId);
+                resultRow.put("TABLE_SCHEMA", tableSchema);
+                resultRow.put("IL_Table_Name", ilTableName);
+                resultRow.put("values_file_name", fileName);
+                resultRow.put("Active_Flag", true);
+                resultRow.put("Added_Date", addedDate);
+                resultRow.put("Added_User", addedUser);
+                resultRow.put("Updated_Date", updatedDate);
+                resultRow.put("Updated_User", updatedUser);
+
+                finalResults.add(resultRow);
+            }
+
+            return finalResults;
         }
 
         // row7, datatype_conversion
@@ -1936,10 +2111,74 @@ public class DWScriptsGenerator {
             return datatypeConversionsMap;
         }
         
+        // constantfields lookup
+        private Map<String, ConstantField> getConstantFieldsMappingInfo(Connection connection, String ilTableName,
+                String connectionId, String querySchemaCond) throws SQLException {
+            // Call getDatatypeConversions() to retrieve the datatype conversion mappings
+            // TODO make one call of this function
+            Map<String, Map<String, String>> datatypeConversions = getDatatypeConversions(connection);
+
+            String query = "SELECT " +
+                    "  Connection_Id, " +
+                    "  TABLE_SCHEMA, " +
+                    "  IL_Table_Name, " +
+                    "  IL_Column_Name, " +
+                    "  IL_Data_Type, " +
+                    "  LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS Datatype, " +
+                    "  Constant_Insert_Value " +
+                    "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                    "WHERE IL_Table_Name = ? " +
+                    "  AND Constant_Insert_Column = 'Y' " +
+                    "  AND Connection_Id = ? " +
+                    querySchemaCond;
+        
+            Map<String, ConstantField> constantFieldsAggregationMap = new HashMap<>();
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName);
+                preparedStatement.setString(2, connectionId);
+
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String connectionIdValue = resultSet.getString("Connection_Id");
+                        String tableSchema = resultSet.getString("TABLE_SCHEMA");
+                        String ilTableNameValue = resultSet.getString("IL_Table_Name");
+                        String ilColumnName = resultSet.getString("IL_Column_Name");
+                        String ilDataType = resultSet.getString("IL_Data_Type");
+                        String datatype = resultSet.getString("Datatype");
+                        String constantInsertValue = resultSet.getString("Constant_Insert_Value");
+
+                        // the left join with datatypeConversions
+                        Map<String, String> conversionDetails = datatypeConversions.get(datatype);
+                        // TODO here value could be null, handle this value in downstream
+                        String javaDataType = null;
+                        if (conversionDetails != null) {
+                            javaDataType = (String) conversionDetails.get("javaDataType");
+                        }
+
+                        // Aggregation key
+                        String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
+                        ConstantField constantFieldsData = constantFieldsAggregationMap.getOrDefault(key, new ConstantField(connectionIdValue, tableSchema, ilTableNameValue));
+                        constantFieldsData.ilColumnName.append(constantFieldsData.ilColumnName.length() > 0 ? ", " : "").append(ilColumnName);
+                        constantFieldsData.ilDataType.append(constantFieldsData.ilDataType.length() > 0 ? ", " : "").append(ilDataType);
+                        constantFieldsData.datatype.append(constantFieldsData.datatype.length() > 0 ? ", " : "").append(datatype);
+                        constantFieldsData.constantInsertValue.append(constantFieldsData.constantInsertValue.length() > 0 ? ", " : "").append(constantInsertValue);
+                        if (javaDataType != null) { // left outer join
+                            constantFieldsData.javaDataType
+                                    .append(constantFieldsData.javaDataType.length() > 0 ? ", " : "")
+                                    .append(javaDataType);
+                        }
+                        constantFieldsAggregationMap.put(key, constantFieldsData);
+                    }
+                }
+            }
+            return constantFieldsAggregationMap;
+        }
+        //PKColumns lookup 
         private Map<String, PKColumnsData> getPKColumnsMappingInfo(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
             
             // Call getDatatypeConversions() to retrieve the datatype conversion mappings
-            // TODO make once call of this function
+            // TODO make one call of this function
             Map<String, Map<String, String>> datatypeConversions = getDatatypeConversions(connection);
         
             String query = "SELECT " +
@@ -1985,7 +2224,7 @@ public class DWScriptsGenerator {
                         Map<String, String> conversionDetails = datatypeConversions.get(datatype);
                         String coerceBack = null;
                         if (conversionDetails != null) {
-                            String javaDataType = (String) conversionDetails.get("Java_Data_Type");
+                            String javaDataType = (String) conversionDetails.get("javaDataType");
                             coerceBack = javaDataType;
                         }
         
@@ -2004,6 +2243,7 @@ public class DWScriptsGenerator {
                                 ? cond : whereCondition + " and " + cond;
 
                         // trim the last character from coerceFormat
+                        // Not dependent on any input value
                         coerceFormat = (coerceFormat == null)
                                 ? "," : coerceFormat + ",";
                         int len = coerceFormat.length() - 1;
@@ -2020,7 +2260,10 @@ public class DWScriptsGenerator {
                         columnsData.ilDataType.append(columnsData.ilDataType.length() > 0 ? ", " : "").append(ilDataType);
                         columnsData.datatype.append(columnsData.datatype.length() > 0 ? ", " : "").append(datatype);
                         columnsData.coerceTo.append(columnsData.coerceTo.length() > 0 ? ", " : "").append(coerceTo);
-                        columnsData.coerceBack.append(columnsData.coerceBack.length() > 0 ? ", " : "").append(coerceBack);
+                        if (coerceBack != null) { // left outer join
+                            columnsData.coerceBack.append(columnsData.coerceBack.length() > 0 ? ", " : "")
+                                    .append(coerceBack);
+                        }
                         columnsData.decimalPrecision.append(columnsData.decimalPrecision.length() > 0 ? ", " : "").append(decimalPrecision);
                         columnsData.decimalScale.append(columnsData.decimalScale.length() > 0 ? ", " : "").append(decimalScale);
                         // last values
@@ -2034,7 +2277,77 @@ public class DWScriptsGenerator {
         
             return pkColumnsAggregationMap;
         }
-        
+
+        /**
+         * Inserts multiple rows into the specified table using a dynamically
+         * constructed SQL INSERT statement. Should below be replaced.
+         */
+        // Inserting data into database
+        private boolean insertIntoEltValuesProperties(Connection conn, List<Map<String, Object>> rowDetails) {
+            String insertSql = "INSERT INTO ELT_VALUES_PROPERTIES (Connection_Id, TABLE_SCHEMA, IL_Table_Name, values_file_name, Active_Flag, Added_Date, Added_User, Updated_Date, Updated_User) " +
+                               "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            int rowsAffected = 0;
+            try (PreparedStatement insertPs = conn.prepareStatement(insertSql)) {
+                for (Map<String, Object> row : rowDetails) {
+
+                    insertPs.setString(1, (String) row.get("Connection_Id"));
+                    insertPs.setString(2, (String) row.get("TABLE_SCHEMA"));
+                    insertPs.setString(3, (String) row.get("IL_Table_Name"));
+                    insertPs.setString(4, (String) row.get("values_file_name"));
+                    insertPs.setBoolean(5, (Boolean) row.get("Active_Flag").equals("1"));
+                    insertPs.setTimestamp(6, (Timestamp) row.get("Added_Date")); // TODO change the values appropriately
+                    insertPs.setString(7, (String) row.get("Added_User"));
+                    insertPs.setTimestamp(8, (Timestamp) row.get("Updated_Date"));
+                    insertPs.setString(9, (String) row.get("Updated_User"));
+
+                    insertPs.addBatch();
+
+                }
+                int[] result = insertPs.executeBatch();
+                rowsAffected = getNumberOfRowsUpdated(result);
+                System.out.println("Total Rows " + rowsAffected + " inserted into the table " + "ELT_VALUES_PROPERTIES");
+
+                // insertPs.executeUpdate();
+                return true;
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+
+        class ConstantField {
+            String connectionId = new String();
+            String tableSchema = new String();
+            String ilTableName = new String();
+            StringBuilder ilColumnName = new StringBuilder();;
+            StringBuilder ilDataType = new StringBuilder();
+            StringBuilder datatype = new StringBuilder() ;
+            StringBuilder constantInsertValue = new StringBuilder();
+            StringBuilder javaDataType = new StringBuilder();
+            // Getters
+            public String getIlColumnName() {
+                return ilColumnName.toString();
+            }
+            public String getIlDataType() {
+                return ilDataType.toString();
+            }
+            public String getDatatype() {
+                return datatype.toString();
+            }
+            public String getConstantInsertValue() {
+                return constantInsertValue.toString();
+            }
+            public String getJavaDataType() {
+                return javaDataType.toString();
+            }
+            // ctor
+            public ConstantField(String connectionId, String tableSchema, String ilTableName) {
+                this.connectionId = connectionId;
+                this.tableSchema = tableSchema;
+                this.ilTableName = ilTableName;
+            }
+        }
+
         class PKColumnsData {
             String connectionId = new String();
             String tableSchema = new String();
@@ -2049,6 +2362,12 @@ public class DWScriptsGenerator {
             StringBuilder decimalPrecision;
             StringBuilder decimalScale;
 
+            public String getWhereCondition() {
+                return whereCondition;
+            }
+            public String getCoerceFormat() {
+                return coerceFormat;
+            }
             public String getIlColumnName() {
                 return ilColumnName.toString();
             }
@@ -2102,7 +2421,16 @@ public class DWScriptsGenerator {
                 this.tableSchema = tableSchema;
                 this.ilTableName = ilTableName;
             }
-                
+            
+            public String getConnectionId() {
+                return connectionId;
+            }
+            public String getTableSchema() {
+                return tableSchema;
+            }
+            public String getIlTableName() {
+                return ilTableName;
+            }
             public String getIlColumnNames() {
                 return ilColumnNames.toString();
             }
@@ -2149,7 +2477,27 @@ public class DWScriptsGenerator {
                        '}';
             }
         }
-        
+
+        public void deleteValuesProperties(Connection connection, String ilTableName, String connectionId)
+                throws SQLException {
+            String query = "DELETE FROM ELT_VALUES_PROPERTIES WHERE IL_Table_Name = ? AND Connection_Id = ?";
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName + "_Deletes");
+                preparedStatement.setString(2, connectionId);
+
+                int rowsAffected = preparedStatement.executeUpdate();
+                System.out.println("ELT_VALUES_PROPERTIES rows deleted for '" + ilTableName + "' : " + rowsAffected);
+            } catch (SQLException e) {
+                throw new SQLException("Error while deleting values properties", e);
+            }
+        }
+
+        private String getDeletesValueFileName(String ilTableName) {
+            String suffix = getTimeStamp();
+            String valueFileName = filePath + ilTableName + "_Deletes_Value_File_" + suffix + ".values.properties"; // filePath is the directory name
+            return valueFileName;
+        }
     }
     
     public class DWSourceInfoScriptsGenerator {
