@@ -111,7 +111,7 @@ public class DWScriptsGenerator {
 
         // connectionId =  "114"; // AbcAnalysis_Mysql8
         // selectTables =  "'SorMaster_Spark3'"; // AbcAnalysis_Mysql8
-        // schemaName = "dbo";
+        schemaName = "dbo";
         tmpTableName = dlName + dlId + jobId;
         startTime = LocalDateTime.now();
         startTimeString = getCurrentDateFormatted(startTime);
@@ -155,7 +155,7 @@ public class DWScriptsGenerator {
 
         // Determine prefix if table alias is provided
         String prefix = (tableAlias != null && !tableAlias.isEmpty()) ? tableAlias + "." : "";
-
+// TODO: only one condition required
         if (schemaName != null && !schemaName.equalsIgnoreCase("NULL") && !schemaName.isEmpty()) {
             querySchemaCondition = " AND " + prefix + "TABLE_SCHEMA = '" + schemaName + "'";
             querySchemaCondition1 = " AND " + prefix + "Schema_Name = '" + schemaName + "'";
@@ -1794,6 +1794,8 @@ public class DWScriptsGenerator {
 
         private static final String DELETES_CONFIG_FILE_STRING = "_Deletes_Config_File_";
         private static final String STG_CONFIG_FILE_STRING = "_Stg_Config_File_";
+        private static final String CONFIG_FILE_STRING = "_Config_File_"; 
+
 
         String limitFunction;
 
@@ -1801,15 +1803,17 @@ public class DWScriptsGenerator {
         public DWConfigScriptsGenerator() {
             // Initialization logic if needed
             // TODO: INTEGRATION: initialize limitFunc from input parameters
+            initConfigScript();
+        }
+
+        private void initConfigScript() {
             String multiIlConfigFile = "Y";
             multiIlConfigFile = "N";
-            //limitFunction = new String();
             if (multiIlConfigFile.equals("Y")) {
                 limitFunction = "";
             } else {
                 limitFunction = " limit 1";
             }
-            // globalMap.put("limitFunction", limitFunction);             
         }
     
         // Method to generate the configuration script
@@ -1826,9 +1830,11 @@ public class DWScriptsGenerator {
             dimSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
             // Dim_STG_IL
 
+            dimStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Trans_SRC_STG
 
+            transSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Trans_STG_Keys
 
@@ -1933,6 +1939,137 @@ public class DWScriptsGenerator {
                     writeToFile(script, fileName);
                 }
                 System.out.println("    SRC to STG script fileName: " + fileName);
+
+                String tableName = "ELT_CONFIG_PROPERTIES";
+                if (finalResults != null && !finalResults.isEmpty()) {
+                    saveDataIntoDB(connection, tableName, finalResults);
+                }
+            }
+        }
+
+        void dimStgToIlConfigScript(Connection connection, String selectiveTables,
+                String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
+
+            String dimensionTransaction = "D";
+            String jobType = "Dimension_stg_il";
+            System.out.println("\ndimensionTransaction: " + dimensionTransaction + ", jobType: " + jobType);
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+                    dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            // System.out.println("\n    list of data (dimStgToIlConfigScript): " + data);
+
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                // String multiIlConfigFile = context.MultiIlConfigFile;
+                // TODO: integration fix above
+                String multiIlConfigFile = "Y";
+                String ilTable = "";
+                if (multiIlConfigFile.equals("Y")) {
+                    ilTable = ilTableName;
+                } else {
+                    ilTable = "STG_IL_ALL";
+                }
+
+                String writeMode = getWriteMode(ilTableName);
+
+                // TODO name change of the function
+                Map<String, AggregatedData> mainDataMap = processSrcStgConfigJobProperties(connection, connectionId, tableSchema, jobType, writeMode);
+                final String fileName = getConfigFileName(ilTableName, CONFIG_FILE_STRING);
+                String addedUser = userName;
+                Timestamp addedDate = Timestamp.valueOf(startTime);
+                String updatedUser = userName;
+                Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+                List<Map<String, Object>> finalResults = new ArrayList<>();
+                for (Map.Entry<String, AggregatedData> entry : mainDataMap.entrySet()) {
+                    String key = entry.getKey();
+                    AggregatedData value = entry.getValue();
+                    System.out.println("Key: " + key);
+                    // the only aggregated field
+                    final String script = value.getScript();
+
+                    Map<String, Object> resultRow = new HashMap<>();
+                    resultRow.put("Connection_Id", connectionId);
+                    resultRow.put("TABLE_SCHEMA", schemaName); // Note schemaName
+                    resultRow.put("IL_Table_Name", ilTable);
+                    resultRow.put("config_file_name", fileName);
+                    resultRow.put("Active_Flag", true);
+                    resultRow.put("Added_Date", addedDate);
+                    resultRow.put("Added_User", addedUser);
+                    resultRow.put("Updated_Date", updatedDate);
+                    resultRow.put("Updated_User", updatedUser);
+                    finalResults.add(resultRow);
+
+                    writeToFile(script, fileName);
+                }
+                System.out.println("    SRC to STG script fileName: " + fileName);
+
+                String tableName = "ELT_CONFIG_PROPERTIES";
+                if (finalResults != null && !finalResults.isEmpty()) {
+                    saveDataIntoDB(connection, tableName, finalResults);
+                }
+            }
+        }
+
+        void transSrcToStgConfigScript(Connection connection, String selectiveTables,
+                String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
+
+            String dimensionTransaction = "T";
+            String jobType = "Transaction_src_stg";
+            System.out.println("\ndimensionTransaction: " + dimensionTransaction + ", jobType: " + jobType);
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+                    dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            // System.out.println("\n    list of data (dimSrcToStgConfigScript): " + data);
+
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                // String multiIlConfigFile = context.MultiIlConfigFile;
+                // TODO: integration fix above
+                String multiIlConfigFile = "Y";
+                String ilTable = "";
+                if (multiIlConfigFile.equals("Y")) {
+                    ilTable = ilTableName + "_Stg";
+                } else {
+                    ilTable = "TRANS_SRC_STG_All";
+                }
+
+                String writeMode = getWriteMode(ilTableName);
+
+                Map<String, AggregatedData> mainDataMap = processSrcStgConfigJobProperties(connection, connectionId, tableSchema, jobType, writeMode);
+                final String fileName = getConfigFileName(ilTableName, STG_CONFIG_FILE_STRING); // TODO  contain clientID
+                String addedUser = userName;
+                Timestamp addedDate = Timestamp.valueOf(startTime);
+                String updatedUser = userName;
+                Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+                List<Map<String, Object>> finalResults = new ArrayList<>();
+                for (Map.Entry<String, AggregatedData> entry : mainDataMap.entrySet()) {
+                    String key = entry.getKey();
+                    AggregatedData value = entry.getValue();
+                    System.out.println("Key: " + key);
+                    // the only aggregated field
+                    final String script = value.getScript();
+
+                    Map<String, Object> resultRow = new HashMap<>();
+                    resultRow.put("Connection_Id", connectionId);
+                    resultRow.put("TABLE_SCHEMA", schemaName); // Note Schema Name
+                    resultRow.put("IL_Table_Name", ilTable);
+                    resultRow.put("config_file_name", fileName);
+                    resultRow.put("Active_Flag", true);
+                    resultRow.put("Added_Date", addedDate);
+                    resultRow.put("Added_User", addedUser);
+                    resultRow.put("Updated_Date", updatedDate);
+                    resultRow.put("Updated_User", updatedUser);
+                    finalResults.add(resultRow);
+
+                    writeToFile(script, fileName);
+                }
+                System.out.println("  Trans SRC to STG script fileName: " + fileName);
 
                 String tableName = "ELT_CONFIG_PROPERTIES";
                 if (finalResults != null && !finalResults.isEmpty()) {
@@ -2212,6 +2349,7 @@ public class DWScriptsGenerator {
         
         private String getConfigFileName(String ilTableName, String configFileString) {
             String suffix = getTimeStamp();
+            // TODO clientId is also  required
             String configFileName = filePath + ilTableName + configFileString + suffix + ".config.properties"; // filePath is the directory name
             return configFileName;
         }
