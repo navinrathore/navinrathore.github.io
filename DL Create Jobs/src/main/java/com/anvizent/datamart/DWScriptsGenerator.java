@@ -382,6 +382,29 @@ public class DWScriptsGenerator {
         }
         return totalRowsAffected;
     }
+    
+    // TODO: loadProperties make a singleton
+    private Boolean getDeleteFlag(String ilTableName) throws SQLException {
+        Map<String, Object> result = getLoadProperties(conn, connectionId, ilTableName);
+        Boolean deleteFlag = (Boolean) result.get("delete_flag");
+        // deleteFlag = null;
+        if (deleteFlag == null) {
+            deleteFlag = false;
+        }
+        System.out.println("Delete Flag: " + deleteFlag);
+        return deleteFlag;
+    }
+
+    private String getWriteMode(String ilTableName) throws SQLException {
+        Map<String, Object> result = getLoadProperties(conn, connectionId, ilTableName);
+        String writeMode = (String) result.get(WRITE_MODE);
+        // writeMode = null;
+        if (writeMode == null) {
+            writeMode = "overwrite";
+        }
+        System.out.println("Write Mode: " + writeMode);
+        return writeMode;
+    }
 
     public class DWDBScriptsGenerator {
 
@@ -1211,33 +1234,6 @@ public class DWScriptsGenerator {
             return joinedData;
         }
 
-        // TODO: loadProperties make a singleton
-        private Boolean getDeleteFlag(String ilTableName) throws SQLException {
-            Map<String, Object> result = getLoadProperties(conn, connectionId,  ilTableName);
-             Boolean deleteFlag = (Boolean) result.get("delete_flag");
-             deleteFlag = null;
-             if (deleteFlag == null) {
-                 deleteFlag = false;
-             }
-             System.out.println("Delete Flag: " + deleteFlag);
-            //  Map<String, Object> result = getLoadProperties(conn, "114",  "SorMaster_Spark3");
-            //  System.out.println("Result Map: " + (String) result.get("write_mode"));
-            //  System.out.println("Result Map: " + (Boolean) result.get("delete_flag"));
-            return deleteFlag;
-        }
-        private Boolean getDeleteFlag(String ilTableName) throws SQLException {
-            Map<String, Object> result = getLoadProperties(conn, connectionId,  ilTableName);
-             Boolean deleteFlag = (Boolean) result.get("delete_flag");
-             deleteFlag = null;
-             if (deleteFlag == null) {
-                 deleteFlag = false;
-             }
-             System.out.println("Delete Flag: " + deleteFlag);
-            //  Map<String, Object> result = getLoadProperties(conn, "114",  "SorMaster_Spark3");
-            //  System.out.println("Result Map: " + (String) result.get("write_mode"));
-            //  System.out.println("Result Map: " + (Boolean) result.get("delete_flag"));
-            return deleteFlag;
-        }
         /**
          * Retrieves conditional Date param from load properties.
          */
@@ -1787,48 +1783,6 @@ public class DWScriptsGenerator {
  * ELT Delete Jobs - start
  */
         
-
- 
-
-        // With Group_Concat - compaer with StringBuilder alternative
-        private String getValueNameFromJobPropertiesInfo(Connection connection) throws SQLException {
-            String query = "SELECT GROUP_CONCAT(Value_Name SEPARATOR ',') AS Value_Names \n" +
-                    "FROM ELT_Job_Properties_Info \n" +
-                    "WHERE Job_Type='Deletes_Dim' \n" +
-                    "  AND Active_Flag=1 \n" +
-                    "  AND Dynamic_Flag=1";
-    
-            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
-                 ResultSet resultSet = preparedStatement.executeQuery()) {
-                if (resultSet.next()) {
-                    return resultSet.getString("Value_Names");
-                }
-                return "";
-            }
-        }
-        // StringBuilder alternative
-        // value of global map lhs set
-        private String getValueNameFromJobPropertiesInfo2(Connection connection) throws SQLException {
-            String query = "SELECT Value_Name \n" +
-                    "FROM ELT_Job_Properties_Info \n" +
-                    "WHERE Job_Type='Deletes_Dim' \n" +
-                    "  AND Active_Flag=1 \n" +
-                    "  AND Dynamic_Flag=1";
-    
-            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
-                 ResultSet resultSet = preparedStatement.executeQuery()) {
-                StringBuilder finalValueName = new StringBuilder();
-                while (resultSet.next()) {
-                    String valueName = resultSet.getString("Value_Name");
-                    if (finalValueName.length() > 0) {
-                        finalValueName.append(",");
-                    }
-                    finalValueName.append(valueName);
-                }
-                return finalValueName.toString();
-            }
-        }
-
         
  /*
  * ELT Delete Jobs - End
@@ -1837,6 +1791,9 @@ public class DWScriptsGenerator {
 
 }
     public class DWConfigScriptsGenerator {
+
+        private static final String DELETES_CONFIG_FILE_STRING = "_Deletes_Config_File_";
+        private static final String STG_CONFIG_FILE_STRING = "_Stg_Config_File_";
 
         String limitFunction;
 
@@ -1862,10 +1819,11 @@ public class DWScriptsGenerator {
             // Placeholder logic for the method
             // Replace this with actual implementation
 
+            String dimensionTransaction = "D";
+            try {
 
             // Dim_SRC_STG
-
-
+            dimSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
             // Dim_STG_IL
 
 
@@ -1886,29 +1844,28 @@ public class DWScriptsGenerator {
 
 
 
-            // Only Delete Logic as of now
-            // TODO specific to DIM delete Values
-            String dimensionTransaction = "D";
-            try {
-                // TODO - testing purpose only
-                List<Map<String, String>> tableNames = getILTableNamesWithDimentionTransactionFilter(
-                        conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunction);
-                System.out.println("list of tableNames: " + tableNames);
+            // // Only Delete Logic as of now
+            // // TODO specific to DIM delete Values
+            //     // TODO - testing purpose only
 
-                // TODO - testing purpose only
-                dimensionTransaction = "T";
-                tableNames = getILTableNamesWithDimentionTransactionFilter(
-                        conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunction);
-                System.out.println("list of tableNames: " + tableNames);
+            //     List<Map<String, String>> tableNames = getILTableNamesWithDimentionTransactionFilter(
+            //             conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunction);
+            //     System.out.println("list of tableNames: " + tableNames);
 
-                dimDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            //     // TODO - testing purpose only
+            //     dimensionTransaction = "T";
+            //     tableNames = getILTableNamesWithDimentionTransactionFilter(
+            //             conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunction);
+            //     System.out.println("list of tableNames: " + tableNames);
+
+            //     dimDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
                 
-                transDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
-                // dimensionTransaction = "D";
-                // dimDeleteScriptComplete(conn, selectTables, connectionId,
-                // querySchemaCondition);
+            //     transDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            //     // dimensionTransaction = "D";
+            //     // dimDeleteScriptComplete(conn, selectTables, connectionId,
+            //     // querySchemaCondition);
 
-                // transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition);
+            //     // transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition);
 
             } catch (SQLException e) {
                 // TODO Auto-generated catch block
@@ -1922,9 +1879,12 @@ public class DWScriptsGenerator {
         String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
 
             String dimensionTransaction = "D";
+            String jobType = "Dimension_src_stg";
+            System.out.println("\ndimensionTransaction: " + dimensionTransaction + ", jobType: " + jobType);
+
             List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
                     dimensionTransaction, connectionId, querySchemaCond, limitFunct);
-            System.out.println("\n    list of data (dimSrcToStgConfigScript): " + data);
+            // System.out.println("\n    list of data (dimSrcToStgConfigScript): " + data);
 
             for (Map<String, String> map : data) {
                 String tableSchema = map.get("Table_Schema");
@@ -1939,9 +1899,46 @@ public class DWScriptsGenerator {
                 } else {
                     ilTable = "DIM_SRC_STG_All";
                 }
+
+                String writeMode = getWriteMode(ilTableName);
+
+                Map<String, AggregatedData> mainDataMap = processSrcStgConfigJobProperties(connection, connectionId, tableSchema, jobType, writeMode);
+                final String fileName = getConfigFileName(ilTableName, STG_CONFIG_FILE_STRING);
+                String addedUser = userName;
+                Timestamp addedDate = Timestamp.valueOf(startTime);
+                String updatedUser = userName;
+                Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+                List<Map<String, Object>> finalResults = new ArrayList<>();
+                for (Map.Entry<String, AggregatedData> entry : mainDataMap.entrySet()) {
+                    String key = entry.getKey();
+                    AggregatedData value = entry.getValue();
+                    System.out.println("Key: " + key);
+                    // the only aggregated field
+                    final String script = value.getScript();
+
+                    Map<String, Object> resultRow = new HashMap<>();
+                    resultRow.put("Connection_Id", connectionId);
+                    resultRow.put("TABLE_SCHEMA", tableSchema);
+                    resultRow.put("IL_Table_Name", ilTable);
+                    resultRow.put("config_file_name", fileName);
+                    resultRow.put("Active_Flag", true);
+                    resultRow.put("Added_Date", addedDate);
+                    resultRow.put("Added_User", addedUser);
+                    resultRow.put("Updated_Date", updatedDate);
+                    resultRow.put("Updated_User", updatedUser);
+                    // resultRow.put("Script", script);
+                    finalResults.add(resultRow);
+
+                    writeToFile(script, fileName);
+                }
+                System.out.println("    SRC to STG script fileName: " + fileName);
+
+                String tableName = "ELT_CONFIG_PROPERTIES";
+                if (finalResults != null && !finalResults.isEmpty()) {
+                    saveDataIntoDB(connection, tableName, finalResults);
+                }
             }
-
-
         }
 
         void dimDeleteConfigScript(Connection connection, String selectiveTables, 
@@ -1980,7 +1977,7 @@ public class DWScriptsGenerator {
 
                 Map<String, AggregatedData> mainDataMap = processConfigJobProperties(connection, connectionId, tableSchema, jobType);
 
-                final String fileName = getDeletesConfigFileName(ilTableName);
+                final String fileName = getConfigFileName(ilTableName, DELETES_CONFIG_FILE_STRING);
                 String addedUser = userName;
                 Timestamp addedDate = Timestamp.valueOf(startTime);
                 String updatedUser = userName;
@@ -2057,7 +2054,7 @@ public class DWScriptsGenerator {
                 Map<String, AggregatedData> mainDataMap = processConfigJobProperties(connection, connectionId,
                         tableSchema, jobType);
 
-                final String fileName = getDeletesConfigFileName(ilTableName);
+                final String fileName = getConfigFileName(ilTableName, DELETES_CONFIG_FILE_STRING);
                 String addedUser = userName;
                 Timestamp addedDate = Timestamp.valueOf(startTime);
                 String updatedUser = userName;
@@ -2095,6 +2092,48 @@ public class DWScriptsGenerator {
                 }
 
             }
+        }
+
+        private Map<String, AggregatedData> processSrcStgConfigJobProperties(Connection connection, String connectionId, String tableSchema, String jobType, String writeMode) {
+            String query = "SELECT Id, Job_Type, Component, Key_Name, Value_Name, Active_Flag, Dynamic_Flag "
+                    + "FROM ELT_Job_Properties_Info "
+                    + "WHERE Job_Type = '" + jobType + "' AND Active_Flag = 1"
+                    + " and Write_Mode_Type = '" + writeMode + "'";
+
+            Map<String, AggregatedData> aggregatedDataMap = new HashMap<>();
+            try (Statement statement = connection.createStatement();
+                    ResultSet resultSet = statement.executeQuery(query)) {
+
+                while (resultSet.next()) {
+                    String keyName = resultSet.getString("Key_Name");
+                    String valueName = resultSet.getString("Value_Name");
+
+                    // Transformation
+                    String condition = (valueName != null && valueName.length() > 0) ? "=" : "";
+                    String script = keyName + condition + valueName;
+
+                    // IL_Table_Name transformation is done but not used in output
+                    // config_file_name transformation is done but not used in output
+                    // Some fields including above ones are common. Hence, updated once later.
+
+                    // Aggregation
+                    String key = connectionId + "-" + tableSchema + "-" + jobType;
+                    AggregatedData aggregatedData = aggregatedDataMap.getOrDefault(key, new AggregatedData());
+                    aggregatedData.addScript(script);
+                    aggregatedDataMap.put(key, aggregatedData);
+                }
+            } catch (SQLException e) {
+                System.err.println("Error processing config job properties: " + e.getMessage());
+            }
+
+            // Output aggregated data
+            // TODO: removal required
+            aggregatedDataMap.forEach((key, data) -> {
+                System.out.println("Key: " + key);
+                System.out.println("Aggregated Script: " + data.getScript());
+            });
+
+            return aggregatedDataMap;
         }
 
         private Map<String, AggregatedData> processConfigJobProperties(Connection connection, String connectionId, String tableSchema, String jobType) {
@@ -2171,9 +2210,9 @@ public class DWScriptsGenerator {
             }
         }
         
-        private String getDeletesConfigFileName(String ilTableName) {
+        private String getConfigFileName(String ilTableName, String configFileString) {
             String suffix = getTimeStamp();
-            String configFileName = filePath + ilTableName + "_Deletes_Config_File_" + suffix + ".config.properties"; // filePath is the directory name
+            String configFileName = filePath + ilTableName + configFileString + suffix + ".config.properties"; // filePath is the directory name
             return configFileName;
         }
     }
