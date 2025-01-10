@@ -5,6 +5,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -16,6 +17,8 @@ import com.anvizent.datamart.DWScriptsGenerator.DWConfigScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWSourceInfoScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWTableInfoScriptsGenerator;
 import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator;
+import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator.PKColumnsData;
+import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SinkAggregationData;
 import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SourceFilterByAggregationData;
 
 public class DWScriptsGenerator {
@@ -86,11 +89,12 @@ public class DWScriptsGenerator {
 
     private void init() {
         // TODO test data 
-        connectionId =  "41"; // AbcAnalysis_Mysql8
-        selectTables =  "'Finished_Goods_BOM'"; // AbcAnalysis_Mysql8
+        connectionId =  "41"; // '41', '2' AbcAnalysis_Mysql8
+        // TODO use multiple selectTables
+        selectTables =  "'Finished_Goods_BOM', 'AbcAnalysis_Mysql8', 'Monthly_Forecasted_Qty_FQ'"; // AbcAnalysis_Mysql8
         // connectionId =  "114"; // AbcAnalysis_Mysql8
         // selectTables =  "'SorMaster_Spark3'"; // AbcAnalysis_Mysql8
-
+        // schemaName = "dbo";
         tmpTableName = dlName + dlId + jobId;
         startTime = LocalDateTime.now();
         // startTimeString = getCurrentDateFormatted(startTime);
@@ -143,8 +147,10 @@ public class DWScriptsGenerator {
     }
     private void generateScripts() {
 
+        // TODO - update comments
             // The DB scripts generator
-        if (new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
+        
+        if (false && new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
@@ -175,6 +181,92 @@ public class DWScriptsGenerator {
         // throw new UnsupportedOperationException("Unimplemented method 'generateScripts'");
     }
     
+    /**
+     * get data load peroperties from the `Settings` field of the table
+     * `ELT_IL_Load_Configs`, parses Settings value as JSON, and
+     * returns a map of the "dataloadproperties" key.
+     */
+    public Map<String, Object> getLoadProperties(Connection connection, String connectionId, String ilTableName)
+            throws SQLException {
+        String query = "SELECT `Settings` " +
+                "FROM `ELT_IL_Load_Configs` " +
+                "WHERE `Connection_Id` = ? AND `IL_Table_Name` = ?";
+
+        Map<String, Object> resultMap = new HashMap<>();
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+            preparedStatement.setString(1, connectionId);
+            preparedStatement.setString(2, ilTableName);
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                if (resultSet.next()) {
+                    String settingsJson = resultSet.getString("Settings");
+                    // TODO test purpose
+                    settingsJson = "{\"dataloadproperties\":{"
+                            + "\"write_mode\":\"upsert\","
+                            + "\"custom_filter\":\"sample_filter\","
+                            + "\"conditional\":{"
+                            + "\"conditional_date_param\":\"1 July 2025\","
+                            + "\"trailing_months\":\"July\""
+                            + "},"
+                            + "\"limit\":\"sample_limit\","
+                            + "\"historical\":{"
+                            + "\"historical_date_param\":\"1 dec 2024\""
+                            + "},"
+                            + "\"incremental\":{"
+                            + "\"incremental_refresh_column_type\":\"date\","
+                            + "\"incremental_refresh_column_name\":\"incre_name\""
+                            + "},"
+                            + "\"delete_flag\":false"
+                            + "}}";
+                    System.out.println(settingsJson);
+                    // id, date and other for type
+
+                    JSONObject settings = new JSONObject(settingsJson);
+                    if (settings.has("dataloadproperties")) {
+                        JSONObject dataloadProperties = settings.getJSONObject("dataloadproperties");
+                        resultMap = dataloadProperties.toMap();
+                    }
+                }
+            }
+        }
+        return resultMap;
+    }
+
+    // Both delete values group initial query. differnce is Dimension_Transaction
+    // Also, valid for two Config Groups
+    private List<Map<String, String>> getILTableNamesWithDimentionTransactionFilter(
+            Connection connection,
+            String selectiveTables,
+            String dimensionTransaction,
+            String connectionId,
+            String querySchemaCond, String limitFunct) throws SQLException {
+
+        String query = "SELECT DISTINCT \n" +
+                "    Connection_Id, \n" +
+                "    Table_Schema, \n" +
+                "    IL_Table_Name \n" +
+                "FROM ELT_IL_Source_Mapping_Info_Saved \n" +
+                "WHERE IL_Table_Name IN (" + selectiveTables + ") \n" +
+                "  AND Dimension_Transaction = ? \n" +
+                "  AND Connection_Id = ? " + querySchemaCond + " " + limitFunct;
+
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+            preparedStatement.setString(1, dimensionTransaction);
+            preparedStatement.setString(2, connectionId);
+
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                List<Map<String, String>> results = new ArrayList<>();
+                while (resultSet.next()) {
+                    Map<String, String> row = new HashMap<>();
+                    row.put("Connection_Id", resultSet.getString("Connection_Id"));
+                    row.put("Table_Schema", resultSet.getString("Table_Schema"));
+                    row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
+                    results.add(row);
+                }
+                return results;
+            }
+        }
+    }
+
     public class DWDBScriptsGenerator {
 
         private static final String CONDITIONAL_DATE = "Conditional_Date";
@@ -210,16 +302,24 @@ public class DWScriptsGenerator {
                     // TODO to test only
                     ilTableName = "AbcAnalysis_Spark3";
                     connectionId = "114";
+                    tableSchema = "dbo";
+                    schemaName = "dbo";
                     System.out.println("Connection_Id: " + connectionIdResult +
                             ", Table_Schema: " + tableSchema +
                             ", IL_Table_Name: " + ilTableName);
                      Boolean deleteFlag = getDeleteFlag(ilTableName);
 
-                     List<Map<String, Object>> masterData = getMasterSourceMappingInfoData(conn, ilTableName, connectionId, querySchemaCondition);
+                     Map<String, Map<String, Object>>  masterData = getMasterSourceMappingInfoData(conn, ilTableName, connectionId, querySchemaCondition);
                      System.out.println("Size of master data: " + masterData.size());
-                     Map<String, String> data = getSymbolValueforConnectionId(conn, ilTableName);
-                     System.out.println("Size of Symbol value data: " + data.size());
-                     System.out.println("data: " + data);
+                     System.out.println("master data: " + masterData);
+
+                    doCoreTransformations(conn, connectionId,tableSchema, ilTableName, querySchemaCondition);
+
+
+                    // USed inside above funciton
+                    //  Map<String, String> data = getSymbolValueforConnectionId(conn, connectionId);
+                    //  System.out.println("Size of Symbol value data: " + data.size());
+                    //  System.out.println("data: " + data);
                      
                      // TODO have single copy of the below
                      Map<String, Object> loadProperties = getLoadProperties(conn, connectionId,  ilTableName);
@@ -240,10 +340,34 @@ public class DWScriptsGenerator {
                      Map<Integer, Map<String, Object>> dwSettings = getDWSettings(conn, Integer.valueOf(connectionId));
                      System.out.println("DW settings: " + dwSettings);
 
+                     // row6 (lookup)
                      Map<String, String> joinedData = aggregateColumnNames(conn, ilTableName, Integer.valueOf(connectionId), querySchemaCondition);
                      System.out.println("Aggregated data: " + joinedData);
 
+                     // Deletes(lookup)
+                     String query = getCoreSourceMappingInfoQuery(querySchemaCondition);
+                     Map<String, Map<String, Object>> res = processSourceMapping(conn, ilTableName, connectionId, query);
+                     System.out.println("Ptocess Source mapping: " + res);
+                    // ELT_Selective_Source_Metadata`
+                     Map<String, Map<String, Object>> selectivesourcemeta = getSelectiveSourceMetadata(conn, connectionId, querySchemaCondition);
+                     System.out.println("Selective Source metadata size: " + selectivesourcemeta.size());
+                    //  System.out.println("Selective Source metadata: " + selectivesourcemeta);
+                     // ELT_Custom_Source_Metadata_Info
+                     Map<String, Map<String, Object>> sourcemeta = getCustomSourceMetadata(conn);
+                     System.out.println("Custom Source metadata size : " + sourcemeta.size());
+                    //  System.out.println("Custom Source metadata : " + sourcemeta);
+
+
+
+
+
+
                 }
+            // Another Script
+            // Create Script transaction group
+            List<Map<String, Object>> createScripData = GetCreateScriptScriptTransactionData(conn, selectTables, connectionId, querySchemaCondition);
+            System.out.println("Create Script : " + createScripData);
+
             } catch (SQLException e) {
                 // TODO return failure status
                 e.printStackTrace();
@@ -252,15 +376,427 @@ public class DWScriptsGenerator {
             return Status.SUCCESS;
         }
 
+        private void doCoreTransformations(Connection connection, String connectionId, String tableSchema, String ilTableName, String querySchemaCond) throws SQLException {
+
+            System.out.println("");
+            System.out.println("");
+            Map<String, Map<String, Object>>  masterData = getMasterSourceMappingInfoData(conn, ilTableName, connectionId, querySchemaCondition);
+            Map<String, Object> masterDataForConId = masterData.get(ilTableName);
+            String row1Symbol = (String) masterDataForConId.get("Symbol");
+            String row1Columns = (String) masterDataForConId.get("Columns");
+            String row1SourceTableName = (String) masterDataForConId.get("Source_Table_Name");
+            // String row1SourceTableName = (String) masterDataForConId.get("Source_Table_Name");
+
+            System.out.println("symbol: " + row1Symbol);
+            System.out.println("Columns: " + row1Columns);
+            System.out.println("Columns: " + row1Columns);
+
+
+            // Initialize variables with null checks and ternary operators where applicable.
+            //delete_flag
+            Boolean deleteFlag = getDeleteFlag(ilTableName);
+            // String deleteFlag = (String) globalMap.get("delete_flag");
+
+            Map<String, Object> loadProperties = getLoadProperties(conn, connectionId,  ilTableName);
+            System.out.println("loadProperties: " + loadProperties);
+            // row2
+            // DW Settings - server name
+            Map<Integer, Map<String, Object>> row6DWSettings = getDWSettings(conn, Integer.valueOf(connectionId));
+            // System.out.println("row6DWSettings value: " + row6DWSettings);
+            String row2Name = (String) row6DWSettings.get(Integer.parseInt(connectionId)).get("name");
+            System.out.println("name: " + row2Name);
+
+            // row6 (lookup)
+            Map<String, String> joinedData = aggregateColumnNames(conn, ilTableName, Integer.valueOf(connectionId), querySchemaCond);
+            String row6LookupKey = connectionId + "-" + tableSchema + "-" + ilTableName;
+            String row6ILColumnName = joinedData.get(row6LookupKey);
+            System.out.println("Aggregated data: " + joinedData);
+            System.out.println("row6LookupKey: " + row6LookupKey);
+            System.out.println("row6ILColumnName: " + row6ILColumnName);
+
+            // server
+            String server = row2Name == null ? ""
+                    : row2Name.equals("SQL Server") ? " Order by  " + (row6ILColumnName == null ? " Company_Id " : row6ILColumnName) : "";
+            System.out.println("server: " + server);
+
+            // conditional_limit
+            Map<String, Object> limitParam = getConditionalLimitParam(ilTableName, loadProperties);
+            System.out.println("conditional Limit: " + limitParam);
+            String limitParamSettingsCategory = (String) limitParam.get("Settings_Category");
+            String limitParamSettingsValue = (String) limitParam.get("Setting_Value");
+            // Var_conditionallimit
+            String conditionalLimitSettingCategory = limitParamSettingsCategory == null ? "" : limitParamSettingsCategory;
+            // Var_limit
+            String limitValue = limitParamSettingsCategory == null ? ""
+                    : limitParamSettingsCategory.equals("Conditional_Limit") ? limitParamSettingsValue : "";
+            System.out.println("conditional Limit: " + conditionalLimitSettingCategory + ", " + limitValue);
+
+            // dates (lookup)
+            Map<String, Object> datesDWSettings = row6DWSettings.get(Integer.parseInt(connectionId));
+            System.out.println("datesDWSettings: " + datesDWSettings);
+            String datesIncrementalDate = (String) datesDWSettings.get("Incremental_Date");
+            String datesConditionalDate = (String) datesDWSettings.get("Conditional_Date");
+
+            // conditional (lookup)
+            Map<String, Object> conditional = getConditionalDateParam(ilTableName, loadProperties);
+            System.out.println("conditional date: " + conditional);
+            // String dateParamConditionalLimit = (String) conditional.get("Settings_Category");
+            // Var_ConditionalLimitsett
+            String conditionalLimitSetting = (String) datesDWSettings.get("Conditional_Limit") == null ? "limit" : (String) datesDWSettings.get("Conditional_Limit");
+            System.out.println("conditionalLimitSetting: " + conditionalLimitSetting);
+            // Var_conditional
+            String conditionalSetting = conditional.get("Settings_Category") == null ? "" : (String) conditional.get("Settings_Category");
+            System.out.println("conditionalSetting: " + conditionalSetting);
+
+            // incremental1
+            Map<String, Object> incremental1 = getIncrementalParam(ilTableName, loadProperties);
+            System.out.println("incremental name/type: " + incremental1);
+            String incremental1SettingCategory = (String) incremental1.get("Settings_Category");
+            String incremental1SettingValue = (String) incremental1.get("Setting_Value");
+            // Var_Incremental
+            String incrementalSetting = incremental1SettingCategory == null ? "" : incremental1SettingCategory;
+
+            // Conditional_filter1 (Lookup), Conditional_filter
+            Map<String, Object> conditionalFilter1 = getConditionalFilterParam(ilTableName, loadProperties);
+            System.out.println("conditional Filter: " + conditionalFilter1);
+            // Conditionalfilter
+            String conditionalFilter = conditionalFilter1.get("Settings_Category") == null ? "" : (String) conditionalFilter1.get("Settings_Category");
+            System.out.println("conditionalFilter: " + conditionalFilter);
+            //IL_Column_Name
+            String ilColumnName = row1Symbol == null ? " {Schema_Company} as Company_Id ," :
+                row1Symbol.equals("\"") ? " {Schema_Company} as \"Company_Id\" ," : " {Schema_Company} as Company_Id ,";
+            System.out.println("ilColumnName: " + ilColumnName);
+
+            // Conditional_limit, Limit
+            Map<String, Object> conditionalLimit = getConditionalLimitParam(ilTableName, loadProperties);
+            System.out.println("conditional Limit: " + limitParam);
+
+            String statement = conditionalLimitSetting.toLowerCase().contains("limit") ? " Select "
+                    : conditionalLimitSetting.toLowerCase().contains("top")
+                            && conditionalLimit.get("Settings_Category") == null ? " Select  "
+                                    : conditionalLimitSetting.toLowerCase().contains(
+                                            "top") && conditionalLimit.get("Settings_Category").equals("Conditional_Limit") ? " Select TOP " + limitValue : " Select ";
+            System.out.println("statement: " + statement);
+
+            // Deletes(lookup)
+            String query = getCoreSourceMappingInfoQuery(querySchemaCondition);
+            Map<String, Map<String, Object>> deletesAggregateData = processSourceMapping(conn, ilTableName, connectionId, query);
+            System.out.println("Ptocess Source mapping: " + deletesAggregateData);
+            Map<String, Object> deletes = deletesAggregateData.get(ilTableName);
+
+            String columns = row1Columns;
+            String deleteColumns = (String) deletes.get("Columns");
+
+            String ending = " from " + (row1Symbol == null ? ("[" + row1SourceTableName + "]") :
+                row1Symbol.equals("[") ? ("[" + schemaName + "].[" + row1SourceTableName + "]") :
+                row1Symbol.equals("`") ? ("`" + schemaName + "`.`" + row1SourceTableName + "`") :
+                row1Symbol.equals("\"") ? ("\"" + schemaName + "\".\"" + row1SourceTableName + "\"") :
+                ("[" + schemaName + "].[" + row1SourceTableName + "]"));
+            System.out.println("deleteColumns: " + deleteColumns);
+            System.out.println("ending: " + ending);
+
+            String script = statement + ilColumnName + columns + ending;
+            String deleteScript = statement + ilColumnName + deleteColumns + ending + " " + server;
+
+            String incrementalDate = incremental1SettingCategory == null && datesIncrementalDate == null ? "" :
+                incremental1SettingCategory == null ? "" :
+                incremental1SettingCategory.equals("Incremental_Date") && datesIncrementalDate == null ? "{DateColumn}>={date}" :
+                incremental1SettingCategory.equals("Incremental_Date") ? datesIncrementalDate : "";
+
+            String finalIncrementalDate = incrementalDate == null ? "" : incrementalDate.replace("DateColumnName", incremental1SettingValue);
+
+            String incrementalId = incremental1SettingCategory == null ? "" :
+                incremental1SettingCategory.equals("Incremental_Id") ? incremental1SettingValue + ">={ColumnId}" : "";
+
+            String incrementalFinal = incremental1SettingCategory == null ? "" :
+                incremental1SettingCategory.equals("Incremental_Date") ? finalIncrementalDate :
+                incremental1SettingCategory.equals("Incremental_Id") ? incrementalId : "";
+
+            String conditionalDate = conditionalSetting == null && datesConditionalDate == null ? "" :
+                conditionalSetting.equals("Conditional_Date") && datesConditionalDate == null ? "{DateColumn}>=DATEADD(m,-{Months1}, GetDate())" :
+                conditionalSetting.equals("Conditional_Date") ? datesConditionalDate : "";
+
+            String finalConditionalDate = conditionalDate == null ? "" : conditionalDate.replace("DateColumnName", (String) conditional.get("Setting_Value"));
+
+            // Months1, Months
+            Map<String, Object> months1 = getConditionalMonthParam(ilTableName, loadProperties);
+            System.out.println("months1: " + months1);
+
+
+            String finalConditionalMonth = finalConditionalDate == null ? "" : finalConditionalDate.replace("Months", (String) months1.get("Setting_Value"));
+            System.out.println("finalConditionalMonth: " + finalConditionalMonth);
+
+            String conditionalFilterValue = conditionalFilter == null ? ""
+                    : conditionalFilter.equals("Conditional_Filter") ? conditionalFilter : "";
+
+            // Round 2
+            // final_conditions_limit
+            String finalConditionsLimit = conditionalSetting == null && conditionalLimitSettingCategory == null && conditionalFilter == null ? "" :
+                conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.equals("Conditional_Filter") ?
+                    " Where " + finalConditionalMonth + " and " + conditionalFilterValue + " limit " + limitValue :
+                conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.isEmpty() ?
+                    " Where " + finalConditionalMonth + " limit " + limitValue :
+                conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.equals("Conditional_Filter") ?
+                    " Where " + finalConditionalMonth + " and " + conditionalFilterValue :
+                conditionalSetting.isEmpty() && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.equals("Conditional_Filter") ?
+                    " Where " + conditionalFilterValue + " limit " + limitValue :
+                conditionalSetting.isEmpty() && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.equals("Conditional_Filter") ?
+                    " Where " + conditionalFilterValue :
+                conditionalSetting.isEmpty() && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.isEmpty() ?
+                    " limit " + limitValue :
+                conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.isEmpty() ?
+                    " Where " + finalConditionalMonth : " ";
+                
+                System.out.println("finalConditionsLimit: " + finalConditionsLimit);
+
+                // final_conditions_top
+                // Initialize the final_conditions_top variable with appropriate conditions.
+                String finalConditionsTop = (conditionalSetting == null && conditionalLimitSettingCategory == null && conditionalFilter == null) ? "" :
+                (conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + finalConditionalMonth + " and " + conditionalFilterValue :
+                (conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.isEmpty()) ?
+                    " Where " + finalConditionalMonth :
+                (conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + finalConditionalMonth + " and " + conditionalFilterValue :
+                (conditionalSetting.isEmpty() && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + conditionalFilterValue :
+                (conditionalSetting.isEmpty() && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + conditionalFilterValue :
+                (conditionalSetting.isEmpty() && conditionalLimitSettingCategory.equals("Conditional_Limit") && conditionalFilter.isEmpty()) ?
+                    " " :
+                (conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.isEmpty()) ?
+                    " Where " + finalConditionalMonth : " ";
+                System.out.println("finalConditionsTop: " + finalConditionsTop);
+
+                // final_Incremental_limit
+                // Initialize the finalIncrementalLimit variable with appropriate conditions.
+                String finalIncrementalLimit = (incrementalSetting == null && conditionalLimitSettingCategory == null && conditionalFilter == null) ? "" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) && 
+                conditionalLimitSettingCategory.equals("Conditional_Limit") && 
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    "/* Where " + incrementalFinal + " and " + conditionalFilterValue + " limit " + limitValue + " */" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) && 
+                conditionalLimitSettingCategory.equals("Conditional_Limit") && 
+                conditionalFilter.isEmpty()) ?
+                    "/* Where " + incrementalFinal + " limit " + limitValue + " */" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) && 
+                conditionalLimitSettingCategory.isEmpty() && 
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    "/* Where " + incrementalFinal + " and " + conditionalFilterValue + " */" :
+                (incrementalSetting.isEmpty() && 
+                conditionalLimitSettingCategory.equals("Conditional_Limit") && 
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + conditionalFilterValue + " limit " + limitValue :
+                (incrementalSetting.isEmpty() && 
+                conditionalLimitSettingCategory.isEmpty() && 
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + conditionalFilterValue :
+                (incrementalSetting.isEmpty() && 
+                conditionalLimitSettingCategory.equals("Conditional_Limit") && 
+                conditionalFilter.isEmpty()) ?
+                    " limit " + limitValue :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) && 
+                conditionalLimitSettingCategory.isEmpty() && 
+                conditionalFilter.isEmpty()) ?
+                    "/* Where " + incrementalFinal + " */" : "";
+                System.out.println("finalIncrementalLimit: " + finalIncrementalLimit);
+
+                // final_Incremental_top
+                String finalIncrementalTop = (incrementalSetting == null && conditionalLimitSettingCategory == null && conditionalFilter == null) ? "" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) &&
+                conditionalLimitSettingCategory.equals("Conditional_Limit") &&
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    "/* Where " + incrementalFinal + " and " + conditionalFilterValue + " */" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) &&
+                conditionalLimitSettingCategory.equals("Conditional_Limit") &&
+                conditionalFilter.isEmpty()) ?
+                    "/* Where " + incrementalFinal + " */" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) &&
+                conditionalLimitSettingCategory.isEmpty() &&
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    "/* Where " + incrementalFinal + " and " + conditionalFilterValue + " */" :
+                (incrementalSetting.isEmpty() &&
+                conditionalLimitSettingCategory.equals("Conditional_Limit") &&
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + conditionalFilterValue :
+                (incrementalSetting.isEmpty() &&
+                conditionalLimitSettingCategory.isEmpty() &&
+                conditionalFilter.equals("Conditional_Filter")) ?
+                    " Where " + conditionalFilterValue :
+                (incrementalSetting.isEmpty() &&
+                conditionalLimitSettingCategory.equals("Conditional_Limit") &&
+                conditionalFilter.isEmpty()) ?
+                    " l" :
+                ((incrementalSetting.equals("Incremental_Id") || incrementalSetting.equals("Incremental_Date")) &&
+                conditionalLimitSettingCategory.isEmpty() &&
+                conditionalFilter.isEmpty()) ?
+                    "/* Where " + incrementalFinal + " */" : "";
+
+                System.out.println("finalIncrementalTop: " + finalIncrementalTop);
+
+                // Hostory_Date (lookup)
+                Map<String, Object> historyDate = getHistoricalDateParam(ilTableName, loadProperties);
+                System.out.println("historical date: " + historyDate);
+                String historyDateSettingsCategory = (String) historyDate.get("Settings_Category");
+                String historyDateSettingValue = (String) historyDate.get("Setting_Value");
+
+                String varHist = historyDateSettingsCategory == null || historyDateSettingsCategory.isEmpty() ? "" : historyDateSettingsCategory;
+
+                String historicalCond = varHist.isEmpty() && conditionalFilterValue.isEmpty() ? "" :
+                    conditionalFilterValue.isEmpty() && varHist.equals("historical") ?
+                        "where " + historyDateSettingValue + ">={fromdate} and " + historyDateSettingValue + "<={todate} " :
+                    conditionalFilterValue.equals("Conditional_Filter") && varHist.equals("historical") ?
+                        "where " + historyDateSettingValue + ">={fromdate} and " + historyDateSettingValue + "<={todate} and " + conditionalFilterValue : "";
+                
+                String condition = (String) conditional.get("Setting_Value") == null || (String) months1.get("Setting_Value") == null ? "" :
+                    " Where " + (String) conditional.get("Setting_Value") + " >=DATEADD(m,-" + (String) months1.get("Setting_Value") + ", GetDate())";
+
+                    System.out.println("historicalCond: " + historicalCond);
+                    System.out.println("condition: " + condition);
+
+
+                    // ELT_Selective_Source_Metadata
+                    Map<String, Map<String, Object>> selectiveSourceMetadata = getSelectiveSourceMetadata(conn, connectionId, querySchemaCondition);
+                    System.out.println("Selective Source metadata size: " + selectiveSourceMetadata.size());
+                    String selectiveLookupKey = connectionId + "-" + tableSchema + "-" + row1SourceTableName;
+
+                    Map<String, Object> selectiveData = selectiveSourceMetadata.get(selectiveLookupKey);
+                    Boolean IsWebService = (Boolean) selectiveData.get("IsWebService"); // TODO Boolean
+                    String selectiveCustomType = (String) selectiveData.get("Custom_Type");
+                    Integer fileId = (Integer) selectiveData.get("File_Id"); // TODO int
+
+                     // ELT_Custom_Source_Metadata_Info
+                     Map<String, Map<String, Object>> sourcemeta = getCustomSourceMetadata(conn);
+                     System.out.println("Custom Source metadata size : " + sourcemeta.size());
+                     String customLookupKey = connectionId + "-" + tableSchema + "-" + row1SourceTableName;
+                     Map<String, Object> customData = selectiveSourceMetadata.get(customLookupKey);
+                     String customCustomType = (String) customData.get("Custom_Type");
+                     String customConnectionType = (String) customData.get("connection_type");
+
+                    //  System.out.println("Custom Source metadata : " + sourcemeta);
+
+                    String finalCondition;
+
+                    if (incrementalSetting == null && conditionalSetting == null) {
+                        finalCondition = "";
+                    } else if ((incrementalSetting.equals("Incremental_Date") || incrementalSetting.equals("Incremental_Id")) &&
+                               conditionalLimitSetting.toLowerCase().contains("limit")) {
+                        finalCondition = finalIncrementalLimit;
+                    } else if ((incrementalSetting.equals("Incremental_Date") || incrementalSetting.equals("Incremental_Id")) &&
+                               conditionalLimitSetting.toLowerCase().contains("top")) {
+                        finalCondition = finalIncrementalTop;
+                    } else if (conditionalSetting.equals("Conditional_Date") &&
+                               conditionalLimitSetting.toLowerCase().contains("limit")) {
+                        finalCondition = finalConditionsLimit;
+                    } else if (conditionalSetting.equals("Conditional_Date") &&
+                               conditionalLimitSetting.toLowerCase().contains("top")) {
+                        finalCondition = finalConditionsTop;
+                    } else if (conditionalLimitSetting.toLowerCase().contains("top")) {
+                        finalCondition = finalConditionsTop;
+                    } else if (conditionalLimitSetting.toLowerCase().contains("limit")) {
+                        finalCondition = finalConditionsLimit;
+                    } else {
+                        finalCondition = "";
+                    }
+                    
+                    String finalScript = script + "\n" + finalCondition + " " + server;
+
+                    String finalizedScript = IsWebService ? " "
+                            : selectiveCustomType.equals("FileasSource") ? ""
+                                    : selectiveCustomType.equals("OneDrive") ? "" : finalScript;
+                    
+                    String customType = selectiveCustomType.equals("Common") && IsWebService ? "API"
+                            : selectiveCustomType.equals("Common") && !IsWebService ? "DB" : selectiveCustomType;
+
+
+                    String maxSelectScript = incremental1SettingCategory == null ? "" :
+                        incremental1SettingCategory.equals("Incremental_Date") ?
+                            "Select max(" + incremental1SettingValue + ") as Incremental_Date from " +
+                            (row1Symbol == null ? "[" + row1SourceTableName + "]" :
+                            row1Symbol.equals("[") ? schemaName + ".[" + row1SourceTableName + "]" :
+                            row1Symbol.equals("`") ? schemaName + ".`" + row1SourceTableName + "`" :
+                            schemaName + ".[" + row1SourceTableName + "]") + "\n" + finalCondition :
+                        incremental1SettingCategory.equals("Incremental_Id") ?
+                            "Select max(" + incremental1SettingValue + ") as Incremental_Id from " +
+                            (row1Symbol == null ? "[" + row1SourceTableName + "]" :
+                            row1Symbol.equals("[") ? schemaName + ".[" + row1SourceTableName + "]" :
+                            row1Symbol.equals("`") ? schemaName + ".`" + row1SourceTableName + "`" :
+                            schemaName + ".[" + row1SourceTableName + "]") + finalCondition : "";
+                    
+                        System.out.println("finalScript: " + finalScript);
+                        System.out.println("finalizedScript: " + finalizedScript);
+                        System.out.println("customType: " + customType);
+                        System.out.println("maxSelectScript: " + maxSelectScript);
+
+                    String historicalScript = historyDateSettingsCategory == null ? "" :
+                        script + "\n" + historicalCond + " " + server;
+                    
+                    String finalHistoricalQuery = IsWebService ? " " :
+                    selectiveCustomType.equals("FileasSource") ? "" : historicalScript;
+                    
+                    String customTypeInfo = customCustomType == null ?
+                        (selectiveCustomType == null ? "" :
+                        (selectiveCustomType.toLowerCase().equals("common") &&
+                        fileId != 0 ? "metadata_file" :
+                        selectiveCustomType.toLowerCase().equals("common") &&
+                        fileId == 0 ? "dbSource" :
+                        selectiveCustomType)) : customCustomType;
+                    
+                    String sourceType = customCustomType == null ?
+                        (selectiveCustomType == null ? "" :
+                        (selectiveCustomType.toLowerCase().equals("common") &&
+                        fileId != 0 && IsWebService ? "web_service" :
+                        selectiveCustomType.toLowerCase().equals("common") &&
+                        fileId == 0 && !IsWebService ? "dbSource" :
+                        selectiveCustomType.toLowerCase().equals("metadata_file") &&
+                        fileId != 0 && IsWebService ? "web_service" :
+                        selectiveCustomType.toLowerCase().equals("metadata_file") &&
+                        fileId == 0 && !IsWebService ? "dbSource" :
+                        selectiveCustomType.toLowerCase().equals("metadata_file") ? "shared_folder" :
+                        selectiveCustomType.toLowerCase().equals("dbSource") ? "dbSource" :
+                        selectiveCustomType.toLowerCase().equals("web_service") ? "web_service" :
+                        selectiveCustomType)) : customConnectionType;
+
+                        System.out.println("historicalScript: " + historicalScript);
+                        System.out.println("finalHistoricalQuery: " + finalHistoricalQuery);
+
+                        System.out.println("customTypeInfo: " + customTypeInfo);
+
+                        System.out.println("sourceType: " + sourceType);
+
+                        // Data to be saved
+                        Map<String, Object> finalData = new HashMap<>();
+                        finalData.put("Connection_Id", connectionId);
+                        finalData.put("Table_Schema", tableSchema);
+                        finalData.put("IL_Table_Name", ilTableName);
+                        finalData.put("Source_Table_Name", row1SourceTableName);
+                        finalData.put("Select_Script", finalizedScript);
+                        finalData.put("IsWebService", IsWebService);
+                        finalData.put("Source_Type", sourceType);
+                        finalData.put("Custom_Type", customType);
+                        finalData.put("Max_Query", maxSelectScript);
+                        finalData.put("Historical_Query", finalHistoricalQuery);
+                        finalData.put("Delete_Script", deleteFlag ? deleteScript : "" );
+
+                        System.out.println("######################################################");
+                        System.out.println(finalData);
+                        System.out.println("######################################################");
+
+            // Continue converting the remaining logic and add comments for clarity where needed.
+            System.out.println("");
+            System.out.println("");
+
+        }
          /**
          * Executes a SQL query to fetch master data from `ELT_IL_Source_Mapping_Info_Saved`and returns the result as a list of maps.
          */
-        public List<Map<String, Object>> getMasterSourceMappingInfoData(Connection connection, String ilTableName,
+        // TODO main flow master data
+        public Map<String, Map<String, Object>> getMasterSourceMappingInfoData(Connection connection, String ilTableName,
                 String connectionId, String querySchemaCond) throws SQLException {
             
             // TODO It should be single value at max
-            Map<String, String> data = getSymbolValueforConnectionId(conn, ilTableName);
-
+            Map<String, String> symbolValues = getSymbolValueforConnectionId(conn, connectionId);
+            System.out.println("Size of Symbol value data:  " + symbolValues.size());
             String query = "SELECT Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, IL_Data_Type, " +
                     "Constraints, Source_Table_Name, Source_Column_Name, PK_Constraint, PK_Column_Name, " +
                     "FK_Constraint, FK_Column_Name " +
@@ -271,32 +807,57 @@ public class DWScriptsGenerator {
                     "AND IL_Table_Name = ? " +
                     "AND Connection_Id = ? " + querySchemaCond;
 
-            List<Map<String, Object>> resultList = new ArrayList<>();
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
             try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
                 preparedStatement.setString(1, ilTableName);
                 preparedStatement.setString(2, connectionId);
                 try (ResultSet resultSet = preparedStatement.executeQuery()) {
                     while (resultSet.next()) {
-                        Map<String, Object> row = new HashMap<>();
-                        row.put("Connection_Id", resultSet.getString("Connection_Id"));
-                        row.put("Table_Schema", resultSet.getString("Table_Schema"));
-                        row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
-                        row.put("IL_Column_Name", resultSet.getString("IL_Column_Name"));
-                        row.put("IL_Data_Type", resultSet.getString("IL_Data_Type"));
-                        row.put("Constraints", resultSet.getString("Constraints"));
-                        row.put("Source_Table_Name", resultSet.getString("Source_Table_Name"));
-                        row.put("Source_Column_Name", resultSet.getString("Source_Column_Name"));
-                        row.put("PK_Constraint", resultSet.getString("PK_Constraint"));
-                        row.put("PK_Column_Name", resultSet.getString("PK_Column_Name"));
-                        row.put("FK_Constraint", resultSet.getString("FK_Constraint"));
-                        row.put("FK_Column_Name", resultSet.getString("FK_Column_Name"));
+                        String ilTableNameRes = resultSet.getString("IL_Table_Name");
+                        String ilColumnName = resultSet.getString("IL_Column_Name");
+                        String sourceColumnName = resultSet.getString("Source_Column_Name");
 
-                        resultList.add(row);
+                        // Transformation
+                        //Map<String, Object> settingsMap = new HashMap<>(dwSettings.getOrDefault(connectionId, new HashMap<>()));
+                        String symbol = (String) symbolValues.get("symbol");
+                        symbol = (symbol == null) ? "[" : symbol;
+                        
+                        String column = "";
+                        if (sourceColumnName == null || sourceColumnName.isEmpty() ||
+                                sourceColumnName.equals("NULL")) {
+                            column = " '' as " + ilColumnName;
+                        } else if (symbol.equals("[")) {
+                            column = "[" + sourceColumnName + "] as [" + ilColumnName + "]";
+                        } else if (symbol.equals("`")) {
+                            column = "`" + sourceColumnName + "` as `" + ilColumnName + "`";
+                        } else if (symbol.equals("\"")) {
+                            column = "\"" + sourceColumnName + "\" as \"" + ilColumnName + "\"";
+                        } else {
+                            column = "[" + sourceColumnName + "] as [" + ilColumnName + "]";
+                        }
+
+                        // Create or update the entry in the resultMap
+                        resultMap.computeIfAbsent(ilTableNameRes, key -> new HashMap<>());
+                        Map<String, Object> tableData = resultMap.get(ilTableNameRes);
+    
+                        // Aggregate Columns (concatenate) and Symbol (assign last value)
+                        String existingColumns = (String) tableData.getOrDefault("Columns", "");
+                        tableData.put("Columns", existingColumns.isEmpty() ? column : existingColumns + ", " + column);
+                        String existingILColumnName = (String) tableData.getOrDefault("IL_Column_Name", "");
+                        tableData.put("IL_Column_Name", existingILColumnName.isEmpty() ? ilColumnName : existingILColumnName + ", " + ilColumnName);
+                        // Last
+                        tableData.put("Connection_Id", resultSet.getString("Connection_Id"));
+                        tableData.put("Table_Schema", resultSet.getString("Table_Schema"));
+                        tableData.put("Source_Table_Name", resultSet.getString("Source_Table_Name"));
+                        tableData.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));                      
+                        tableData.put("Symbol", symbol);
+    
+                        resultMap.put(ilTableNameRes, tableData);
                     }
                 }
             }
 
-            return resultList;
+            return resultMap;
         }
 
         public Map<String, String> getSymbolValueforConnectionId(Connection connection, String connectionId)
@@ -321,8 +882,152 @@ public class DWScriptsGenerator {
             }
             return resultMap;
         }
+        // ELT_Selective_Source_Metadata`
+        public Map<String, Map<String, Object>> getSelectiveSourceMetadata(Connection connection, String connectionId, String querySchemaCond) throws SQLException {
+            String query = "SELECT DISTINCT " +
+                    "Connection_Id, Schema_Name, Table_Name, IsWebService, Custom_Type, File_Id " +
+                    "FROM ELT_Selective_Source_Metadata " +
+                    "WHERE Connection_Id = ? " + querySchemaCond;
+    
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+    
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, connectionId);
+    
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String connectionIdRes = resultSet.getString("Connection_Id");
+                        String schemaName = resultSet.getString("Schema_Name");
+                        String tableName = resultSet.getString("Table_Name");
+    
+                        String key = connectionIdRes + "-" + schemaName + "-" + tableName;
+    
+                        resultMap.computeIfAbsent(key, k -> new HashMap<>());
+                        Map<String, Object> tableData = resultMap.get(key);
+    
+                        tableData.put("Connection_Id", connectionIdRes);
+                        tableData.put("Schema_Name", schemaName);
+                        tableData.put("Table_Name", tableName);
+                        tableData.put("IsWebService", resultSet.getBoolean("IsWebService"));
+                        tableData.put("Custom_Type", resultSet.getString("Custom_Type"));
+                        tableData.put("File_Id", resultSet.getInt("File_Id"));
+    
+                        resultMap.put(key, tableData);
+                    }
+                }
+            }
+            return resultMap;
+        }
+        // ELT_Custom_Source_Metadata_Info
+        public Map<String, Map<String, Object>> getCustomSourceMetadata(Connection connection) throws SQLException {
+            String query = "SELECT " +
+                    "Connection_Id, Schema_Name, Table_Name, Source_Table_Name, Custom_Type, connection_type " +
+                    "FROM ELT_Custom_Source_Metadata_Info";
+    
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+    
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                 ResultSet resultSet = preparedStatement.executeQuery()) {
+    
+                while (resultSet.next()) {
+                    String connectionId = resultSet.getString("Connection_Id");
+                    String schemaName = resultSet.getString("Schema_Name");
+                    String tableName = resultSet.getString("Table_Name");
+                    String sourceTableName = resultSet.getString("Source_Table_Name");
+    
+                    String key = connectionId + "-" + schemaName + "-" + tableName;
+    
+                    resultMap.computeIfAbsent(key, k -> new HashMap<>());
+                    Map<String, Object> tableData = resultMap.get(key);
+    
+                    tableData.put("Connection_Id", connectionId);
+                    tableData.put("Schema_Name", schemaName);
+                    tableData.put("Table_Name", tableName);
+                    tableData.put("Source_Table_Name", sourceTableName);
+                    tableData.put("Custom_Type", resultSet.getString("Custom_Type"));
+                    tableData.put("connection_type", resultSet.getString("connection_type"));
+    
+                    resultMap.put(key, tableData);
+                }
+            }
+    
+            return resultMap;
+        }
+        /**
+         * Aggregate IL_COLUMN_NAME, Columns for given il_table_name
+         */
 
+        // TOOD -  // Deletes(lookup) not used in first/main - ELT_IL_Source_Mapping_Info_Saved
+        public Map<String, Map<String, Object>> processSourceMapping(Connection connection, String ilTableName, String connectionId, String query) throws SQLException {
+    
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            Map<Integer, Map<String, Object>> dwSettings = getDWSettings(connection, Integer.parseInt(connectionId));
 
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName);
+                preparedStatement.setString(2, connectionId);
+    
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String ilTableNameRes = resultSet.getString("IL_Table_Name");
+                        String ilColumnName = resultSet.getString("IL_Column_Name");
+                        String sourceColumnName = resultSet.getString("Source_Column_Name");
+
+                        // Transformation
+                        Map<String, Object> settingsMap = new HashMap<>(dwSettings.getOrDefault(connectionId, new HashMap<>()));
+                        String symbol = (String) settingsMap.get("symbol");
+                        symbol = (symbol == null) ? "[" : symbol;
+                        
+                        String column = "";
+                        if (sourceColumnName == null || sourceColumnName.isEmpty() ||
+                                sourceColumnName.equals("NULL")) {
+                            column = " '' as " + ilColumnName;
+                        } else if (symbol.equals("[")) {
+                            column = "[" + sourceColumnName + "] as [" + ilColumnName + "]";
+                        } else if (symbol.equals("`")) {
+                            column = "`" + sourceColumnName + "` as `" + ilColumnName + "`";
+                        } else if (symbol.equals("\"")) {
+                            column = "\"" + sourceColumnName + "\" as \"" + ilColumnName + "\"";
+                        } else {
+                            column = "[" + sourceColumnName + "] as [" + ilColumnName + "]";
+                        }
+
+                        // Create or update the entry in the resultMap
+                        resultMap.computeIfAbsent(ilTableNameRes, key -> new HashMap<>());
+                        Map<String, Object> tableData = resultMap.get(ilTableNameRes);
+    
+                        // Aggregate Columns (concatenate) and Symbol (assign last value)
+                        String existingColumns = (String) tableData.getOrDefault("Columns", "");
+                        tableData.put("Columns", existingColumns.isEmpty() ? column : existingColumns + ", " + column);
+                        String existingILColumnName = (String) tableData.getOrDefault("IL_Column_Name", "");
+                        tableData.put("IL_Column_Name", existingILColumnName.isEmpty() ? ilColumnName : existingILColumnName + ", " + ilColumnName);
+                        // Last
+                        tableData.put("Connection_Id", resultSet.getString("Connection_Id"));
+                        tableData.put("Table_Schema", resultSet.getString("Table_Schema"));
+                        tableData.put("Source_Table_Name", resultSet.getString("Source_Table_Name"));
+                        tableData.put("Symbol", symbol);
+    
+                        resultMap.put(ilTableNameRes, tableData);
+                    }
+                }
+            }
+    
+            return resultMap;
+        }
+
+        private String getCoreSourceMappingInfoQuery(String querySchemaCond) {
+            String query = "SELECT " +
+                    "Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, IL_Data_Type, Constraints, " +
+                    "Source_Table_Name, Source_Column_Name, PK_Constraint, PK_Column_Name, FK_Constraint, FK_Column_Name " +
+                    "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                    "WHERE (Constant_Insert_Column IS NULL OR Constant_Insert_Column != 'Y') " +
+                    "AND Constraints NOT IN ('FK', 'SK') " +
+                    "AND Constraints = 'PK' " +
+                    "AND IL_Column_Name != 'Company_Id' " +
+                    "AND IL_Table_Name = ? " +
+                    "AND Connection_Id = ? " + querySchemaCond;
+            return query;
+        }
 
         /**
          * Aggregate IL_COLUMN_NAME for given coonetion id, table_schema, il_table_name
@@ -389,6 +1094,8 @@ public class DWScriptsGenerator {
 
             return joinedData;
         }
+
+        // loadProperties make a singleton
         private Boolean getDeleteFlag(String ilTableName) throws SQLException {
             Map<String, Object> result = getLoadProperties(conn, connectionId,  ilTableName);
              Boolean deleteFlag = (Boolean) result.get("delete_flag");
@@ -648,7 +1355,7 @@ public class DWScriptsGenerator {
                 Connection connection, int connectionId) throws SQLException {
 
         String query = "SELECT a.connection_id, " +
-                       "Conditional_Date, Incremental_Date, Conditional_Limit, symbol " +
+                       "Conditional_Date, Incremental_Date, Conditional_Limit, symbol, c.name " +
                        "FROM minidwcs_database_connections a " +
                        "INNER JOIN minidwcm_database_connectors b ON a.DB_type_id = b.id " +
                        "INNER JOIN minidwcm_database_types c ON c.id = b.connector_id " +
@@ -668,6 +1375,7 @@ public class DWScriptsGenerator {
                     rowMap.put("Incremental_Date", resultSet.getObject("Incremental_Date"));
                     rowMap.put("Conditional_Limit", resultSet.getObject("Conditional_Limit"));
                     rowMap.put("symbol", resultSet.getObject("symbol"));
+                    rowMap.put("name", resultSet.getObject("name"));
 
                     resultMap.put(connectionIdKey, rowMap);
                 }
@@ -675,8 +1383,330 @@ public class DWScriptsGenerator {
         }
         return resultMap;
     }
+
+    /*
+     * Create_Script_Transactioon Group - main left outer Join
+     */
+    public List<Map<String, Object>> GetCreateScriptScriptTransactionData(Connection dbConnection, String selectiveTables,
+            String connectionId, String querySchemaCond) throws SQLException {
+        List<Map<String, Object>> resultList = new ArrayList<>();
+
+        // Main Query
+        String mainQuery = "SELECT DISTINCT " +
+                "  `Connection_Id`, " +
+                "  `Table_Schema`, " +
+                "  `IL_Table_Name`, " +
+                "  `Dimension_Transaction` " +
+                "FROM `ELT_IL_Source_Mapping_Info_Saved` " +
+                "WHERE `IL_Table_Name` IN (" + selectiveTables + ") " +
+                "  AND `Dimension_Transaction` = 'T' " +
+                "  AND `Connection_Id` = ? " +
+                querySchemaCond;
+
+        // Lookup Query
+        String lookupQuery = "SELECT DISTINCT " +
+                "  `Connection_Id`, " +
+                "  `Table_Schema`, " +
+                "  `IL_Table_Name`, " +
+                "  `Source_Table_Name`, " +
+                "  `Dimension_Transaction` " +
+                "FROM `ELT_IL_Source_Mapping_Info_Saved` " +
+                "WHERE `IL_Table_Name` IN (" + selectiveTables + ") " +
+                "  AND `Source_Table_Name` IS NOT NULL " +
+                "  AND `Source_Table_Name` != '' " +
+                "  AND `Dimension_Transaction` = 'T' " +
+                "  AND `Connection_Id` = ? " +
+                querySchemaCond;
+
+        // SQL for LEFT OUTER JOIN
+        String joinQuery = "SELECT " +
+                "  main.`Connection_Id`, " +
+                "  main.`Table_Schema`, " +
+                "  main.`IL_Table_Name`, " +
+                "  main.`Dimension_Transaction`, " +
+                "  lookup.`Source_Table_Name` " +
+                "FROM (" + mainQuery + ") AS main " +
+                "LEFT OUTER JOIN (" + lookupQuery + ") AS lookup " +
+                "ON main.`Connection_Id` = lookup.`Connection_Id` " +
+                "  AND main.`Table_Schema` = lookup.`Table_Schema` " +
+                "  AND main.`IL_Table_Name` = lookup.`IL_Table_Name`";
+
+        try (PreparedStatement ps = dbConnection.prepareStatement(joinQuery)) {
+            // Set parameters for Connection_Id
+            ps.setString(1, connectionId);
+            ps.setString(2, connectionId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                // Process Result Set
+                while (rs.next()) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("Connection_Id", rs.getString("Connection_Id"));
+                    row.put("Table_Schema", rs.getString("Table_Schema"));
+                    row.put("IL_Table_Name", rs.getString("IL_Table_Name"));
+                    row.put("Dimension_Transaction", rs.getString("Dimension_Transaction"));
+                    row.put("Source_Table_Name", rs.getString("Source_Table_Name"));
+                    resultList.add(row);
+                }
+            }
+        }
+
+        return resultList;
     }
+
+    //#####################################################
+        // Alter JOb
+        // Note String return type
+        // Simple timestamp may also work
+        // global variable set as "max_updated_date"
+        private String getMaxUpdatedDate(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws Exception {
+            String query = "SELECT MAX(Updated_Date) FROM ELT_IL_Source_Mapping_Info WHERE IL_Table_Name IN (" + selectiveTables + ") AND Connection_Id = ? " + querySchemaCond;
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, connectionId);
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    if (resultSet.next()) {
+                        Timestamp maxUpdatedDate = resultSet.getTimestamp(1);
+                        if (maxUpdatedDate == null) {
+                            return null;
+                        } else {
+                            return "'" + maxUpdatedDate + "'"; // Transformation: Format as a string with single quotes
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                throw new Exception("Error while executing getMaxUpdatedDate query.", e);
+            }
+            // Returning null if no row is found
+            return null;
+        }
+        /* row1 - to call alter_delete iterative job*/
+        private List<Map<String, String>> getDistinctMappingInfo(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws Exception {
+            String query = "SELECT DISTINCT `ELT_IL_Source_Mapping_Info_Saved`.`Connection_Id`, `ELT_IL_Source_Mapping_Info_Saved`.`Table_Schema`, `ELT_IL_Source_Mapping_Info_Saved`.`IL_Table_Name` " +
+                           "FROM `ELT_IL_Source_Mapping_Info_Saved` WHERE IL_Table_Name IN (" + selectiveTables + ") AND Connection_Id = ? " + querySchemaCond;
     
+            List<Map<String, String>> result = new ArrayList<>();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, connectionId);
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        Map<String, String> row = new HashMap<>();
+                        row.put("Connection_Id", resultSet.getString("Connection_Id"));
+                        row.put("Table_Schema", resultSet.getString("Table_Schema"));
+                        row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
+                        result.add(row);
+                    }
+                }
+            } catch (Exception e) {
+                throw new Exception("Error while executing getDistinctMappingInfo query.", e);
+            }
+    
+            return result;
+        }
+        /* to check if table exists but check it in target DB */
+        // Do we need dtabase name here 
+        // Function to check if a table exists in the target database, excluding views
+        public boolean doesTableExist(Connection targetConnection, String tableName, String databaseName) {
+            String checkQuery = "SELECT COUNT(*) FROM information_schema.tables " +
+                                "WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'";
+            try (PreparedStatement stmt = targetConnection.prepareStatement(checkQuery)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        // Returning true if count is greater than 0, indicating the table exists
+                        return rs.getInt(1) > 0;
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return false;
+        }
+        /* Alter delete job main 2 queries */
+        // Check if throw exception can be changed to SQL Exception
+        private List<Map<String, String>> executeAntiJoinQuery(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws Exception {
+            // anti join
+            String query = "SELECT A.Connection_Id, A.Table_Schema, A.IL_Table_Name, A.IL_Column_Name " +
+                           "FROM (" +
+                           "    SELECT Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, Source_Table_Name, Source_Column_Name " +
+                           "    FROM ELT_IL_Source_Mapping_Info " +
+                           "    WHERE IL_Table_Name = ? AND Column_Type <> 'Anvizent' AND Connection_Id = ? " + querySchemaCond +
+                           ") AS A " +
+                           "WHERE NOT EXISTS (" +
+                           "    SELECT 1 " +
+                           "    FROM (" +
+                           "        SELECT Connection_Id, Table_Schema, Source_Table_Name, Source_Column_Name " +
+                           "        FROM ELT_IL_Source_Mapping_Info_Saved " +
+                           "        WHERE IL_Table_Name = ? AND Connection_Id = ? " + querySchemaCond +
+                           "    ) AS B " +
+                           "    WHERE A.Connection_Id = B.Connection_Id AND A.Table_Schema = B.Table_Schema " +
+                           "      AND A.Source_Table_Name = B.Source_Table_Name AND A.Source_Column_Name = B.Source_Column_Name" +
+                           ")";
+        
+            List<Map<String, String>> result = new ArrayList<>();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName);
+                preparedStatement.setString(2, connectionId);
+                preparedStatement.setString(3, ilTableName);
+                preparedStatement.setString(4, connectionId);
+        
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        Map<String, String> row = new HashMap<>();
+                        row.put("Connection_Id", resultSet.getString("Connection_Id"));
+                        row.put("Table_Schema", resultSet.getString("Table_Schema"));
+                        row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
+                        row.put("IL_Column_Name", "Drop Column `" + resultSet.getString("IL_Column_Name") + "`"); // Transformation
+                        result.add(row);
+                    }
+                }
+            } catch (Exception e) {
+                throw new Exception("Error while executing anti-join query.", e);
+            }
+        
+            return result;
+        }
+// main flow of alter delete
+        void alterDeleteScript (String ilTableName) {
+
+            // TODO try catch block
+            try {
+                List<Map<String, String>> data = executeAntiJoinQuery(conn, ilTableName, connectionId, querySchemaCondition);
+
+                String finalDropColumn = new String(); 
+                for (Map<String, String> map : data) {
+                    String ilColumnName = map.get("IL_Column_Name");
+                    
+                    System.out.println("IL_Column_Name: " + ilColumnName);
+
+                    // Initialize variables
+                    String dropColumn = ilColumnName; // Corresponds to copyOfResult.IL_Column_Name
+                    // TODO check below original conversion is valid? As we are doing aggregation later. It is same effect.
+                    // String finalDropColumn = (finalDropColumn == null) ? dropColumn + "," : finalDropColumn + dropColumn + ",";
+                    finalDropColumn = (finalDropColumn == null) ? dropColumn + "," : finalDropColumn + dropColumn + ",";
+
+
+                    // Construct the main script
+                    String script = "ALTER TABLE `" + ilTableName + "` " + finalDropColumn; // Corresponds to copyOfResult.IL_Table_Name
+                    String ilAlterScript = script.substring(0, script.length() - 1) + ";"; // Remove the last comma and append a semicolon
+
+                    // Construct the staging script
+                    String stgScript = "ALTER TABLE `" + ilTableName + "_Stg` " + finalDropColumn;
+                    String stgAlterScript = stgScript.substring(0, stgScript.length() - 1) + ";"; // Remove the last comma and append a semicolon
+
+                }
+            } catch (Exception e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            
+        }
+        // With all the aggregation
+        void alterDeleteScriptComplete(String ilTableName) throws Exception {
+
+            List<Map<String, String>> data = executeAntiJoinQuery(conn, ilTableName, connectionId, querySchemaCondition);
+            Map<String, Map<String, String>> groupedScripts = new HashMap<>();
+        
+            for (Map<String, String> map : data) {
+                String connectionId = map.get("Connection_Id");
+                String tableSchema = map.get("Table_Schema");
+                String tableName = map.get("IL_Table_Name");
+                String ilColumnName = map.get("IL_Column_Name");
+        
+                System.out.println("IL_Column_Name: " + ilColumnName);
+        
+                // Construct group key
+                String groupKey = connectionId + "-" + tableSchema + "-" + tableName;
+        
+                // Retrieve or initialize the group entry
+                Map<String, String> group = groupedScripts.getOrDefault(groupKey, new HashMap<>());
+        
+                // Initialize or append drop columns
+                String finalDropColumn = group.getOrDefault("Final_Drop_Column", "") + ilColumnName + ",";
+        
+                // Construct the main and staging scripts
+                String ilAlterScript = "ALTER TABLE `" + tableName + "` " + finalDropColumn;
+                ilAlterScript = ilAlterScript.substring(0, ilAlterScript.length() - 1) + ";"; // Remove the last comma and append a semicolon
+        
+                String stgAlterScript = "ALTER TABLE `" + tableName + "_Stg` " + finalDropColumn;
+                stgAlterScript = stgAlterScript.substring(0, stgAlterScript.length() - 1) + ";"; // Remove the last comma and append a semicolon
+        
+                // Update the group entry
+                group.put("Final_Drop_Column", finalDropColumn);
+                group.put("IL_Alter_Script", group.getOrDefault("IL_Alter_Script", "") + ilAlterScript + "\n");
+                group.put("Stg_Alter_Script", group.getOrDefault("Stg_Alter_Script", "") + stgAlterScript + "\n");
+        
+                // Store back the group entry
+                groupedScripts.put(groupKey, group);
+            }
+        
+            // Print aggregated results
+            for (Map.Entry<String, Map<String, String>> entry : groupedScripts.entrySet()) {
+                String groupKey = entry.getKey();
+                Map<String, String> group = entry.getValue();
+        
+                System.out.println("Group: " + groupKey);
+                System.out.println("IL_Alter_Script:\n" + group.get("IL_Alter_Script"));
+                System.out.println("Stg_Alter_Script:\n" + group.get("Stg_Alter_Script"));
+            }
+        }
+        
+        
+ //   }
+    
+/*
+ * ######################################################################################################
+ * ELT Delete Jobs - start
+ */
+        
+
+ 
+
+        // With Group_Concat - compaer with StringBuilder alternative
+        private String getValueNameFromJobPropertiesInfo(Connection connection) throws SQLException {
+            String query = "SELECT GROUP_CONCAT(Value_Name SEPARATOR ',') AS Value_Names \n" +
+                    "FROM ELT_Job_Properties_Info \n" +
+                    "WHERE Job_Type='Deletes_Dim' \n" +
+                    "  AND Active_Flag=1 \n" +
+                    "  AND Dynamic_Flag=1";
+    
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                 ResultSet resultSet = preparedStatement.executeQuery()) {
+                if (resultSet.next()) {
+                    return resultSet.getString("Value_Names");
+                }
+                return "";
+            }
+        }
+        // StringBuilder alternative
+        // value of global map lhs set
+        private String getValueNameFromJobPropertiesInfo2(Connection connection) throws SQLException {
+            String query = "SELECT Value_Name \n" +
+                    "FROM ELT_Job_Properties_Info \n" +
+                    "WHERE Job_Type='Deletes_Dim' \n" +
+                    "  AND Active_Flag=1 \n" +
+                    "  AND Dynamic_Flag=1";
+    
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                 ResultSet resultSet = preparedStatement.executeQuery()) {
+                StringBuilder finalValueName = new StringBuilder();
+                while (resultSet.next()) {
+                    String valueName = resultSet.getString("Value_Name");
+                    if (finalValueName.length() > 0) {
+                        finalValueName.append(",");
+                    }
+                    finalValueName.append(valueName);
+                }
+                return finalValueName.toString();
+            }
+        }
+
+        
+ /*
+ * ELT Delete Jobs - End
+ * ######################################################################################################
+ */
+
+}
     public class DWConfigScriptsGenerator {
 
         // Constructor
@@ -701,10 +1731,425 @@ public class DWScriptsGenerator {
     
         // Method to generate the value script
         public Status generateValueScript() {
+            System.out.println("### Generating Value Scripts ...");
             // Placeholder logic for the method
             // Replace with actual implementation
+
+            // Only Delete Logic as of now
+            // TODO specific to DIM delete Values
+            String dimensionTransaction = "D";
+
+            String limitFunct = "";
+            try {
+                List<Map<String, String>> tableNames = getILTableNamesWithDimentionTransactionFilter(
+                        conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunct);
+                System.out.println("list of tableNames: " + tableNames);
+
+                dimensionTransaction = "T";
+                tableNames = getILTableNamesWithDimentionTransactionFilter(
+                    conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunct);
+                System.out.println("list of tableNames: " + tableNames);
+
+                dimensionTransaction = "D";
+                dimDeleteScriptComplete(conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunct);
+
+
+            } catch (SQLException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+
+
             return Status.SUCCESS; // Return true for success, false for failure
         }
+
+        void dimDeleteScriptComplete(Connection connection, String selectiveTables, String dimensionTransaction,
+                String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
+
+            // TODO: Change limitFunct appropriately for the case - ( )
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+                    dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            System.out.println("list of data: " + data);
+
+            Map<String, Map<String, String>> groupedScripts = new HashMap<>();
+            String jobType = "Deletes_Dim";
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                // todo : initilize properly
+                String tableName = "", ilColumnName = "";
+                System.out.println("iLTableName: " + ilTableName);
+
+                String lhs = getValueNameFromJobPropertiesInfo2(connection, jobType);
+                System.out.println("    lhs: " + lhs);
+
+
+                Map<String, AggregatedData> dataMap = getAggregatedMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
+
+                // System.out.println("IL_Table_Name: " + iLTableName);
+
+                // // Construct group key
+                // String groupKey = connectionId + "-" + tableSchema + "-" + tableName;
+
+                // // Retrieve or initialize the group entry
+                // Map<String, String> group = groupedScripts.getOrDefault(groupKey, new HashMap<>());
+
+                // // Initialize or append drop columns
+                // String finalDropColumn = group.getOrDefault("Final_Drop_Column", "") + ilColumnName + ",";
+
+                // // Construct the main and staging scripts
+                // String ilAlterScript = "ALTER TABLE `" + tableName + "` " + finalDropColumn;
+                // ilAlterScript = ilAlterScript.substring(0, ilAlterScript.length() - 1) + ";"; // Remove the last comma
+                //                                                                               // and append a semicolon
+
+                // String stgAlterScript = "ALTER TABLE `" + tableName + "_Stg` " + finalDropColumn;
+                // stgAlterScript = stgAlterScript.substring(0, stgAlterScript.length() - 1) + ";"; // Remove the last
+                //                                                                                  // comma and append a
+                //                                                                                  // semicolon
+
+                // // Update the group entry
+                // group.put("Final_Drop_Column", finalDropColumn);
+                // group.put("IL_Alter_Script", group.getOrDefault("IL_Alter_Script", "") + ilAlterScript + "\n");
+                // group.put("Stg_Alter_Script", group.getOrDefault("Stg_Alter_Script", "") + stgAlterScript + "\n");
+
+                // // Store back the group entry
+                // groupedScripts.put(groupKey, group);
+            }
+        }
+        
+        // Good One, with jobType argument, valid for both Trans and Dim Delete Values
+        private String getValueNameFromJobPropertiesInfo2(Connection connection, String jobType) throws SQLException {
+            String query = "SELECT Value_Name \n" +
+                           "FROM ELT_Job_Properties_Info \n" +
+                           "WHERE Job_Type = ? \n" +
+                           "  AND Active_Flag = 1 \n" +
+                           "  AND Dynamic_Flag = 1";
+        
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, jobType);
+        
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    StringBuilder finalValueName = new StringBuilder();
+                    while (resultSet.next()) {
+                        String valueName = resultSet.getString("Value_Name");
+                        if (finalValueName.length() > 0) {
+                            finalValueName.append(",");
+                        }
+                        finalValueName.append(valueName);
+                    }
+                    return finalValueName.toString();
+                }
+            }
+        }
+        // DIM delete Values - main component start
+        // row3, row4 (main)
+        private Map<String, AggregatedData> getAggregatedMappingInfo(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
+            String query = "SELECT " +
+                           "  Connection_Id, " +
+                           "  TABLE_SCHEMA, " +
+                           "  IL_Table_Name, " +
+                           "  IL_Column_Name, " +
+                           "  IL_Data_Type, " +
+                           "  LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS Datatype " +
+                           "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                           "WHERE IL_Table_Name = ? " +
+                           "  AND Constraints != 'SK' " +
+                           "  AND Connection_Id = ? " +
+                           querySchemaCond;
+        
+            Map<String, AggregatedData> aggregatedResult = new HashMap<>();
+        
+            Map<String, Map<String, String>> dataTypeConversions = getDatatypeConversions(connection);
+            System.out.println("dataTypeConversions: " + dataTypeConversions.size());
+
+            Map<String, PKColumnsData> pkColumnsLookupMap = getPKColumnsMappingInfo(connection, ilTableName, connectionId, querySchemaCond);
+            System.out.println("pkColumnsLookupMap: " + pkColumnsLookupMap.size());
+            System.out.println("pkColumnsLookupMap: " + pkColumnsLookupMap);
+
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName);
+                preparedStatement.setString(2, connectionId);
+        
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String connectionIdValue = resultSet.getString("Connection_Id");
+                        String tableSchema = resultSet.getString("TABLE_SCHEMA");
+                        String ilTableNameValue = resultSet.getString("IL_Table_Name");
+                        String ilColumnName = resultSet.getString("IL_Column_Name");
+                        String ilDataType = resultSet.getString("IL_Data_Type");
+                        String datatype = resultSet.getString("Datatype");
+                        String tiltIlColumnName = "`" + ilColumnName + "`"; // Derived field  "`"+row3.IL_Column_Name+"`"
+        
+                        // aggregation key
+                        String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
+                        // System.out.println("   key   : " + key);
+                        AggregatedData data = aggregatedResult.computeIfAbsent(key, k -> new AggregatedData(connectionIdValue, tableSchema, ilTableNameValue));
+                        data.addIlColumnName(ilColumnName);
+                        data.addIlDataType(ilDataType);
+                        data.addDatatype(datatype);
+                        data.addTiltIlColumnName(tiltIlColumnName);
+                        //System.out.println(data.toString());
+
+
+
+
+                    }
+                    System.out.println("aggregatedResult size : " + aggregatedResult.size());
+
+                }
+            }
+        
+            return aggregatedResult;
+        }
+
+        // row7, datatype_conversion
+        private Map<String, Map<String, String>> getDatatypeConversions(Connection connection) throws SQLException {
+            String query = "SELECT " +
+                           "  Id, " +
+                           "  LOWER(Source_Data_Type) AS sourceDataType, " +
+                           "  LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS ilDataType, " +
+                           "  Java_Data_Type AS javaDataType, " +
+                           "  Cleansing_Value AS cleansingValue, " +
+                           "  PK_Cleansing_Value AS pkCleansingValue " +
+                           "FROM ELT_Datatype_Conversions";
+        
+            Map<String, Map<String, String>> datatypeConversionsMap = new HashMap<>();
+        
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                 ResultSet resultSet = preparedStatement.executeQuery()) {
+        
+                while (resultSet.next()) {
+                    String ilDataType = resultSet.getString("ilDataType");
+        
+                    Map<String, String> details = new HashMap<>();
+                    details.put("id", String.valueOf(resultSet.getInt("Id")));
+                    details.put("sourceDataType", resultSet.getString("sourceDataType"));
+                    details.put("javaDataType", resultSet.getString("javaDataType"));
+                    details.put("cleansingValue", resultSet.getString("cleansingValue"));
+                    details.put("pkCleansingValue", resultSet.getString("pkCleansingValue"));
+        
+                    datatypeConversionsMap.put(ilDataType, details);
+                }
+            }
+            return datatypeConversionsMap;
+        }
+        
+        private Map<String, PKColumnsData> getPKColumnsMappingInfo(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
+            
+            // Call getDatatypeConversions() to retrieve the datatype conversion mappings
+            // TODO make once call of this function
+            Map<String, Map<String, String>> datatypeConversions = getDatatypeConversions(connection);
+        
+            String query = "SELECT " +
+                           "  Connection_Id, " +
+                           "  TABLE_SCHEMA, " +
+                           "  IL_Table_Name, " +
+                           "  IL_Column_Name, " +
+                           "  IL_Data_Type, " +
+                           "  LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS Datatype, " +
+                           "  SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(IL_Data_Type, '(', -1), ')', 1), ',', 1) AS Precision_Val, " +
+                           "  SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(IL_Data_Type, '(', -1), ')', 1), ',', -1) AS Scale_Val " +
+                           "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                           "WHERE IL_Table_Name = ? " +
+                           "  AND Constraints = 'PK' " +
+                           "  AND Connection_Id = ? " +
+                           querySchemaCond;
+        
+            Map<String, PKColumnsData> pkColumnsAggregationMap = new HashMap<>();
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, ilTableName);
+                preparedStatement.setString(2, connectionId);
+        
+
+                String whereCondition = null;
+                String coerceFormat = null;
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        // Extract fields from the result set
+                        String connectionIdValue = resultSet.getString("Connection_Id");
+                        String tableSchema = resultSet.getString("TABLE_SCHEMA");
+                        String ilTableNameValue = resultSet.getString("IL_Table_Name");
+                        String ilColumnName = resultSet.getString("IL_Column_Name");
+                        String ilDataType = resultSet.getString("IL_Data_Type");
+                        String datatype = resultSet.getString("Datatype");
+
+                        String coerceTo = "java.lang.String";
+
+                        String precisionVal = resultSet.getString("Precision_Val");
+                        String scaleVal = resultSet.getString("Scale_Val");
+
+                        // the left join with datatypeConversions
+                        Map<String, String> conversionDetails = datatypeConversions.get(datatype);
+                        String coerceBack = null;
+                        if (conversionDetails != null) {
+                            String javaDataType = (String) conversionDetails.get("Java_Data_Type");
+                            coerceBack = javaDataType;
+                        }
+        
+                        // Determine precision and scale based on IL_Data_Type
+                        ilDataType = ilDataType.toLowerCase();
+                        String decimalPrecision = (ilDataType.contains("decimal") || ilDataType.contains("float") || ilDataType.contains("double"))
+                                ? precisionVal
+                                : "";
+                        String decimalScale = (ilDataType.contains("decimal") || ilDataType.contains("float") || ilDataType.contains("double"))
+                                ? scaleVal
+                                : "";
+
+                        // last value of below fields are used
+                        String cond = "`rhs_" + ilColumnName + "` is null";
+                        whereCondition = (whereCondition == null) 
+                                ? cond : whereCondition + " and " + cond;
+
+                        // trim the last character from coerceFormat
+                        coerceFormat = (coerceFormat == null)
+                                ? "," : coerceFormat + ",";
+                        int len = coerceFormat.length() - 1;
+                        coerceFormat = coerceFormat.substring(0, len);
+
+                        // Aggregation key
+                        String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
+                        //pkColumnsAggregationMap.computeIfAbsent(key, k -> new PKColumnsData(connectionIdValue, tableSchema, ilTableNameValue));
+                        PKColumnsData columnsData = pkColumnsAggregationMap.getOrDefault(key, new PKColumnsData(connectionIdValue, tableSchema, ilTableNameValue));
+
+                        //PKColumnsData columnsData = pkColumnsAggregationMap.get(key);
+                        // Aggregating fields
+                        columnsData.ilColumnName.append(columnsData.ilColumnName.length() > 0 ? ", " : "").append(ilColumnName);
+                        columnsData.ilDataType.append(columnsData.ilDataType.length() > 0 ? ", " : "").append(ilDataType);
+                        columnsData.datatype.append(columnsData.datatype.length() > 0 ? ", " : "").append(datatype);
+                        columnsData.coerceTo.append(columnsData.coerceTo.length() > 0 ? ", " : "").append(coerceTo);
+                        columnsData.coerceBack.append(columnsData.coerceBack.length() > 0 ? ", " : "").append(coerceBack);
+                        columnsData.decimalPrecision.append(columnsData.decimalPrecision.length() > 0 ? ", " : "").append(decimalPrecision);
+                        columnsData.decimalScale.append(columnsData.decimalScale.length() > 0 ? ", " : "").append(decimalScale);
+                        // last values
+                        columnsData.coerceFormat = coerceFormat;
+                        columnsData.whereCondition = whereCondition;
+
+                        pkColumnsAggregationMap.put(key, columnsData);
+                    }
+                }
+            }
+        
+            return pkColumnsAggregationMap;
+        }
+        
+        class PKColumnsData {
+            String connectionId = new String();
+            String tableSchema = new String();
+            String ilTableName = new String();
+            String whereCondition;
+            String coerceFormat;
+            StringBuilder ilColumnName;
+            StringBuilder ilDataType;
+            StringBuilder datatype;
+            StringBuilder coerceTo;
+            StringBuilder coerceBack;
+            StringBuilder decimalPrecision;
+            StringBuilder decimalScale;
+
+            public String getIlColumnName() {
+                return ilColumnName.toString();
+            }
+            public String getIlDataType() {
+                return ilDataType.toString();
+            }
+            public String getDatatype() {
+                return datatype.toString();
+            }
+            public String getCoerceTo() {
+                return coerceTo.toString();
+            }
+            public String getCoerceBack() {
+                return coerceBack.toString();
+            }
+            public String getDecimalPrecision() {
+                return decimalPrecision.toString();
+            }
+            public String getDecimalScale() {
+                return decimalScale.toString();
+            }
+
+            public PKColumnsData(String connectionId, String tableSchema, String ilTableName) {
+                this.connectionId = connectionId;
+                this.tableSchema = tableSchema;
+                this.ilTableName = ilTableName;
+                this.whereCondition = new String();
+                this.coerceFormat = new String();
+                this.ilColumnName = new StringBuilder();
+                this.ilDataType = new StringBuilder();
+                this.datatype = new StringBuilder();
+                this.coerceTo = new StringBuilder();
+                this.coerceBack = new StringBuilder();
+                this.decimalPrecision = new StringBuilder();
+                this.decimalScale = new StringBuilder();
+            }
+        }
+
+        // Helper class to hold aggregated data
+        private class AggregatedData {
+            private final String connectionId;
+            private final String tableSchema;
+            private final String ilTableName;
+            private final StringBuilder ilColumnNames = new StringBuilder();
+            private final StringBuilder ilDataTypes = new StringBuilder();
+            private final StringBuilder datatypes = new StringBuilder();
+            private final StringBuilder tiltIlColumnNames = new StringBuilder();
+
+            public AggregatedData(String connectionId, String tableSchema, String ilTableName) {
+                this.connectionId = connectionId;
+                this.tableSchema = tableSchema;
+                this.ilTableName = ilTableName;
+            }
+                
+            public String getIlColumnNames() {
+                return ilColumnNames.toString();
+            }
+            public String getIlDataTypes() {
+                return ilDataTypes.toString();
+            }
+            public String getDatatypes() {
+                return datatypes.toString();
+            }
+            public String getTiltIlColumnNames() {
+                return tiltIlColumnNames.toString();
+            }
+
+            public void addIlColumnName(String value) {
+                appendWithComma(ilColumnNames, value);
+            }
+            public void addIlDataType(String value) {
+                appendWithComma(ilDataTypes, value);
+            }
+            public void addDatatype(String value) {
+                appendWithComma(datatypes, value);
+            }
+            public void addTiltIlColumnName(String value) {
+                appendWithComma(tiltIlColumnNames, value);
+            }
+        
+            private void appendWithComma(StringBuilder builder, String value) {
+                if (builder.length() > 0) {
+                    builder.append(",");
+                }
+                builder.append(value);
+            }
+        
+            @Override
+            public String toString() {
+                return "AggregatedData{" +
+                       "connectionId='" + connectionId + '\'' +
+                       ", tableSchema='" + tableSchema + '\'' +
+                       ", ilTableName='" + ilTableName + '\'' +
+                       ", ilColumnNames='" + ilColumnNames + '\'' +
+                       ", ilDataTypes='" + ilDataTypes + '\'' +
+                       ", datatypes='" + datatypes + '\'' +
+                       ", tiltIlColumnNames='" + tiltIlColumnNames + '\'' +
+                       '}';
+            }
+        }
+        
     }
     
     public class DWSourceInfoScriptsGenerator {
