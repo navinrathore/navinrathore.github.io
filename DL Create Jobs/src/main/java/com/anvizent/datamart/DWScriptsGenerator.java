@@ -7,6 +7,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -183,39 +184,35 @@ public class DWScriptsGenerator {
         return queryConditions;
     }
     private void generateScripts() {
-
-        // TODO - update comments
-            // The DB scripts generator
-        
+        // The DB scripts generator
         if (false && new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
 
-        // The config script generator
-        if (new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
+        // The configs script generator
+        if (false && new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
 
-        // The value script generator
+        // The values script generator
         if (false && new DWValueScriptsGenerator().generateValueScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
 
-        // IL_Source_Info
-        if (new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
+        // The Source Info script generator
+        if (false && new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
-        // IL_Table_Info
+
+        // The Table Info script generator
         if (new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
-        // TODO Auto-generated method stub
-        // throw new UnsupportedOperationException("Unimplemented method 'generateScripts'");
     }
     
     /**
@@ -383,6 +380,57 @@ public class DWScriptsGenerator {
             return rowsAffected;
         }
 
+        public int updateDataInDB(Connection connection, String tableName, List<Map<String, Object>> data, String whereClause, Object[] whereValues) throws SQLException {
+            if (data == null || data.isEmpty()) {
+                throw new IllegalArgumentException("Data list cannot be null or empty");
+            }
+            int rowsAffected;
+            
+            // Building SQL query dynamically
+            String[] columns = data.get(0).keySet().toArray(new String[0]);
+            
+            StringBuilder setClause = new StringBuilder();
+            for (int i = 0; i < columns.length; i++) {
+                setClause.append(columns[i]).append(" = ?");
+                if (i < columns.length - 1) {
+                    setClause.append(", ");
+                }
+            }
+        
+            String sql = "UPDATE " + tableName + " SET " + setClause + " WHERE " + whereClause;
+            
+            boolean originalAutoCommit = connection.getAutoCommit();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+                connection.setAutoCommit(false); // Enable transaction for batch update
+        
+                for (Map<String, Object> row : data) {
+                    int i = 1;
+                    for (String column : columns) {
+                        preparedStatement.setObject(i++, row.get(column));
+                    }
+                    
+                    // Set WHERE clause values
+                    for (Object value : whereValues) {
+                        preparedStatement.setObject(i++, value);
+                    }
+        
+                    preparedStatement.addBatch();
+                }
+        
+                int[] result = preparedStatement.executeBatch();
+                rowsAffected = getNumberOfRowsUpdated(result);
+                System.out.println("Total Rows " + rowsAffected + " updated in the table " + tableName);
+                
+                connection.commit();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(originalAutoCommit);
+            }
+            return rowsAffected;
+        }
+        
     /**
      * Calculates the total number of rows affected based on the batch execution
      * result.
@@ -1888,10 +1936,9 @@ public class DWScriptsGenerator {
             //     // transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition);
 
             } catch (SQLException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
+                return Status.FAILURE;
             }
-
             return Status.SUCCESS;
         }
 
@@ -2677,17 +2724,6 @@ public class DWScriptsGenerator {
             }
         }
 
-        private void deleteConfigPropertiesSTGKEYS(Connection connection, String ilTable, String connectionId) {
-            String query = "DELETE FROM ELT_CONFIG_PROPERTIES WHERE IL_Table_Name = '" 
-                           + ilTable + "_Stg_Keys' AND Connection_Id = '" + connectionId + "'";
-            try (Statement statement = connection.createStatement()) {
-                int rowsDeleted = statement.executeUpdate(query);
-                System.out.println(rowsDeleted + " rows deleted from ELT_CONFIG_PROPERTIES.");
-            } catch (SQLException e) {
-                System.err.println("Error while deleting from ELT_CONFIG_PROPERTIES: " + e.getMessage());
-            }
-        }
-        
         private void deleteConfigProperties(Connection connection, String ilTable, String connectionId) {
             String query = "DELETE FROM ELT_CONFIG_PROPERTIES WHERE IL_Table_Name = '" 
                            + ilTable + "' AND Connection_Id = '" + connectionId + "'";
@@ -2744,12 +2780,10 @@ public class DWScriptsGenerator {
                 transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition);
 
             } catch (SQLException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
+                return Status.FAILURE;
             }
-
-
-            return Status.SUCCESS; // Return true for success, false for failure
+            return Status.SUCCESS;
         }
 
         void dimDeleteScriptComplete(Connection connection, String selectiveTables, 
@@ -3549,38 +3583,748 @@ public class DWScriptsGenerator {
         }
     }
     
-    public class DWSourceInfoScriptsGenerator {
-
-        // Constructor
-        public DWSourceInfoScriptsGenerator() {
-            // Initialization logic if needed
-        }
-    
-        // Method to generate the source info script
-        public Status generateSourceInfoScript() {
-            // Placeholder logic for the method
-            // Replace with actual implementation
-            return Status.SUCCESS; // Return true for success, false for failure
-        }
-    }
     public class DWTableInfoScriptsGenerator {
 
         // Constructor
         public DWTableInfoScriptsGenerator() {
             // Initialization logic if needed
         }
-    
-        // Method to generate the table info script
+        // Generating the table info script
         public Status generateTableInfoScript() {
-            // Placeholder logic for the method
-            // Replace with actual implementation
-            return Status.SUCCESS; // Return true for success, false for failure
+            try {              
+                updateIlTableInfo(conn);
+                Map<String, AggregatedResult> savedDataMap = executeSourceMappingInfoQuery(conn,  SQLQueries.queryILSourceMappingInfoSaved);
+                Map<String, AggregatedResult> infoDataMap = executeSourceMappingInfoQuery(conn,  SQLQueries.queryILSourceMappingInfo);
+                // Mapping_info
+                Map<String, Map<String, Object>> selectiveMetadataMap = executeSelectiveSourceMetadataQuery(conn);
+                // Metadata Info
+                Map<String, Map<String, Object>> customMetadataMap = executeCustomSourceMetadataQuery(conn);
+                // Mapping Info saved
+                Map<String, Map<String, Object>> ilMappingInfoSavedMap = executeILSourceMappingInfoQuery(conn);
+               
+                Map<String, String> databaseConnectionsData = executeDatabaseConnectionQuery(conn);
+
+                Map<String, String> wsConnectionsData = executeWSConnectionsQuery(conn);
+
+                Map<String, String> remoteConnectionsData = executeWSConnectionsQuery(conn);
+
+                Map<String, Map<String, String>> eltILTableInfoData = executeILTableInfoQuery(conn);
+
+                // Iterating the main component data
+                List<Map<String, Object>> innerJoinResultList = new ArrayList<>(); // Inner Join Result List, to be inserted
+                List<Map<String, Object>> antiJoinResultList = new ArrayList<>(); // Anti Join Result List, to be updated
+
+                for (Map.Entry<String, AggregatedResult> entry : savedDataMap.entrySet()) {
+                    String key = entry.getKey();
+                    AggregatedResult saved = entry.getValue();
+                
+                    AggregatedResult infoData = infoDataMap.getOrDefault(key, new AggregatedResult());
+                    Map<String, Object> selectiveMetadata = selectiveMetadataMap.getOrDefault(key, new HashMap<>());
+                    Map<String, Object> customMetadata = customMetadataMap.getOrDefault(key, new HashMap<>());
+                    Map<String, Object> ilMappingInfoSaved = ilMappingInfoSavedMap.getOrDefault(key, new HashMap<>());
+
+
+                    // // Status logic
+                    //         String status = (compareDates((String) saved.getUpdatedDate(), (String) infoData.getUpdatedDate()) > 0) 
+                    //         ? "Saved" 
+                    //         : "Created";
+
+                    String status;
+                    // if (compareDates((String) saved.getUpdatedDate(), (String) infoData.getUpdatedDate()) > 0) {
+                    Timestamp savedUpdatedDate = saved.getMaxUpdatedDate();
+                    Timestamp infoUpdatedDate = infoData.getMaxUpdatedDate();
+                    if (infoUpdatedDate == null || savedUpdatedDate.compareTo(infoUpdatedDate) > 0) {
+                        status = "Saved";
+                    } else {
+                        status = "Created";
+                    }
+
+                    String source;
+                    if (selectiveMetadata.get("Custom_Type") == null) {
+                        if (!Boolean.TRUE.equals(saved.getIsFileUpload())) {
+                            source = "dbSource";
+                        } else {
+                            source = "importFile";
+                        }
+                    } else {
+                        if ("Common".equals(selectiveMetadata.get("Custom_Type")) && !Boolean.TRUE.equals(saved.getIsFileUpload())) {
+                            source = "dbSource";
+                        } else if ("Common".equals(selectiveMetadata.get("Custom_Type")) && Boolean.TRUE.equals(saved.getIsFileUpload())) {
+                            source = "importFile";
+                        } else {
+                            source = (String) selectiveMetadata.get("Custom_Type");
+                        }
+                    }
+                        
+                    // // Source logic
+                    // String source = (selectiveMetadata.get("Custom_Type") == null)
+                    // ? (!Boolean.TRUE.equals(saved.getIsFileUpload()) ? "dbSource" : "importFile")
+                    // : ("Common".equals(selectiveMetadata.get("Custom_Type")) && !Boolean.TRUE.equals(saved.getIsFileUpload()) ? "dbSource"
+                    // : "Common".equals(selectiveMetadata.get("Custom_Type")) && Boolean.TRUE.equals(saved.getIsFileUpload()) ? "importFile"
+                    // : (String) selectiveMetadata.get("Custom_Type"));
+
+                    // // Custom Type logic
+                    // String customType = (customMetadata.get("Custom_Type") == null)
+                    // ? (selectiveMetadata.get("Custom_Type") == null ? ""
+                    // : ("common".equalsIgnoreCase((String) selectiveMetadata.get("Custom_Type"))
+                    // && ((Integer) selectiveMetadata.get("File_Id") != 0) ? "metadata_file"
+                    // : "common".equalsIgnoreCase((String) selectiveMetadata.get("Custom_Type"))
+                    // && ((Integer) selectiveMetadata.get("File_Id") == 0) ? "dbSource"
+                    // : (String) selectiveMetadata.get("Custom_Type")))
+                    // : (String) customMetadata.get("Custom_Type");
+
+                    String customCustomType = (String) customMetadata.get("Custom_Type");
+                    String selectiveCustomType = (String) selectiveMetadata.get("Custom_Type");
+                    Integer fileId = (Integer) selectiveMetadata.get("File_Id");
+                    Boolean isWebService = Boolean.TRUE.equals(selectiveMetadata.get("IsWebService"));
+                    String connectionTypeFromCustomMetadata = (String) customMetadata.get("connection_type");
+
+                    String customType;
+                    if (customCustomType == null) {
+                        if (selectiveCustomType == null) {
+                            customType = "";
+                        } else {
+                            // String selectiveCustomType = (String) selectiveMetadata.get("Custom_Type");
+                            // Integer fileId = (Integer) selectiveMetadata.get("File_Id");
+                            
+                            if ("common".equalsIgnoreCase(selectiveCustomType) && fileId != 0) {
+                                customType = "metadata_file";
+                            } else if ("common".equalsIgnoreCase(selectiveCustomType) && fileId == 0) {
+                                customType = "dbSource";
+                            } else {
+                                customType = selectiveCustomType;
+                            }
+                        }
+                    } else {
+                        customType = customCustomType;
+                    }
+                    
+
+                    String sourceType;
+
+                    // Extract common variables for readability
+                    // String customCustomType = (String) customMetadata.get("Custom_Type");
+                    // String selectiveCustomType = (String) selectiveMetadata.get("Custom_Type");
+                    // Integer fileId = (Integer) selectiveMetadata.get("File_Id");
+
+
+                    if (customCustomType == null) {
+                        if (selectiveCustomType == null) {
+                            sourceType = "";
+                        } else if ("common".equalsIgnoreCase(selectiveCustomType)) {
+                            if (fileId != 0 && isWebService) {
+                                sourceType = "web_service";
+                            } else if (fileId == 0 && !isWebService) {
+                                sourceType = "dbSource";
+                            } else if (fileId != 0 && !isWebService) {
+                                sourceType = "dbSource";
+                            } else {
+                                sourceType = selectiveCustomType;
+                            }
+                        } else if ("metadata_file".equalsIgnoreCase(selectiveCustomType)) {
+                            if (fileId != 0 && isWebService) {
+                                sourceType = "web_service";
+                            } else if (fileId == 0 && !isWebService) {
+                                sourceType = "dbSource";
+                            } else if ("metadata_file".equalsIgnoreCase(selectiveCustomType)) {
+                                sourceType = "shared_folder";
+                            } else {
+                                sourceType = selectiveCustomType;
+                            }
+                        } else if ("dbSource".equalsIgnoreCase(selectiveCustomType)) {
+                            sourceType = "dbSource";
+                        } else if ("web_service".equalsIgnoreCase(selectiveCustomType)) {
+                            sourceType = "web_service";
+                        } else {
+                            sourceType = selectiveCustomType;
+                        }
+                    } else {
+                        sourceType = connectionTypeFromCustomMetadata;
+                    }
+
+                    // Output (out1)
+                    String connectionId = saved.getConnectionId();
+                    String connectionName; // Default i.e. null
+                    String tableSchema = saved.getTableSchema();
+                    String ilTableName = saved.getIlTableName();
+                    String sourceTableName = (String) ilMappingInfoSaved.get("Source_Table_Name");
+                    String dimensionTransaction;
+                    if (infoData.getDimensionTransaction() != null) {
+                        dimensionTransaction = infoData.getDimensionTransaction();
+                    } else {
+                        dimensionTransaction = saved.getDimensionTransaction();
+                    }
+                    String savedfileId = saved.getFileId();
+                    Boolean isFileUpload = saved.getIsFileUpload();
+                    String Source = sourceType;
+                    String addedUser = "0"; // Hardcoded
+                    Timestamp addedDate = Timestamp.valueOf(startTime);
+                    String updatedUser = userName;
+                    Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+                    // tMap_3, out
+                    String dbConnectionName = databaseConnectionsData.getOrDefault(connectionId, new String());
+                    String wsConnectionName = wsConnectionsData.getOrDefault(key, new String());
+                    String remoteConnectionName = remoteConnectionsData.getOrDefault(connectionId, new String());
+
+                    String sourceLC = (source == null) ? "" : source.toLowerCase();
+                    if (sourceLC.equals("db") || sourceLC.equals("dbsource")) {
+                        connectionName = dbConnectionName;
+                    } else if (sourceLC.equals("web_service") || sourceLC.equals("onedrive") || sourceLC.equals("sageintacct")) {
+                        connectionName = wsConnectionName;
+                    } else {
+                        connectionName = remoteConnectionName;
+                    }
+
+                    // tMap_2
+                    String keyTableInfo = connectionId + "-" + tableSchema + "-" + ilTableName + "-" + sourceTableName;
+                    if (eltILTableInfoData.containsKey(keyTableInfo)) { // Inner Join
+                        Map<String, String> eltILTableInfo = eltILTableInfoData.get(keyTableInfo); // Semi Join, Not Used
+                        Map<String, Object> resultMap = new HashMap<>();
+                        resultMap.put("Connection_Id", connectionId);
+                        resultMap.put("Connection_Name", connectionName);
+                        resultMap.put("Table_Schema", tableSchema);
+                        resultMap.put("IL_Table_Name", ilTableName);
+                        resultMap.put("Source_Table_Name", sourceTableName);
+                        resultMap.put("Dimension_Transaction", dimensionTransaction);
+                        resultMap.put("File_Id", savedfileId);
+                        resultMap.put("IsFileUpload", isFileUpload);
+                        resultMap.put("IsWebService", isWebService);
+                        resultMap.put("Saved_Updated_Date", savedUpdatedDate);
+                        resultMap.put("Info_Updated_Date", infoUpdatedDate);
+                        resultMap.put("Status", status);
+                        resultMap.put("Source", Source);
+                        resultMap.put("Custom_Type", customType);
+                        resultMap.put("Added_Date", addedDate);
+                        resultMap.put("Added_User", addedUser);
+                        resultMap.put("Updated_Date", updatedDate);
+                        resultMap.put("Updated_User", updatedUser);
+
+                        innerJoinResultList.add(resultMap);
+                    } else { // Anti Join (!eltILTableInfoData.containsKey(keyTableInfo))
+                        Map<String, String> eltILTableInfo = new HashMap<>();  // Semi Join, Not Used
+                        Map<String, Object> resultMap = new HashMap<>();
+                        resultMap.put("Connection_Id", connectionId);
+                        resultMap.put("Connection_Name", connectionName);
+                        resultMap.put("Table_Schema", tableSchema);
+                        resultMap.put("IL_Table_Name", ilTableName);
+                        resultMap.put("Source_Table_Name", sourceTableName);
+                        resultMap.put("Dimension_Transaction", dimensionTransaction);
+                        resultMap.put("File_Id", savedfileId);
+                        resultMap.put("IsFileUpload", isFileUpload);
+                        resultMap.put("IsWebService", isWebService);
+                        resultMap.put("Saved_Updated_Date", savedUpdatedDate);
+                        resultMap.put("Info_Updated_Date", infoUpdatedDate);
+                        resultMap.put("Status", status);
+                        resultMap.put("Source", Source);
+                        resultMap.put("Custom_Type", customType);
+                        resultMap.put("Added_Date", addedDate);
+                        resultMap.put("Added_User", addedUser);
+                        resultMap.put("Updated_Date", updatedDate);
+                        resultMap.put("Updated_User", updatedUser);
+
+                        antiJoinResultList.add(resultMap);
+                    }
+                }
+                
+                saveAntiInnerJoinedData(conn, antiJoinResultList);
+                updateInnerJoinedData(conn, innerJoinResultList);
+                // saveInnerJoinedData(conn, innerJoinResultList);
+                // updateAntiInnerJoinedData(conn, antiJoinResultList);
+
+                deleteFromIlTableInfo(conn);
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return Status.FAILURE;
+            }
+            return Status.SUCCESS;
+        }
+// 
+        public Map<String, Map<String, Object>> executeSelectiveSourceMetadataQuery(Connection connection) {
+            String query = "SELECT DISTINCT Connection_Id, Schema_Name, Table_Name, IsWebService, Custom_Type, File_Id "
+                         + "FROM ELT_Selective_Source_Metadata";
+    
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                ResultSet rs = pstmt.executeQuery()) {                while (rs.next()) {
+                    String connectionId = rs.getString("Connection_Id");
+                    String schemaName = rs.getString("Schema_Name");
+                    String tableName = rs.getString("Table_Name");
+                    boolean isWebService = rs.getBoolean("IsWebService");
+                    String customType = rs.getString("Custom_Type");
+                    String fileId = rs.getString("File_Id");
+
+                    // key
+                    String key = connectionId + "_" + schemaName + "_" + tableName;
+
+                    Map<String, Object> rowData = new HashMap<>();
+                    rowData.put("IsWebService", isWebService);
+                    rowData.put("Custom_Type", customType);
+                    rowData.put("File_Id", fileId);
+
+                    resultMap.put(key, rowData);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
         }
 
+        public Map<String, Map<String, Object>> executeCustomSourceMetadataQuery(Connection connection) {
+            String query = "SELECT ELT_Custom_Source_Metadata_Info.Connection_Id, ELT_Custom_Source_Metadata_Info.Schema_Name, "
+                         + "ELT_Custom_Source_Metadata_Info.Table_Name, ELT_Custom_Source_Metadata_Info.Source_Table_Name, "
+                         + "ELT_Custom_Source_Metadata_Info.Custom_Type, ELT_Custom_Source_Metadata_Info.connection_type "
+                         + "FROM ELT_Custom_Source_Metadata_Info";
+    
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String connectionId = rs.getString("Connection_Id");
+                    String schemaName = rs.getString("Schema_Name");
+                    String tableName = rs.getString("Table_Name");
+                    String sourceTableName = rs.getString("Source_Table_Name");
+                    String customType = rs.getString("Custom_Type");
+                    String connectionType = rs.getString("connection_type");
+                    // key
+                    String key = connectionId + "-" + schemaName + "-" + tableName;
+
+                    Map<String, Object> rowData = new HashMap<>();
+                    rowData.put("Source_Table_Name", sourceTableName);
+                    rowData.put("Custom_Type", customType);
+                    rowData.put("Connection_Type", connectionType);
+
+                    resultMap.put(key, rowData);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
+        public Map<String, Map<String, Object>> executeILSourceMappingInfoQuery(Connection connection) {
+            String query = "SELECT DISTINCT ELT_IL_Source_Mapping_Info_Saved.Connection_Id, ELT_IL_Source_Mapping_Info_Saved.Table_Schema, "
+                         + "ELT_IL_Source_Mapping_Info_Saved.IL_Table_Name, ELT_IL_Source_Mapping_Info_Saved.Source_Table_Name "
+                         + "FROM ELT_IL_Source_Mapping_Info_Saved WHERE Source_Table_Name IS NOT NULL AND Source_Table_Name != ''";
+    
+            Map<String, Map<String, Object>> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                 ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String connectionId = rs.getString("Connection_Id");
+                    String tableSchema = rs.getString("Table_Schema");
+                    String ilTableName = rs.getString("IL_Table_Name");
+                    String sourceTableName = rs.getString("Source_Table_Name");
+                    // key
+                    String key = connectionId + "-" + tableSchema + "-" + ilTableName;
+    
+                    Map<String, Object> rowData = new HashMap<>();
+                    rowData.put("Source_Table_Name", sourceTableName);
+    
+                    resultMap.put(key, rowData);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
+        public Map<String, String> executeDatabaseConnectionQuery(Connection connection) {
+            String query = "SELECT minidwcs_database_connections.Connection_Id, minidwcs_database_connections.connection_name "
+                         + "FROM minidwcs_database_connections";
+    
+            Map<String, String> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                 ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String connectionId = rs.getString("Connection_Id");
+                    String connectionName = rs.getString("connection_name");
+    
+                    // key is Connection_Id
+                    resultMap.put(connectionId, connectionName);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
+        public Map<String, String> executeWSConnectionsQuery(Connection connection) {
+            String query = "SELECT minidwcs_ws_connections_mst.id, minidwcs_ws_connections_mst.web_service_con_name "
+                         + "FROM minidwcs_ws_connections_mst";
+    
+            Map<String, String> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String id = rs.getString("id");
+                    String webServiceConName = rs.getString("web_service_con_name");
+                    // key is id
+                    resultMap.put(id, webServiceConName);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
+        public Map<String, String> executeRemoteConnectionsQuery(Connection connection) {
+            String query = "SELECT minidwcs_remote_connections.id, minidwcs_remote_connections.connection_name "
+                         + "FROM minidwcs_remote_connections";
+    
+            Map<String, String> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String id = rs.getString("id");
+                    String connectionName = rs.getString("connection_name");
+                    // key is id
+                    resultMap.put(id, connectionName);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
+        // row3 ELT_IL_Table_Info
+        public Map<String, Map<String, String>> executeILTableInfoQuery(Connection connection) {
+            String query = "SELECT ELT_IL_Table_Info.Connection_Id, ELT_IL_Table_Info.Table_Schema, "
+                         + "ELT_IL_Table_Info.IL_Table_Name, ELT_IL_Table_Info.Source_Table_Name "
+                         + "FROM ELT_IL_Table_Info";
+    
+            Map<String, Map<String, String>> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                 ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String connectionId = rs.getString("Connection_Id");
+                    String tableSchema = rs.getString("Table_Schema");
+                    String ilTableName = rs.getString("IL_Table_Name");
+                    String sourceTableName = rs.getString("Source_Table_Name");
+    
+                    // key 
+                    String key = connectionId + "-" + tableSchema + "-" + ilTableName + "-" + sourceTableName;
+    
+                    Map<String, String> rowData = new HashMap<>();
+                    rowData.put("Connection_Id", connectionId);
+                    rowData.put("Table_Schema", tableSchema);
+                    rowData.put("IL_Table_Name", ilTableName);
+                    rowData.put("Source_Table_Name", sourceTableName);
+    
+                    resultMap.put(key, rowData);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+
+        private int updateIlTableInfo(Connection connection) {
+            String query = "UPDATE ELT_IL_Table_Info SET Added_User = 1";
+    
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                int rowsUpdated = preparedStatement.executeUpdate();
+                System.out.println("Rows updated in table ELT_IL_Table_Info: " + rowsUpdated);
+                return rowsUpdated;
+            } catch (SQLException e) {
+                System.err.println("Error executing update query: \n" + e.getMessage());
+                e.printStackTrace();
+            }
+            return -1;
+        }
+
+        public int deleteFromIlTableInfo(Connection connection) throws SQLException {
+            String sql = "DELETE FROM ELT_IL_Table_Info WHERE Added_User = 1";
         
+            try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {                
+                int rowsDeleted = preparedStatement.executeUpdate();
+                System.out.println("Rows deleted from table ELT_IL_Table_Info: " + rowsDeleted);
+                return rowsDeleted;
+            } catch (SQLException e) {
+                System.err.println("Error executing delete query: \n" + e.getMessage());
+                e.printStackTrace();
+            }
+            return -1;
+        }
+        
+        // Save Anti Inner join data into the table
+        private void saveAntiInnerJoinedData(Connection dbConnection, List<Map<String, Object>> rowsData) throws SQLException {
+            String dbTable ="ELT_IL_Table_Info";
+            if (rowsData != null && !rowsData.isEmpty()) {
+                int rowsAdded = saveDataIntoDB(dbConnection, dbTable, rowsData);
+                System.out.println("Anti InnerJoinedData - Data loaded into the target " + dbTable);
+            }
+            else {
+                System.out.println("Anti InnerJoinedData - No data for the target " + dbTable);
+            }
+        }
+    
+        // Update Inner join data into the table
+        private void updateInnerJoinedData(Connection dbConnection, List<Map<String, Object>> rowsData) throws SQLException {
+            String dbTable ="ELT_IL_Table_Info";
+            if (rowsData != null && !rowsData.isEmpty()) {
+                int rowsAdded = updateDataIntoDB(dbConnection, dbTable, rowsData);
+                System.out.println("InnerJoinedData - Data loaded into the target " + dbTable);
+            }
+            else {
+                System.out.println("InnerJoinedData - No data for the target " + dbTable);
+            }
+        }
+
+        public int updateDataIntoDB(Connection connection, String tableName,  List<Map<String, Object>> data) throws SQLException {
+            if (data == null || data.isEmpty()) {
+                throw new IllegalArgumentException("Update data cannot be null or empty");
+            }
+            int rowsAffected;
+
+            String sql = "UPDATE " + tableName + " SET " +
+                    "Connection_Name = ?, " +
+                    "Dimension_Transaction = ?, " +
+                    "File_Id = ?, " +
+                    "IsFileUpload = ?, " +
+                    "IsWebService = ?, " +
+                    "Saved_Updated_Date = ?, " +
+                    "Info_Updated_Date = ?, " +
+                    "Status = ?, " +
+                    "Source = ?, " +
+                    "Custom_Type = ?, " +
+                    "Added_Date = ?, " +
+                    "Added_User = ?, " +
+                    "Updated_Date = ?, " +
+                    "Updated_User = ? " +
+                    "WHERE Connection_Id = ? AND Table_Schema = ? AND IL_Table_Name = ? AND Source_Table_Name = ?";
+        
+            boolean originalAutoCommit = connection.getAutoCommit();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+                connection.setAutoCommit(false); // Enable transaction for batch update
+
+                for (Map<String, Object> updateData : data) {
+                    preparedStatement.setString(1, (String) updateData.get("Connection_Name"));
+                    preparedStatement.setString(2, (String) updateData.get("Dimension_Transaction"));
+                    preparedStatement.setString(3, (String) updateData.get("File_Id"));
+                    preparedStatement.setBoolean(4, (Boolean) updateData.get("IsFileUpload"));
+                    preparedStatement.setBoolean(5, (Boolean) updateData.get("IsWebService"));
+                    preparedStatement.setTimestamp(6, (java.sql.Timestamp) updateData.get("Saved_Updated_Date"));
+                    preparedStatement.setTimestamp(7, (java.sql.Timestamp) updateData.get("Info_Updated_Date"));
+                    preparedStatement.setString(8, (String) updateData.get("Status"));
+                    preparedStatement.setString(9, (String) updateData.get("Source"));
+                    preparedStatement.setString(10, (String) updateData.get("Custom_Type"));
+
+                    preparedStatement.setTimestamp(11, (Timestamp) updateData.get("Added_Date"));
+                    preparedStatement.setString(12, (String) updateData.get("Added_User"));
+                    preparedStatement.setTimestamp(13, (Timestamp) updateData.get("Updated_Date"));
+                    preparedStatement.setString(14, (String) updateData.get("Updated_User"));
+
+                    preparedStatement.setString(15, (String) updateData.get("Connection_Id"));
+                    preparedStatement.setString(16, (String) updateData.get("Table_Schema"));
+                    preparedStatement.setString(17, (String) updateData.get("IL_Table_Name"));
+                    preparedStatement.setString(18, (String) updateData.get("Source_Table_Name"));
+                    preparedStatement.addBatch();
+                }
+
+                int[] result = preparedStatement.executeBatch();
+                rowsAffected = getNumberOfRowsUpdated(result);
+                System.out.println("Total Rows " + rowsAffected + " updated in the table " + tableName);
+                connection.commit();
+
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(originalAutoCommit);
+            }
+            return rowsAffected;
+        }
+        
+        public Map<String, AggregatedResult> executeSourceMappingInfoQuery(Connection connection, String query) {
+    
+            Map<String, AggregatedResult> resultMap = new HashMap<>();
+            try (PreparedStatement pstmt = connection.prepareStatement(query);
+                 ResultSet rs = pstmt.executeQuery()) {
+    
+                while (rs.next()) {
+                    String connectionId = rs.getString("Connection_Id");
+                    String tableSchema = rs.getString("Table_Schema");
+                    String ilTableName = rs.getString("IL_Table_Name");
+                    String key = connectionId + "-" + tableSchema + "-" + ilTableName;
+    
+                    String sourceTableName = rs.getString("Source_Table_Name");
+                    String fileId = rs.getString("File_Id");
+                    boolean isFileUpload = rs.getBoolean("IsFileUpload");
+                    Timestamp updatedDate = rs.getTimestamp("Updated_Date");
+                    String dimensionTransaction = rs.getString("Dimension_Transaction");
+    
+                    AggregatedResult aggregatedResult = resultMap.getOrDefault(key, new AggregatedResult());
+                    aggregatedResult.setConnectionId(connectionId);
+                    aggregatedResult.setTableSchema(tableSchema);
+                    aggregatedResult.setIlTableName(ilTableName);
+                    aggregatedResult.setSourceTableName(sourceTableName);
+                    aggregatedResult.setFileId(fileId);
+                    aggregatedResult.setIsFileUpload(isFileUpload);
+                    aggregatedResult.updateMaxUpdatedDate(updatedDate);
+                    aggregatedResult.setDimensionTransaction(dimensionTransaction);
+                    
+                    resultMap.put(key, aggregatedResult);
+                }    
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return resultMap;
+        }
+    
+        class AggregatedResult {
+            private String connectionId;
+            private String tableSchema;
+            private String ilTableName;
+            private String sourceTableName;
+            private String fileId;
+            private boolean isFileUpload;
+            private java.sql.Timestamp maxUpdatedDate;
+            private String dimensionTransaction;
+    
+            public String getConnectionId() {
+                return connectionId;
+            }
+            public void setConnectionId(String connectionId) {
+                this.connectionId = connectionId;
+            }
+            public String getTableSchema() {
+                return tableSchema;
+            }
+            public void setTableSchema(String tableSchema) {
+                this.tableSchema = tableSchema;
+            }
+            public String getIlTableName() {
+                return ilTableName;
+            }
+            public void setIlTableName(String ilTableName) {
+                this.ilTableName = ilTableName;
+            }
+            public String getSourceTableName() {
+                return sourceTableName;
+            }
+            public void setSourceTableName(String sourceTableName) {
+                this.sourceTableName = sourceTableName;
+            }
+            public String getFileId() {
+                return fileId;
+            }
+            public void setFileId(String fileId) {
+                this.fileId = fileId;
+            }
+            public boolean getIsFileUpload() {
+                return isFileUpload;
+            }
+            public void setIsFileUpload(boolean isFileUpload) {
+                this.isFileUpload = isFileUpload;
+            }
+            public Timestamp getMaxUpdatedDate() {
+                return maxUpdatedDate;
+            }
+            public void updateMaxUpdatedDate(Timestamp updatedDate) {
+                if (this.maxUpdatedDate == null || (updatedDate != null && updatedDate.after(this.maxUpdatedDate))) {
+                    this.maxUpdatedDate = updatedDate;
+                }
+            }
+            public String getDimensionTransaction() {
+                return dimensionTransaction;
+            }
+            public void setDimensionTransaction(String dimensionTransaction) {
+                this.dimensionTransaction = dimensionTransaction;
+            }
+        }
+    }
+
+    public class DWSourceInfoScriptsGenerator {
+        public DWSourceInfoScriptsGenerator() {
+        }
+    
+        // Generating the source info script
+        public Status generateSourceInfoScript() {
+            try {
+                deletefromILSourceMappingInfo(conn, selectTables, connectionId, querySchemaCondition);
+                List<Map<String, Object>> ilMappingInfoSavedDataList = getILSourceMappingInfoSavedData(conn, selectTables,
+                        connectionId, querySchemaCondition);
+                String tableName = "ELT_IL_Source_Mapping_Info";
+                if (ilMappingInfoSavedDataList.size() > 0) {
+                    saveDataIntoDB(conn, tableName, ilMappingInfoSavedDataList);
+                    System.out.println("IL Source Mapping Info: Data loaded into the target " + tableName);
+                } else {
+                    System.out.println("IL Source Mapping Info: No data for the target " + tableName);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                return Status.FAILURE;
+            }
+            return Status.SUCCESS;
+        }
+
+        private List<Map<String, Object>> getILSourceMappingInfoSavedData(Connection connection, String selectiveTables,
+                 String connectionId, String querySchemaCond) throws SQLException {
+            String query = "SELECT `Connection_Id`, `Table_Schema`, `IL_Table_Name`, `IL_Column_Name`, `IL_Data_Type`, "
+                    +
+                    "`Constraints`, `Source_Table_Name`, `Source_Column_Name`, `Source_Data_Type`, `PK_Constraint`, " +
+                    "`PK_Column_Name`, `FK_Constraint`, `FK_Column_Name`, `Dimension_Transaction`, `Dimension_Key`, " +
+                    "`Dimension_Name`, `Dimension_Join_Condition`, `Constant_Insert_Column`, `Constant_Insert_Value`, "
+                    +
+                    "`Incremental_Column`, `History_Track`, `Null_Replacement_Value`, `Column_Type`, `Active_Flag`, " +
+                    "`LHS_Join_Condition`, `RHS_Join_Condition`, `Isfileupload`, `File_Id`, `Added_Date`, `Added_User`, "
+                    +
+                    "`Updated_Date`, `Updated_User` " +
+                    "FROM `ELT_IL_Source_Mapping_Info_Saved` " +
+                    "WHERE IL_Table_Name IN (" + selectiveTables + ") " +
+                    "AND Connection_Id = ? " + querySchemaCond;
+
+            List<Map<String, Object>> resultList = new ArrayList<>();
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, connectionId);
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    ResultSetMetaData metaData = resultSet.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+
+                    while (resultSet.next()) {
+                        Map<String, Object> rowMap = new HashMap<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            rowMap.put(metaData.getColumnName(i), resultSet.getObject(i));
+                        }
+                        resultList.add(rowMap);
+                    }
+                }
+            }
+            return resultList;
+        }
+        private int deletefromILSourceMappingInfo(Connection connection, String selectiveTables, String connectionId, String querySchemaCondition) throws SQLException {
+            String query = "DELETE FROM ELT_IL_Source_Mapping_Info " +
+                           "WHERE IL_Table_Name IN (" + selectiveTables + ") " +
+                           "AND Connection_Id = ? " + querySchemaCondition;
+    
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+                preparedStatement.setString(1, connectionId);
+                int rowsDeleted = preparedStatement.executeUpdate();
+                System.out.println(rowsDeleted + " rows deleted from ELT_IL_Source_Mapping_Info where IL_Table_Name = " + selectiveTables);
+                return rowsDeleted;
+            } catch (SQLException e) {
+                System.err.println("Error while deleting from ELT_IL_Source_Mapping_Info: " + e.getMessage());
+                return 0;
+            }
+        }
     }
 
     public static class SQLQueries {
+
+        public static String queryILSourceMappingInfoSaved = "SELECT Connection_Id, Table_Schema, IL_Table_Name, Source_Table_Name, File_Id, IsFileUpload, Updated_Date, Dimension_Transaction "
+                + "FROM ELT_IL_Source_Mapping_Info_Saved "
+                + "WHERE Source_Table_Name IS NOT NULL AND Source_Table_Name <> '' "
+                + "ORDER BY IL_Table_Name, Source_Table_Name ASC";
+
+        public static String queryILSourceMappingInfo = "SELECT ELT_IL_Source_Mapping_Info.Connection_Id, ELT_IL_Source_Mapping_Info.Table_Schema, "
+                + "ELT_IL_Source_Mapping_Info.IL_Table_Name, ELT_IL_Source_Mapping_Info.Source_Table_Name, "
+                + "ELT_IL_Source_Mapping_Info.File_Id, ELT_IL_Source_Mapping_Info.IsFileUpload, "
+                + "ELT_IL_Source_Mapping_Info.Updated_Date, Dimension_Transaction "
+                + "FROM ELT_IL_Source_Mapping_Info";
+
     }
     // Enum to represent different data source types
     enum DataSourceType {
