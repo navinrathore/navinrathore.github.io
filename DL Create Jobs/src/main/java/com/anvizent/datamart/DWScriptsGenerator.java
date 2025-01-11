@@ -63,11 +63,11 @@ public class DWScriptsGenerator {
 
     private String userName = "ETL Admin"; // default user
     private String schemaName;
-    private String customType;
-    private String companyId;
+    private String loadType;
+    private String multiIlConfigFile;
     private String connectionId;
     private String dataSourceName;
-    private int customFlag;
+    private String historicalDataFlag;
     private String selectTables;
     private String querySchemaCondition = ""; // based on TABLE_SCHEMA
     private String querySchemaCondition1 = ""; // based on Schema_Name
@@ -84,16 +84,28 @@ public class DWScriptsGenerator {
         init();
     }
 
-    // public DataMartStructureScriptGenerator(long clientId, DataSourceType type, long dlId, long jobId, String dlName, String filePath, String dbDetails) {
-    //     this.clientId = clientId;
-    //     this.dataSourceType = type;
-    //     this.dlId = dlId;
-    //     this.jobId = jobId;
-    //     this.dlName = dlName;
-    //     this.filePath = filePath;
-    //     this.dbDetails = dbDetails;
-    //     init();
-    // }
+    public DWScriptsGenerator(String clientId,
+            String schemaName,
+            String connectionId,
+            String dataSourceName,
+            String loadType,
+            String multiILConfigFile,
+            String historicalDataFlag,
+            String selectTables,
+            String dbDetails) {
+        this.startTime = LocalDateTime.now();
+        this.dbDetails = dbDetails;
+        this.clientId = Long.parseLong(clientId);
+        this.schemaName = schemaName;
+        this.connectionId = connectionId;
+        this.dataSourceName = dataSourceName;
+        this.loadType = loadType;
+        this.multiIlConfigFile = multiILConfigFile;
+        this.historicalDataFlag = historicalDataFlag;
+        this.selectTables = selectTables;
+
+        init();
+    }
 
     private void init() {
         // TODO test data 
@@ -112,6 +124,11 @@ public class DWScriptsGenerator {
         // connectionId =  "114"; // AbcAnalysis_Mysql8
         // selectTables =  "'SorMaster_Spark3'"; // AbcAnalysis_Mysql8
         schemaName = "dbo";
+
+        multiIlConfigFile = "Y";  // Set one of below
+        multiIlConfigFile = "N";
+
+
         tmpTableName = dlName + dlId + jobId;
         startTime = LocalDateTime.now();
         startTimeString = getCurrentDateFormatted(startTime);
@@ -1807,8 +1824,6 @@ public class DWScriptsGenerator {
         }
 
         private void initConfigScript() {
-            String multiIlConfigFile = "Y";
-            multiIlConfigFile = "N";
             if (multiIlConfigFile.equals("Y")) {
                 limitFunction = "";
             } else {
@@ -1827,20 +1842,19 @@ public class DWScriptsGenerator {
             try {
 
             // Dim_SRC_STG
-            dimSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            //dimSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            
             // Dim_STG_IL
-
-            dimStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            //dimStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Trans_SRC_STG
-
             transSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Trans_STG_Keys
-
+            transStgKeysConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Trans_STG_IL
-
+            transStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Deletes_Dim
 
@@ -2073,6 +2087,144 @@ public class DWScriptsGenerator {
 
                 String tableName = "ELT_CONFIG_PROPERTIES";
                 if (finalResults != null && !finalResults.isEmpty()) {
+                    deleteConfigProperties(connection, ilTable, connectionId);
+                    saveDataIntoDB(connection, tableName, finalResults);
+                }
+            }
+        }
+
+        void transStgKeysConfigScript(Connection connection, String selectiveTables,
+                String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
+
+            String dimensionTransaction = "T";
+            String jobType = "Transaction_stg_keys";
+            System.out.println("\ndimensionTransaction: " + dimensionTransaction + ", jobType: " + jobType);
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+                    dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            // System.out.println("\n    list of data (dimSrcToStgConfigScript): " + data);
+
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                // String multiIlConfigFile = context.MultiIlConfigFile;
+                // TODO: integration fix above
+                String multiIlConfigFile = "Y";
+                String ilTable = "";
+                if (multiIlConfigFile.equals("Y")) {
+                    ilTable = ilTableName + "_Stg_Keys";
+                } else {
+                    ilTable = "TRANS_SRC_STG_Keys_All";
+                }
+
+                String writeMode = getWriteMode(ilTableName);
+
+                Map<String, AggregatedData> mainDataMap = processSrcStgConfigJobProperties(connection, connectionId, tableSchema, jobType, writeMode);
+                final String fileName = getConfigFileName(ilTableName, STG_CONFIG_FILE_STRING); // TODO  contain clientID
+                String addedUser = userName;
+                Timestamp addedDate = Timestamp.valueOf(startTime);
+                String updatedUser = userName;
+                Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+                List<Map<String, Object>> finalResults = new ArrayList<>();
+                for (Map.Entry<String, AggregatedData> entry : mainDataMap.entrySet()) {
+                    String key = entry.getKey();
+                    AggregatedData value = entry.getValue();
+                    System.out.println("Key: " + key);
+                    // the only aggregated field
+                    String script = value.getScript();
+                    script = script.replace(",", "\n"); // TODO Note in many of them it has to go
+
+                    Map<String, Object> resultRow = new HashMap<>();
+                    resultRow.put("Connection_Id", connectionId);
+                    resultRow.put("TABLE_SCHEMA", schemaName); // Note Schema Name
+                    resultRow.put("IL_Table_Name", ilTable);
+                    resultRow.put("config_file_name", fileName);
+                    resultRow.put("Active_Flag", true);
+                    resultRow.put("Added_Date", addedDate);
+                    resultRow.put("Added_User", addedUser);
+                    resultRow.put("Updated_Date", updatedDate);
+                    resultRow.put("Updated_User", updatedUser);
+                    finalResults.add(resultRow);
+
+                    writeToFile(script, fileName);
+                }
+                System.out.println("  Trans SRC to STG script fileName: " + fileName);
+
+                String tableName = "ELT_CONFIG_PROPERTIES";
+                if (finalResults != null && !finalResults.isEmpty()) {
+                    deleteConfigProperties(connection, ilTable, connectionId);
+                    saveDataIntoDB(connection, tableName, finalResults);
+                }
+            }
+        }
+
+        void transStgToIlConfigScript(Connection connection, String selectiveTables,
+                String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
+
+            String dimensionTransaction = "T";
+            String jobType = "Transaction_stg_il";
+            System.out.println("\ndimensionTransaction: " + dimensionTransaction + ", jobType: " + jobType);
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+                    dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            // System.out.println("\n    list of data (dimSrcToStgConfigScript): " + data);
+
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                // String multiIlConfigFile = context.MultiIlConfigFile;
+                // TODO: integration fix above
+                String multiIlConfigFile = "Y";
+                String ilTable = "";
+                if (multiIlConfigFile.equals("Y")) {
+                    ilTable = ilTableName;
+                } else {
+                    ilTable = "TRANS_SRC_STG_All";
+                }
+
+                String writeMode = getWriteMode(ilTableName);
+
+                Map<String, AggregatedData> mainDataMap = processSrcToIlConfigJobProperties(connection, connectionId, tableSchema, ilTableName, jobType, writeMode);
+                final String fileName = getConfigFileName(ilTableName, STG_CONFIG_FILE_STRING); // TODO  contain clientID
+                String addedUser = userName;
+                Timestamp addedDate = Timestamp.valueOf(startTime);
+                String updatedUser = userName;
+                Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+                List<Map<String, Object>> finalResults = new ArrayList<>();
+                for (Map.Entry<String, AggregatedData> entry : mainDataMap.entrySet()) {
+                    String key = entry.getKey();
+                    AggregatedData value = entry.getValue();
+                    System.out.println("Key: " + key);
+                    // the only aggregated field
+                    String script = value.getScript();
+                    // script = script.replace(",", "\n"); // TODO Note in many of them it has to go Here it is commented
+
+                    Map<String, Object> resultRow = new HashMap<>();
+                    resultRow.put("Connection_Id", connectionId);
+                    resultRow.put("TABLE_SCHEMA", schemaName); // Note Schema Name
+                    resultRow.put("IL_Table_Name", ilTable);
+                    resultRow.put("config_file_name", fileName);
+                    resultRow.put("Active_Flag", true);
+                    resultRow.put("Added_Date", addedDate);
+                    resultRow.put("Added_User", addedUser);
+                    resultRow.put("Updated_Date", updatedDate);
+                    resultRow.put("Updated_User", updatedUser);
+                    finalResults.add(resultRow);
+                    writeToFile(script, fileName);
+
+                }
+
+                System.out.println("  Trans SRC to IL script fileName: " + fileName);
+
+                String tableName = "ELT_CONFIG_PROPERTIES";
+                if (finalResults != null && !finalResults.isEmpty()) {
+                    // Delete from DB
+                    // use ilTable not ilTableName
+                    deleteConfigProperties(connection, ilTable, connectionId);
                     saveDataIntoDB(connection, tableName, finalResults);
                 }
             }
@@ -2231,6 +2383,7 @@ public class DWScriptsGenerator {
             }
         }
 
+        // With Write_Mode_Type
         private Map<String, AggregatedData> processSrcStgConfigJobProperties(Connection connection, String connectionId, String tableSchema, String jobType, String writeMode) {
             String query = "SELECT Id, Job_Type, Component, Key_Name, Value_Name, Active_Flag, Dynamic_Flag "
                     + "FROM ELT_Job_Properties_Info "
@@ -2273,6 +2426,194 @@ public class DWScriptsGenerator {
             return aggregatedDataMap;
         }
 
+
+        // With Write_Mode_Type +  Component not in ('sqlsink')
+        private Map<String, AggregatedData> processSrcToIlConfigJobProperties(Connection connection, String connectionId, String tableSchema, String ilTableName, String jobType, String writeMode) {
+            String query = "SELECT Id, Job_Type, Component, Key_Name, Value_Name, Active_Flag, Dynamic_Flag "
+                    + "FROM ELT_Job_Properties_Info "
+                    + "WHERE Job_Type = '" + jobType + "' AND Active_Flag = 1"
+                    + " and Component not in ('sqlsink')"
+                    + " and Write_Mode_Type = '" + writeMode + "'";
+
+            String key = connectionId + "-" + tableSchema + "-" + ilTableName;
+            Map<String, AggregatedData> aggregatedDataMap = new HashMap<>();
+            try (Statement statement = connection.createStatement();
+                    ResultSet resultSet = statement.executeQuery(query)) {
+
+                while (resultSet.next()) {
+                    String keyName = resultSet.getString("Key_Name");
+                    String valueName = resultSet.getString("Value_Name");
+
+                    // Transformation
+                    String condition = (valueName != null && valueName.length() > 0) ? "=" : "";
+                    String script = keyName + condition + valueName;
+
+                    // IL_Table_Name transformation is done but not used in output
+                    // config_file_name transformation is done but not used in output
+                    // Some fields including above ones are common. Hence, updated once later.
+
+                    // Aggregation
+                    AggregatedData aggregatedData = aggregatedDataMap.getOrDefault(key, new AggregatedData());
+                    aggregatedData.addScript(script);
+                    aggregatedDataMap.put(key, aggregatedData);
+                }
+            } catch (SQLException e) {
+                System.err.println("Error processing config job properties: " + e.getMessage());
+            }
+            
+            AggregatedData mainData = aggregatedDataMap.get(key);
+            String finalScript = mainData.getScript();
+
+            // subjob STG_To_IL_Lkp config
+            String prevComponent = "Filter_By_Expression";
+            Map<String, String> stgToILLookupConfigMap = getLookupConfig(connection, connectionId, ilTableName, querySchemaCondition, prevComponent);
+            String theScriptLookup = stgToILLookupConfigMap.get("theScript");
+            prevComponent = stgToILLookupConfigMap.get("prevComponent");
+
+            // Add script to previous one
+            if (theScriptLookup != null && !theScriptLookup.isEmpty()) {
+                finalScript = finalScript + "\n" + theScriptLookup;
+            }
+
+            // subjob STG_To_IL_Sink config
+            // key remains same 
+            Map<String, AggregatedData> sinkConfigmap = getSinkConfig(connection, connectionId, tableSchema, ilTableName, jobType, writeMode, prevComponent);
+            AggregatedData sinkData = sinkConfigmap.get(key);
+            String theScriptSink = sinkData.getScript();
+            
+            // Add script to previous one
+            if (theScriptSink != null && !theScriptSink.isEmpty()) {
+                finalScript = finalScript + "\n" + theScriptSink;
+            }
+            AggregatedData finalAggregatedData = aggregatedDataMap.getOrDefault(key, new AggregatedData());
+            finalAggregatedData.addScript(finalScript);
+            aggregatedDataMap.put(key, finalAggregatedData);
+
+            // Output aggregated data
+            // TODO: removal required
+            aggregatedDataMap.forEach((k, data) -> {
+                System.out.println("Key: " + k);
+                System.out.println("Aggregated Script: " + data.getScript());
+            });
+
+            return aggregatedDataMap;
+        }
+
+        private Map<String, String> getLookupConfig(Connection connection, String connectionId, String ilTableName, String querySchemaCondition, String prevComponent) {
+            String query = "SELECT " +
+                           "IL_Table_Name, " +
+                           "IL_Column_Name, " +
+                           "Dimension_Key, " +
+                           "Dimension_Name, " +
+                           "Dimension_Join_Condition " +
+                           "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                           "WHERE Connection_Id = ? " +
+                           "AND IL_Table_Name = ? " +
+                           querySchemaCondition + " " +
+                           "AND UPPER(Constraints) = 'FK'";
+        
+            Map<String, String> paramMap = new HashMap<>();
+            try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+        
+                preparedStatement.setString(1, connectionId);
+                preparedStatement.setString(2, ilTableName);
+                
+                StringBuilder thelookupConfigBuilder = new StringBuilder();
+                String sqllookupName = null;
+                try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                    while (resultSet.next()) {
+                        String dimensionName = resultSet.getString("Dimension_Name");
+        
+                        String sqllookupSource = (sqllookupName == null) 
+                            ? prevComponent 
+                            : sqllookupName;
+
+                        // in previous statement, where is the 'sqllookupName' coming from?
+                        sqllookupName = dimensionName.replace(" ", "_") + "_Lkp";
+                        String sqllookupTable = "${" + sqllookupName + ".lookup.table}";
+                        String sqllookupWhereFields = "${" + sqllookupName + ".where.fields}";
+                        String sqllookupWhereColumns = "${" + sqllookupName + ".where.columns}";
+                        String sqllookupSelectColumns = "${" + sqllookupName + ".select.columns}";
+
+                        String thelookupConfig = "sqllookup\n" +
+                            "sqllookup.name=" + sqllookupName + "\n" +
+                            "sqllookup.source=" + sqllookupSource + "\n" +
+                            "sqllookup.jdbc.url=${src.jdbc.url}\n" +
+                            "sqllookup.jdbc.driver=${src.jdbc.driver}\n" +
+                            "sqllookup.user.name=${src.db.user}\n" +
+                            "sqllookup.password=${src.db.password}\n" +
+                            "sqllookup.table=" + sqllookupTable + "\n" +
+                            "sqllookup.select.columns=" + sqllookupSelectColumns + "\n" +
+                            "sqllookup.where.fields=" + sqllookupWhereFields + "\n" +
+                            "sqllookup.where.columns=" + sqllookupWhereColumns + "\n" +
+                            "sqllookup.on.zero.fetch=IGNORE\n" +
+                            "sqllookup.cache.type=${cache.type}\n" +
+                            "sqllookup.cache.mode=${cache.mode}\n" +
+                            "sqllookup.cache.max.elements.in.memory=${max.elements.in.memory}\n" +
+                            "sqllookup.cache.time.to.idle.seconds=${time.to.idle.seconds}\n" +
+                            "sqllookup.eoc";
+                            // Aggregate 'thelookupConfig' param
+                            if (thelookupConfigBuilder.length() > 0) {
+                                thelookupConfigBuilder.append("\n");
+                            }
+                            thelookupConfigBuilder.append(thelookupConfig);
+                    }
+                    // Output
+                    if (thelookupConfigBuilder.toString().isEmpty()) {
+                        paramMap.put("prevComponent", "LKP_Stg_Keys");
+                        paramMap.put("theScript", "");
+                    } else {
+                        paramMap.put("prevComponent", thelookupConfigBuilder.toString());
+                        paramMap.put("theScript", sqllookupName);
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                throw new RuntimeException("Error while fetching IL source mapping info", e);
+            }
+            return paramMap;
+        }
+             
+        private Map<String, AggregatedData> getSinkConfig(Connection connection, String connectionId, String tableSchema, String ilTableName, String jobType, String writeMode, String prevComponent) {
+            String query = "SELECT Id, Job_Type, Component, Key_Name, Value_Name, Active_Flag, Dynamic_Flag "
+                    + "FROM ELT_Job_Properties_Info "
+                    + "WHERE Job_Type = '" + jobType + "' AND Active_Flag = 1"
+                    + " and Component in ('sqlsink')"
+                    + " and Write_Mode_Type = '" + writeMode + "'";
+
+            Map<String, AggregatedData> aggregatedDataMap = new HashMap<>();
+            try (Statement statement = connection.createStatement();
+                    ResultSet resultSet = statement.executeQuery(query)) {
+
+                while (resultSet.next()) {
+                    String keyName = resultSet.getString("Key_Name");
+                    String valueName = resultSet.getString("Value_Name");
+
+                    // Transformation
+                    String condition = (valueName != null && valueName.length() > 0) ? "=" : "";
+                    String script;
+                    if (keyName.equals("sqlsink.source")) {
+                        script = keyName + condition + prevComponent;
+                    } else {
+                        script = keyName + condition + valueName;
+                    }
+                    // IL_Table_Name transformation is done but not used in output
+                    // config_file_name transformation is done but not used in output
+                    // above fields are common. Hence, updated once later.
+
+                    // Aggregation
+                    String key = connectionId + "-" + tableSchema + "-" + ilTableName;
+                    AggregatedData aggregatedData = aggregatedDataMap.getOrDefault(key, new AggregatedData());
+                    script = script.replace(",", "\n");
+                    aggregatedData.addScript(script);
+                    aggregatedDataMap.put(key, aggregatedData);
+                }
+            } catch (SQLException e) {
+                System.err.println("Error processing config job properties: " + e.getMessage());
+            }
+
+            return aggregatedDataMap;
+        }
         private Map<String, AggregatedData> processConfigJobProperties(Connection connection, String connectionId, String tableSchema, String jobType) {
             String query = "SELECT Id, Job_Type, Component, Key_Name, Value_Name, Active_Flag, Dynamic_Flag "
                     + "FROM ELT_Job_Properties_Info "
@@ -2336,7 +2677,7 @@ public class DWScriptsGenerator {
             }
         }
 
-        private void deleteConfigProperties(Connection connection, String ilTable, String connectionId) {
+        private void deleteConfigPropertiesSTGKEYS(Connection connection, String ilTable, String connectionId) {
             String query = "DELETE FROM ELT_CONFIG_PROPERTIES WHERE IL_Table_Name = '" 
                            + ilTable + "_Stg_Keys' AND Connection_Id = '" + connectionId + "'";
             try (Statement statement = connection.createStatement()) {
@@ -2347,6 +2688,17 @@ public class DWScriptsGenerator {
             }
         }
         
+        private void deleteConfigProperties(Connection connection, String ilTable, String connectionId) {
+            String query = "DELETE FROM ELT_CONFIG_PROPERTIES WHERE IL_Table_Name = '" 
+                           + ilTable + "' AND Connection_Id = '" + connectionId + "'";
+            try (Statement statement = connection.createStatement()) {
+                int rowsDeleted = statement.executeUpdate(query);
+                System.out.println(rowsDeleted + " rows deleted from ELT_CONFIG_PROPERTIES where IL_Table_Name is " + ilTable);
+            } catch (SQLException e) {
+                System.err.println("Error while deleting from ELT_CONFIG_PROPERTIES: " + e.getMessage());
+            }
+        }
+
         private String getConfigFileName(String ilTableName, String configFileString) {
             String suffix = getTimeStamp();
             // TODO clientId is also  required
