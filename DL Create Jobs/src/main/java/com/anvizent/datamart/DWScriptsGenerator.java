@@ -183,9 +183,10 @@ public class DWScriptsGenerator {
         queryConditions.put("query_schema_cond1", querySchemaCondition1);
         return queryConditions;
     }
+    // ELT_Generate_parent
     private void generateScripts() {
         // The DB scripts generator
-        if (false && new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
+        if (new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
@@ -209,7 +210,7 @@ public class DWScriptsGenerator {
         }
 
         // The Table Info script generator
-        if (new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
+        if (false && new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
@@ -251,7 +252,7 @@ public class DWScriptsGenerator {
                             + "},"
                             + "\"delete_flag\":false"
                             + "}}";
-                    System.out.println(settingsJson);
+                    // System.out.println(settingsJson);
                     // id, date and other for type
 
                     JSONObject settings = new JSONObject(settingsJson);
@@ -483,14 +484,40 @@ public class DWScriptsGenerator {
 
         // Constructor
         public DWDBScriptsGenerator() {
-            // Initialization logic if needed
         }
     
         // Method to generate the DB script
         public Status generateDBScript() {
-            // Placeholder logic for the method
-            // Replace this with actual implementation
+            // try {
+
+                // Select
+                Status status = generateSelectQuery();
+
+                // Create_Dim
+
+
+                // Create_Trans
+
+
+
+                // stg_keys
+
+
+                // Alert_Script
+
+
+                // Ends Here
+            // } catch (SQLException e) {
+            //     e.printStackTrace();
+            // }
+
+            return status;
+        }
+            // DB Script - Select Query part
+        public Status generateSelectQuery() {
             try {
+
+                // Select code
                 List<Map<String, Object>> tableSchemaList =  getTableSchemasFromMapInfo(conn, selectTables, connectionId, querySchemaCondition);
                 System.out.println("Size of table schemas: " + tableSchemaList.size());
 
@@ -514,11 +541,19 @@ public class DWScriptsGenerator {
                      Boolean deleteFlag = getDeleteFlag(ilTableName);
 
                      Map<String, Map<String, Object>>  masterData = getMasterSourceMappingInfoData(conn, ilTableName, connectionId, querySchemaCondition);
-                     System.out.println("Size of master data: " + masterData.size());
-                     System.out.println("master data: " + masterData);
+                    //  System.out.println("Size of master data: " + masterData.size());
+                     //System.out.println("master data: " + masterData);
+                     // Called inside core transaction. TODO remvoe above
 
-                    doCoreTransformations(conn, connectionId,tableSchema, ilTableName, querySchemaCondition);
+                     List<Map<String, Object>> finalResults = doCoreTransformations(conn, connectionId, tableSchema, ilTableName,
+                             querySchemaCondition);
 
+                     String tableName = "ELT_Select_Script";
+                     if (finalResults != null && !finalResults.isEmpty()) {
+                         // TODO delete query to be added
+                         deleteSelectScripts(conn, ilTableName, connectionId, querySchemaCondition);
+                         saveDataIntoDB(conn, tableName, finalResults);
+                     }
 
                     // USed inside above funciton
                     //  Map<String, String> data = getSymbolValueforConnectionId(conn, connectionId);
@@ -527,73 +562,73 @@ public class DWScriptsGenerator {
                      
                      // TODO have single copy of the below
                      Map<String, Object> loadProperties = getLoadProperties(conn, connectionId,  ilTableName);
-                     System.out.println("loadProperties: " + loadProperties);
+                    //  System.out.println("loadProperties: " + loadProperties);
                      Map<String, Object> dateParam = getConditionalDateParam(ilTableName, loadProperties);
-                     System.out.println("conditional date: " + dateParam);
+                    //  System.out.println("conditional date: " + dateParam);
                      Map<String, Object> limitParam = getConditionalLimitParam(ilTableName, loadProperties);
-                     System.out.println("conditional Limit: " + limitParam);
+                    //  System.out.println("conditional Limit: " + limitParam);
                      Map<String, Object> monthParam = getConditionalMonthParam(ilTableName, loadProperties);
-                     System.out.println("conditional Month: " + monthParam);
+                    //  System.out.println("conditional Month: " + monthParam);
                      Map<String, Object> filterParam = getConditionalFilterParam(ilTableName, loadProperties);
-                     System.out.println("conditional Filter: " + filterParam);
+                    //  System.out.println("conditional Filter: " + filterParam);
                      Map<String, Object> historyDateParam = getHistoricalDateParam(ilTableName, loadProperties);
-                     System.out.println("historical date: " + historyDateParam);
+                    //  System.out.println("historical date: " + historyDateParam);
                      Map<String, Object> incrementalParam = getIncrementalParam(ilTableName, loadProperties);
-                     System.out.println("incremental name/type: " + incrementalParam);
+                    //  System.out.println("incremental name/type: " + incrementalParam);
 
                      Map<Integer, Map<String, Object>> dwSettings = getDWSettings(conn, Integer.valueOf(connectionId));
-                     System.out.println("DW settings: " + dwSettings);
+                    //  System.out.println("DW settings: " + dwSettings);
 
                      // row6 (lookup)
                      Map<String, String> joinedData = aggregateColumnNames(conn, ilTableName, Integer.valueOf(connectionId), querySchemaCondition);
-                     System.out.println("Aggregated data: " + joinedData);
+                    //  System.out.println("Aggregated data: " + joinedData);
 
                      // Deletes(lookup)
                      String query = getCoreSourceMappingInfoQuery(querySchemaCondition);
                      Map<String, Map<String, Object>> res = processSourceMapping(conn, ilTableName, connectionId, query);
-                     System.out.println("Ptocess Source mapping: " + res);
+                    //  System.out.println("Ptocess Source mapping: " + res);
                     // ELT_Selective_Source_Metadata`
-                     Map<String, Map<String, Object>> selectivesourcemeta = getSelectiveSourceMetadata(conn, connectionId, querySchemaCondition);
-                     System.out.println("Selective Source metadata size: " + selectivesourcemeta.size());
+                     Map<String, Map<String, Object>> selectivesourcemeta = getSelectiveSourceMetadata(conn, connectionId, querySchemaCondition1); // Note querySchemaCondition1
+                    //  System.out.println("Selective Source metadata size: " + selectivesourcemeta.size());
                     //  System.out.println("Selective Source metadata: " + selectivesourcemeta);
                      // ELT_Custom_Source_Metadata_Info
                      Map<String, Map<String, Object>> sourcemeta = getCustomSourceMetadata(conn);
-                     System.out.println("Custom Source metadata size : " + sourcemeta.size());
+                    //  System.out.println("Custom Source metadata size : " + sourcemeta.size());
                     //  System.out.println("Custom Source metadata : " + sourcemeta);
 
-
-
-
-
-
                 }
+
+
             // Another Script
             // Create Script transaction group
             List<Map<String, Object>> createScripData = GetCreateScriptScriptTransactionData(conn, selectTables, connectionId, querySchemaCondition);
             System.out.println("Create Script : " + createScripData);
 
             } catch (SQLException e) {
-                // TODO return failure status
                 e.printStackTrace();
             }
 
             return Status.SUCCESS;
         }
 
-        private void doCoreTransformations(Connection connection, String connectionId, String tableSchema, String ilTableName, String querySchemaCond) throws SQLException {
+        private List<Map<String, Object>> doCoreTransformations(Connection connection, String connectionId, String tableSchema, String ilTableName, String querySchemaCond) throws SQLException {
 
             System.out.println("");
             System.out.println("");
             Map<String, Map<String, Object>>  masterData = getMasterSourceMappingInfoData(conn, ilTableName, connectionId, querySchemaCondition);
+            System.out.println("Size of master data: " + masterData.size());
+            System.out.println("Size of master data is going to be 1 only as it is aggregated over ilTableName itself." );
+
+
             Map<String, Object> masterDataForConId = masterData.get(ilTableName);
             String row1Symbol = (String) masterDataForConId.get("Symbol");
             String row1Columns = (String) masterDataForConId.get("Columns");
             String row1SourceTableName = (String) masterDataForConId.get("Source_Table_Name");
             // String row1SourceTableName = (String) masterDataForConId.get("Source_Table_Name");
 
-            System.out.println("symbol: " + row1Symbol);
-            System.out.println("Columns: " + row1Columns);
-            System.out.println("Columns: " + row1Columns);
+            // System.out.println("symbol: " + row1Symbol);
+            // System.out.println("Columns: " + row1Columns);
+            // System.out.println("Columns: " + row1Columns);
 
 
             // Initialize variables with null checks and ternary operators where applicable.
@@ -602,30 +637,30 @@ public class DWScriptsGenerator {
             // String deleteFlag = (String) globalMap.get("delete_flag");
 
             Map<String, Object> loadProperties = getLoadProperties(conn, connectionId,  ilTableName);
-            System.out.println("loadProperties: " + loadProperties);
+            // System.out.println("loadProperties: " + loadProperties);
             // row2
             // DW Settings - server name
             Map<Integer, Map<String, Object>> row6DWSettings = getDWSettings(conn, Integer.valueOf(connectionId));
             // System.out.println("row6DWSettings value: " + row6DWSettings);
             String row2Name = (String) row6DWSettings.get(Integer.parseInt(connectionId)).get("name");
-            System.out.println("name: " + row2Name);
+            // System.out.println("name: " + row2Name);
 
             // row6 (lookup)
             Map<String, String> joinedData = aggregateColumnNames(conn, ilTableName, Integer.valueOf(connectionId), querySchemaCond);
             String row6LookupKey = connectionId + "-" + tableSchema + "-" + ilTableName;
             String row6ILColumnName = joinedData.get(row6LookupKey);
-            System.out.println("Aggregated data: " + joinedData);
-            System.out.println("row6LookupKey: " + row6LookupKey);
-            System.out.println("row6ILColumnName: " + row6ILColumnName);
+            // System.out.println("Aggregated data: " + joinedData);
+            // System.out.println("row6LookupKey: " + row6LookupKey);
+            // System.out.println("row6ILColumnName: " + row6ILColumnName);
 
             // server
             String server = row2Name == null ? ""
                     : row2Name.equals("SQL Server") ? " Order by  " + (row6ILColumnName == null ? " Company_Id " : row6ILColumnName) : "";
-            System.out.println("server: " + server);
+            // System.out.println("server: " + server);
 
             // conditional_limit
             Map<String, Object> limitParam = getConditionalLimitParam(ilTableName, loadProperties);
-            System.out.println("conditional Limit: " + limitParam);
+            // System.out.println("conditional Limit: " + limitParam);
             String limitParamSettingsCategory = (String) limitParam.get("Settings_Category");
             String limitParamSettingsValue = (String) limitParam.get("Setting_Value");
             // Var_conditionallimit
@@ -633,28 +668,28 @@ public class DWScriptsGenerator {
             // Var_limit
             String limitValue = limitParamSettingsCategory == null ? ""
                     : limitParamSettingsCategory.equals("Conditional_Limit") ? limitParamSettingsValue : "";
-            System.out.println("conditional Limit: " + conditionalLimitSettingCategory + ", " + limitValue);
+            // System.out.println("conditional Limit: " + conditionalLimitSettingCategory + ", " + limitValue);
 
             // dates (lookup)
             Map<String, Object> datesDWSettings = row6DWSettings.get(Integer.parseInt(connectionId));
-            System.out.println("datesDWSettings: " + datesDWSettings);
+            // System.out.println("datesDWSettings: " + datesDWSettings);
             String datesIncrementalDate = (String) datesDWSettings.get("Incremental_Date");
             String datesConditionalDate = (String) datesDWSettings.get("Conditional_Date");
 
             // conditional (lookup)
             Map<String, Object> conditional = getConditionalDateParam(ilTableName, loadProperties);
-            System.out.println("conditional date: " + conditional);
+            // System.out.println("conditional date: " + conditional);
             // String dateParamConditionalLimit = (String) conditional.get("Settings_Category");
             // Var_ConditionalLimitsett
             String conditionalLimitSetting = (String) datesDWSettings.get("Conditional_Limit") == null ? "limit" : (String) datesDWSettings.get("Conditional_Limit");
-            System.out.println("conditionalLimitSetting: " + conditionalLimitSetting);
+            // System.out.println("conditionalLimitSetting: " + conditionalLimitSetting);
             // Var_conditional
             String conditionalSetting = conditional.get("Settings_Category") == null ? "" : (String) conditional.get("Settings_Category");
-            System.out.println("conditionalSetting: " + conditionalSetting);
+            // System.out.println("conditionalSetting: " + conditionalSetting);
 
             // incremental1
             Map<String, Object> incremental1 = getIncrementalParam(ilTableName, loadProperties);
-            System.out.println("incremental name/type: " + incremental1);
+            // System.out.println("incremental name/type: " + incremental1);
             String incremental1SettingCategory = (String) incremental1.get("Settings_Category");
             String incremental1SettingValue = (String) incremental1.get("Setting_Value");
             // Var_Incremental
@@ -662,30 +697,30 @@ public class DWScriptsGenerator {
 
             // Conditional_filter1 (Lookup), Conditional_filter
             Map<String, Object> conditionalFilter1 = getConditionalFilterParam(ilTableName, loadProperties);
-            System.out.println("conditional Filter: " + conditionalFilter1);
+            // System.out.println("conditional Filter: " + conditionalFilter1);
             // Conditionalfilter
             String conditionalFilter = conditionalFilter1.get("Settings_Category") == null ? "" : (String) conditionalFilter1.get("Settings_Category");
-            System.out.println("conditionalFilter: " + conditionalFilter);
+            // System.out.println("conditionalFilter: " + conditionalFilter);
             //IL_Column_Name
             String ilColumnName = row1Symbol == null ? " {Schema_Company} as Company_Id ," :
                 row1Symbol.equals("\"") ? " {Schema_Company} as \"Company_Id\" ," : " {Schema_Company} as Company_Id ,";
-            System.out.println("ilColumnName: " + ilColumnName);
+            // System.out.println("ilColumnName: " + ilColumnName);
 
             // Conditional_limit, Limit
             Map<String, Object> conditionalLimit = getConditionalLimitParam(ilTableName, loadProperties);
-            System.out.println("conditional Limit: " + limitParam);
+            // System.out.println("conditional Limit: " + limitParam);
 
             String statement = conditionalLimitSetting.toLowerCase().contains("limit") ? " Select "
                     : conditionalLimitSetting.toLowerCase().contains("top")
                             && conditionalLimit.get("Settings_Category") == null ? " Select  "
                                     : conditionalLimitSetting.toLowerCase().contains(
                                             "top") && conditionalLimit.get("Settings_Category").equals("Conditional_Limit") ? " Select TOP " + limitValue : " Select ";
-            System.out.println("statement: " + statement);
+            // System.out.println("statement: " + statement);
 
             // Deletes(lookup)
             String query = getCoreSourceMappingInfoQuery(querySchemaCondition);
             Map<String, Map<String, Object>> deletesAggregateData = processSourceMapping(conn, ilTableName, connectionId, query);
-            System.out.println("Ptocess Source mapping: " + deletesAggregateData);
+            // System.out.println("Ptocess Source mapping: " + deletesAggregateData);
             Map<String, Object> deletes = deletesAggregateData.get(ilTableName);
 
             String columns = row1Columns;
@@ -696,8 +731,8 @@ public class DWScriptsGenerator {
                 row1Symbol.equals("`") ? ("`" + schemaName + "`.`" + row1SourceTableName + "`") :
                 row1Symbol.equals("\"") ? ("\"" + schemaName + "\".\"" + row1SourceTableName + "\"") :
                 ("[" + schemaName + "].[" + row1SourceTableName + "]"));
-            System.out.println("deleteColumns: " + deleteColumns);
-            System.out.println("ending: " + ending);
+            // System.out.println("deleteColumns: " + deleteColumns);
+            // System.out.println("ending: " + ending);
 
             String script = statement + ilColumnName + columns + ending;
             String deleteScript = statement + ilColumnName + deleteColumns + ending + " " + server;
@@ -724,11 +759,11 @@ public class DWScriptsGenerator {
 
             // Months1, Months
             Map<String, Object> months1 = getConditionalMonthParam(ilTableName, loadProperties);
-            System.out.println("months1: " + months1);
+            // System.out.println("months1: " + months1);
 
 
             String finalConditionalMonth = finalConditionalDate == null ? "" : finalConditionalDate.replace("Months", (String) months1.get("Setting_Value"));
-            System.out.println("finalConditionalMonth: " + finalConditionalMonth);
+            // System.out.println("finalConditionalMonth: " + finalConditionalMonth);
 
             String conditionalFilterValue = conditionalFilter == null ? ""
                     : conditionalFilter.equals("Conditional_Filter") ? conditionalFilter : "";
@@ -751,7 +786,7 @@ public class DWScriptsGenerator {
                 conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.isEmpty() ?
                     " Where " + finalConditionalMonth : " ";
                 
-                System.out.println("finalConditionsLimit: " + finalConditionsLimit);
+                // System.out.println("finalConditionsLimit: " + finalConditionsLimit);
 
                 // final_conditions_top
                 // Initialize the final_conditions_top variable with appropriate conditions.
@@ -770,7 +805,7 @@ public class DWScriptsGenerator {
                     " " :
                 (conditionalSetting.equals("Conditional_Date") && conditionalLimitSettingCategory.isEmpty() && conditionalFilter.isEmpty()) ?
                     " Where " + finalConditionalMonth : " ";
-                System.out.println("finalConditionsTop: " + finalConditionsTop);
+                // System.out.println("finalConditionsTop: " + finalConditionsTop);
 
                 // final_Incremental_limit
                 // Initialize the finalIncrementalLimit variable with appropriate conditions.
@@ -803,7 +838,7 @@ public class DWScriptsGenerator {
                 conditionalLimitSettingCategory.isEmpty() && 
                 conditionalFilter.isEmpty()) ?
                     "/* Where " + incrementalFinal + " */" : "";
-                System.out.println("finalIncrementalLimit: " + finalIncrementalLimit);
+                // System.out.println("finalIncrementalLimit: " + finalIncrementalLimit);
 
                 // final_Incremental_top
                 String finalIncrementalTop = (incrementalSetting == null && conditionalLimitSettingCategory == null && conditionalFilter == null) ? "" :
@@ -836,11 +871,11 @@ public class DWScriptsGenerator {
                 conditionalFilter.isEmpty()) ?
                     "/* Where " + incrementalFinal + " */" : "";
 
-                System.out.println("finalIncrementalTop: " + finalIncrementalTop);
+                // System.out.println("finalIncrementalTop: " + finalIncrementalTop);
 
-                // Hostory_Date (lookup)
+                // History_Date (lookup)
                 Map<String, Object> historyDate = getHistoricalDateParam(ilTableName, loadProperties);
-                System.out.println("historical date: " + historyDate);
+                // System.out.println("historical date: " + historyDate);
                 String historyDateSettingsCategory = (String) historyDate.get("Settings_Category");
                 String historyDateSettingValue = (String) historyDate.get("Setting_Value");
 
@@ -855,12 +890,12 @@ public class DWScriptsGenerator {
                 String condition = (String) conditional.get("Setting_Value") == null || (String) months1.get("Setting_Value") == null ? "" :
                     " Where " + (String) conditional.get("Setting_Value") + " >=DATEADD(m,-" + (String) months1.get("Setting_Value") + ", GetDate())";
 
-                    System.out.println("historicalCond: " + historicalCond);
-                    System.out.println("condition: " + condition);
+                    // System.out.println("historicalCond: " + historicalCond);
+                    // System.out.println("condition: " + condition);
 
 
                     // ELT_Selective_Source_Metadata
-                    Map<String, Map<String, Object>> selectiveSourceMetadata = getSelectiveSourceMetadata(conn, connectionId, querySchemaCondition);
+                    Map<String, Map<String, Object>> selectiveSourceMetadata = getSelectiveSourceMetadata(conn, connectionId, querySchemaCondition1); // Note Query Condiiton1
                     System.out.println("Selective Source metadata size: " + selectiveSourceMetadata.size());
                     String selectiveLookupKey = connectionId + "-" + tableSchema + "-" + row1SourceTableName;
 
@@ -927,10 +962,10 @@ public class DWScriptsGenerator {
                             row1Symbol.equals("`") ? schemaName + ".`" + row1SourceTableName + "`" :
                             schemaName + ".[" + row1SourceTableName + "]") + finalCondition : "";
                     
-                        System.out.println("finalScript: " + finalScript);
-                        System.out.println("finalizedScript: " + finalizedScript);
-                        System.out.println("customType: " + customType);
-                        System.out.println("maxSelectScript: " + maxSelectScript);
+                        // System.out.println("finalScript: " + finalScript);
+                        // System.out.println("finalizedScript: " + finalizedScript);
+                        // System.out.println("customType: " + customType);
+                        // System.out.println("maxSelectScript: " + maxSelectScript);
 
                     String historicalScript = historyDateSettingsCategory == null ? "" :
                         script + "\n" + historicalCond + " " + server;
@@ -961,12 +996,12 @@ public class DWScriptsGenerator {
                         selectiveCustomType.toLowerCase().equals("web_service") ? "web_service" :
                         selectiveCustomType)) : customConnectionType;
 
-                        System.out.println("historicalScript: " + historicalScript);
-                        System.out.println("finalHistoricalQuery: " + finalHistoricalQuery);
+                        // System.out.println("historicalScript: " + historicalScript);
+                        // System.out.println("finalHistoricalQuery: " + finalHistoricalQuery);
 
-                        System.out.println("customTypeInfo: " + customTypeInfo);
+                        // System.out.println("customTypeInfo: " + customTypeInfo);
 
-                        System.out.println("sourceType: " + sourceType);
+                        // System.out.println("sourceType: " + sourceType);
 
                         // Data to be saved
                         Map<String, Object> finalData = new HashMap<>();
@@ -985,10 +1020,12 @@ public class DWScriptsGenerator {
                         System.out.println("######################################################");
                         System.out.println(finalData);
                         System.out.println("######################################################");
+            System.out.println("");
+            System.out.println("");
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+            finalResults.add(finalData); //
 
-            // Continue converting the remaining logic and add comments for clarity where needed.
-            System.out.println("");
-            System.out.println("");
+            return finalResults;
 
         }
          /**
@@ -1000,7 +1037,7 @@ public class DWScriptsGenerator {
             
             // TODO It should be single value at max
             Map<String, String> symbolValues = getSymbolValueforConnectionId(conn, connectionId);
-            System.out.println("Size of Symbol value data:  " + symbolValues.size());
+            // System.out.println("Size of Symbol value data:  " + symbolValues.size());
             String query = "SELECT Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, IL_Data_Type, " +
                     "Constraints, Source_Table_Name, Source_Column_Name, PK_Constraint, PK_Column_Name, " +
                     "FK_Constraint, FK_Column_Name " +
@@ -1524,7 +1561,7 @@ public class DWScriptsGenerator {
                                 + "},"
                                 + "\"delete_flag\":false"
                                 + "}}";
-                        System.out.println(settingsJson);
+                        // System.out.println(settingsJson);
                         // id, date and other for type
 
                         JSONObject settings = new JSONObject(settingsJson);
@@ -1574,6 +1611,21 @@ public class DWScriptsGenerator {
         return resultMap;
     }
 
+    // Select script delete 
+    public void deleteSelectScripts(Connection connection, String ilTableName, String connectionId, String querySchemaCond) {
+        String query = "DELETE FROM ELT_Select_Script WHERE IL_Table_Name = '" + ilTableName + "' "
+                     + "AND Connection_Id = '" + connectionId + "' "
+                     + querySchemaCond;
+    
+        try (Statement statement = connection.createStatement()) {
+            int rowsDeleted = statement.executeUpdate(query);
+            System.out.println(
+                    rowsDeleted + " rows deleted from ELT_Select_Script where IL_Table_Name is " + ilTableName);
+        } catch (SQLException e) {
+            System.err.println("Error while deleting from ELT_Select_Script: " + e.getMessage());
+        }
+    }
+    
     /*
      * Create_Script_Transactioon Group - main left outer Join
      */
@@ -1883,8 +1935,6 @@ public class DWScriptsGenerator {
         public Status generateConfigScript() {
             System.out.println("### Generating Config Scripts ...");
 
-            // Placeholder logic for the method
-            // Replace this with actual implementation
 
             String dimensionTransaction = "D";
             try {
@@ -2755,8 +2805,28 @@ public class DWScriptsGenerator {
         // Method to generate the value script
         public Status generateValueScript() {
             System.out.println("### Generating Value Scripts ...");
-            // Placeholder logic for the method
-            // Replace with actual implementation
+
+            // Total 7 sub parts
+            // Dim_SRC_STG
+
+            // Dim_STG_IL
+
+            // Trans_SRC_STG
+
+            // Trans_SRC_STG
+
+
+            // Trans_STG_Keys
+
+
+            // Trans_STG_IL
+
+
+            // Trans_Deletes_Deletes
+
+
+            // Trans_deletes
+
 
             // Only Delete Logic as of now
             // TODO specific to DIM delete Values
