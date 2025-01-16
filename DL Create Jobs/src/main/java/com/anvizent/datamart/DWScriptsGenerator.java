@@ -507,10 +507,11 @@ public class DWScriptsGenerator {
 
                 // Create_Dim
 
+                status = generateDBCreateScriptDimension();
 
                 // Create_Trans
 
-                status = generateDBCreateScriptTransaction();
+                // status = generateDBCreateScriptTransaction();
 
                 // stg_keys
 
@@ -619,6 +620,39 @@ public class DWScriptsGenerator {
         }
 
         // DB Script - Create Script transaction group
+        private Status generateDBCreateScriptDimension() {
+
+            try {
+                String dimensionTransaction = "D";
+
+                List<Map<String, Object>> createScripDimList = GetDBCreateScriptDataList(conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition);
+                System.out.println("Create Dim Script size: " + createScripDimList.size());
+                
+
+                for (Map<String, Object> map : createScripDimList) {
+
+                    String sourceTableName = (String) map.get("Source_Table_Name");
+                    String ilTableName = (String) map.get("IL_Table_Name");
+                    Boolean deleteFlag = getDeleteFlag(ilTableName);
+                    Map<String, Map<String, Object>> aggregatedData = fetchILSourceMappingInfoDim(conn, ilTableName, sourceTableName, connectionId, dimensionTransaction, querySchemaCondition);
+                    
+                    List<Map<String, Object>> finalResults = transformDataDim(aggregatedData, deleteFlag);
+
+                    String tableName = "ELT_Create_Script";
+                    if (finalResults != null && !finalResults.isEmpty()) {
+                        deleteCreateScripts(conn, ilTableName, connectionId, querySchemaCondition);
+                        saveDataIntoDB(conn, tableName, finalResults);
+                    }
+                }
+
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return Status.SUCCESS;
+        }
+
+                
+        // DB Script - Create Script transaction group
         private Status generateDBCreateScriptTransaction() {
 
             try {
@@ -650,6 +684,101 @@ public class DWScriptsGenerator {
                 e.printStackTrace();
             }
             return Status.SUCCESS;
+        }
+
+        private List<Map<String, Object>> transformDataDim(Map<String, Map<String, Object>> aggregatedData, Boolean deleteFlag) {
+
+            List<Map<String, Object>> finalResults = new ArrayList<>(); // Return object 
+
+            for (Map.Entry<String, Map<String, Object>> outerEntry : aggregatedData.entrySet()) {
+                String key = outerEntry.getKey();
+                Map<String, Object> data = outerEntry.getValue();
+
+                String columnNamesValue = (String) data.get("Column_Names");
+                String ILColumnName = (String) data.get("IL_Column_Name");
+                String PKConstarints = (String) data.get("PK_Constarints");
+                String columnNames1 = (String) data.get("Column_Names1");
+                String connectionId = (String) data.get("Connection_Id");  
+                String tableSchema = (String) data.get("Table_Schema");   
+                String dimensionTransaction = (String) data.get("Dimension_Transaction");   
+                String ilTableName = (String) data.get("IL_Table_Name");  
+                String aIPKColumns = (String) data.get("AI_PK_Columns");
+                String deleteAIPK = (String) data.get("Delete_AI_PK");
+                String iLaIpKColumns = (String) data.get("IL_AI_PK_Columns");
+                String PKColsInt = (String) data.get("PK_Cols_int");
+                String skColumn = (String) data.get("SK_Column");
+                String sourceTableName = (String) data.get("Source_Table_Name");
+
+                String createTable = "CREATE TABLE IF NOT EXISTS `" + ilTableName + "_Stg` (";
+
+                String constantColumns = "\n" + (ILColumnName.toLowerCase().contains(",company,") || 
+                        ILColumnName.toLowerCase().contains(",company_id,") || 
+                        ILColumnName.toLowerCase().contains("company_id,") || 
+                        ILColumnName.toLowerCase().contains(",company_id") ?
+                        "`DataSource_Id` varchar(50) COLLATE utf8_unicode_ci NOT NULL DEFAULT ''," :
+                        "`Company_Id` varchar(50) COLLATE utf8_unicode_ci NOT NULL DEFAULT ''," + "\n" +
+                        "`DataSource_Id` varchar(50) COLLATE utf8_unicode_ci NOT NULL DEFAULT '',");
+
+                String pkColsInt = PKColsInt;
+
+                String pkCols = (PKConstarints.toLowerCase().contains(",`company_pk`,") || 
+                        PKConstarints.toLowerCase().contains("company_id_pk")) ?
+                        pkColsInt + "`DataSource_Id`" : pkColsInt + "`DataSource_Id`,`Company_Id`";
+
+                String aiPkColumns = aIPKColumns;
+
+                String columnNames = columnNamesValue + ",";
+
+                String constantFields = "\n" + "`Source_Hash_Value` varchar(32) COLLATE utf8_unicode_ci DEFAULT NULL , " + "\n" +
+                        "`Mismatch_Flag` varchar(50) COLLATE utf8_unicode_ci DEFAULT NULL , " + "\n" +
+                        "`Added_Date` datetime DEFAULT NULL, " + "\n" +
+                        "`Added_User` varchar(50) COLLATE utf8_unicode_ci DEFAULT NULL, " + "\n" +
+                        "`Updated_Date` datetime DEFAULT NULL, " + "\n" +
+                        "`Updated_User` varchar(50) COLLATE utf8_unicode_ci DEFAULT NULL, ";
+
+                String ending = "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci ;";
+
+                String pkColumns = "\nPrimary Key (" + pkCols + ",`" +skColumn + "`), " + "\n" + 
+                        "KEY `Key_" +skColumn + "`(`" +skColumn + "`)";
+
+                String stgScript = createTable + " " + constantColumns + " " + aiPkColumns + " " + columnNames + " " + 
+                        constantFields + " " + pkColumns + " " + ending;
+
+                String ilCreate = "CREATE TABLE IF NOT EXISTS `" + ilTableName + "` (";
+
+                String deleteCreate = "CREATE TABLE IF NOT EXISTS `" + ilTableName + "_Deletes` (";
+
+                String ilConstantColumns = constantColumns;
+
+                String ilAiPkColumns = iLaIpKColumns;
+
+                String ilPkColumns = "\nPrimary Key (" + pkCols + ",`" +skColumn + "` )";
+
+                String ilScript = ilCreate + " " + ilConstantColumns + " " + ilAiPkColumns + " " + columnNames + " " +
+                        constantFields + " " + ilPkColumns + " " + ending;
+
+                String deleteScript = deleteCreate + " " + ilConstantColumns + " " + ilAiPkColumns + " " + columnNames + " " +
+                        constantFields + " " + ilPkColumns + " " + ending;
+
+                String pkColsCleaned = pkCols.substring(0, pkCols.length() - 1); // Removing trailing comma
+
+                // Output
+                Map<String, Object> finalData = new HashMap<>();
+
+                finalData.put("Connection_Id", connectionId) ;
+                finalData.put("Table_Schema", tableSchema) ;
+                finalData.put("IL_Table_Name", ilTableName) ;
+                finalData.put("Dimension_Transaction", dimensionTransaction) ;
+                finalData.put("Stg_Script", stgScript);
+                finalData.put("IL_Script", ilScript);                 
+                finalData.put("Delete_Script", deleteFlag.equals(false)? "" : deleteScript) ;
+                                    
+                finalResults.add(finalData);
+
+            }
+            System.out.println(finalResults.toString());
+            return finalResults;
+
         }
 
         private List<Map<String, Object>> transformData(Map<String, Map<String, Object>> aggregatedData) {
@@ -761,6 +890,207 @@ public class DWScriptsGenerator {
             return finalResults;
 
         }
+
+        // DB Create Script Dim main flow
+        public Map<String, Map<String, Object>> fetchILSourceMappingInfoDim(
+            Connection connection,
+            String ilTableName,
+            String sourceTableNameParent,
+            String connectionId,
+            String dimensionTransaction,
+            String querySchemaCond) {
+
+        String query = "SELECT " +
+                "Connection_Id, " +
+                "Table_Schema, " +
+                "IL_Table_Name, " +
+                "IL_Column_Name, " +
+                "CASE WHEN IL_Data_Type = 'Bit(1)' THEN 'tinyint(4)' ELSE IL_Data_Type END AS IL_Data_Type, " +
+                "Constraints, " +
+                "Source_Table_Name, " +
+                "PK_Constraint, " +
+                "PK_Column_Name, " +
+                "FK_Constraint, " +
+                "FK_Column_Name, " +
+                "Dimension_Transaction " +
+                "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                "WHERE Dimension_Transaction = ? " +
+                "AND IL_Column_Name != 'DataSource_Id' " +
+                "AND Constraints != 'SK' " +
+                "AND IL_Table_Name = ? " +
+                "AND Connection_Id = ? " +
+                querySchemaCond;
+
+        Map<String, String> defaultValueMap = getdataTypeDefaultValueConversionMap(connection);
+        // Output
+        Map<String, Map<String, Object>> resultMap = new HashMap<>();
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+            preparedStatement.setString(1, dimensionTransaction);
+            preparedStatement.setString(2, ilTableName);
+            preparedStatement.setString(3, connectionId);
+
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                while (resultSet.next()) {
+                    String connectionIdValue = resultSet.getString("Connection_Id");
+                    String tableSchema = resultSet.getString("Table_Schema");
+                    String ilTableNameValue = resultSet.getString("IL_Table_Name"); // Key
+                    String ilColumnName = resultSet.getString("IL_Column_Name");
+                    String ilDataType = resultSet.getString("IL_Data_Type");
+                    String constraints = resultSet.getString("Constraints");
+                    String sourceTableName = resultSet.getString("Source_Table_Name");
+                    String pkConstraint = resultSet.getString("PK_Constraint");
+                    String pkColumnName = resultSet.getString("PK_Column_Name");
+                    String fkConstraint = resultSet.getString("FK_Constraint");
+                    String fkColumnName = resultSet.getString("FK_Column_Name");
+                    String dimensionTransactionValue = resultSet.getString("Dimension_Transaction");
+
+                    System.out.println("Connection_Id: " + connectionIdValue + ", Table_Schema: " + tableSchema);
+                    String defaultValue = defaultValueMap.getOrDefault(ilDataType, null); // Left Outer Join
+                    System.out.println("ilDataType: " + ilDataType + ", defaultValue: " + defaultValue);
+
+                    // Map to handle IL_Data_Type and Constraints to its equivalent data type
+                    // StringBuilder columnNames = new StringBuilder();
+                    // StringBuilder columnNames1 = new StringBuilder();
+                    // StringBuilder constantColumns = new StringBuilder();
+                    // StringBuilder aiPkColumns = new StringBuilder();
+                    // StringBuilder deleteAiPk = new StringBuilder();
+                    // StringBuilder ilAiPkColumns = new StringBuilder();
+                    // =================================================
+                    // new code
+
+                    // column names
+                    String columnNames = "\n`" + ilColumnName + "` ";
+                    String dataType = ilDataType;
+                    
+                    if (dataType.toLowerCase().startsWith("text") && constraints.toLowerCase().equals("pk")) {
+                        columnNames += "varchar(150)";
+                    } else {
+                        columnNames += ilDataType;
+                    }
+                    
+                    if (dataType.toLowerCase().startsWith("varchar")) {
+                        columnNames += " COLLATE utf8_unicode_ci";
+                    }
+
+                    if (constraints.toLowerCase().equals("pk")) {
+                        if (dataType.toLowerCase().contains("varchar")) {
+                            columnNames += " NOT NULL DEFAULT ''";
+                        } else if (dataType.toLowerCase().contains("int")) {
+                            columnNames += " NOT NULL DEFAULT '0'";
+                        } else if (dataType.toLowerCase().contains("text")) {
+                            columnNames += " NOT NULL DEFAULT ''";
+                        } else if (dataType.toLowerCase().contains("decimal")) {
+                            columnNames += " NOT NULL DEFAULT '0.0'";
+                        } else if (dataType.toLowerCase().contains("float")) {
+                            columnNames += " NOT NULL DEFAULT '0.0'";
+                        } else if (dataType.toLowerCase().contains("boolean")) {
+                            columnNames += " NOT NULL DEFAULT '0'";
+                        } else if (dataType.toLowerCase().contains("bit")) {
+                            columnNames += " NOT NULL DEFAULT '0'";
+                        } else if (dataType.toLowerCase().contains("char")) {
+                            columnNames += " NOT NULL DEFAULT ''";
+                        } else if (dataType.toLowerCase().contains("date")) {
+                            columnNames += " NOT NULL DEFAULT '" + defaultValue + "'";
+                        } else {
+                            columnNames += " DEFAULT NULL";
+                        }
+                    } else {
+                        columnNames += " DEFAULT NULL";
+                    }
+                    // constant columns
+                    String constantColumns = "\n`" + ilColumnName + "` ";
+                    if (dataType.startsWith("text")) {
+                        constantColumns += "varchar(150)";
+                    } else {
+                        constantColumns += dataType;
+                    }
+
+                    if (dataType.toLowerCase().startsWith("varchar")) {
+                        constantColumns += " COLLATE utf8_unicode_ci";
+                    }
+
+                    if (constraints.toLowerCase().equals("pk")) {
+                        if (dataType.toLowerCase().startsWith("varchar")) {
+                            constantColumns += " NOT NULL DEFAULT ''";
+                        } else if (dataType.toLowerCase().contains("int")) {
+                            constantColumns += " NOT NULL DEFAULT '0'";
+                        } else if (dataType.toLowerCase().contains("text")) {
+                            constantColumns += " NOT NULL DEFAULT ''";
+                        } else if (dataType.toLowerCase().contains("decimal")) {
+                            constantColumns += " NOT NULL DEFAULT ''";
+                        } else if (dataType.toLowerCase().contains("date")) {
+                            constantColumns += " NOT NULL DEFAULT '1970-01-01'";
+                        } else {
+                            constantColumns += " DEFAULT NULL";
+                        }
+                    } else {
+                        constantColumns += " DEFAULT NULL";
+                    }
+                    // AI PK columns
+                    String aiPkColumns = "\n`" + sourceTableNameParent + "_Key` bigint(32) NOT NULL AUTO_INCREMENT COMMENT 'The Surrogate Key + The PK', ";
+                    // IL AI PK columns
+                    String ilAiPkColumns = "\n`" + sourceTableNameParent + "_Key` bigint(32) NOT NULL, ";
+                    // PK columns
+                    String pkColsInt1 = constraints.toLowerCase().equals("pk") ? "`" + ilColumnName + "`," : "";
+                    String pkColsInt = pkColsInt1 == null ? "" : pkColsInt1;
+
+                    String pkCols = (ilColumnName.toLowerCase().equals("company") || ilColumnName.toLowerCase().equals("company_id")) ?
+                            ((constraints.toLowerCase().equals("pk")) ? pkColsInt + "DataSource_Id" : pkColsInt + "DataSource_Id,Company_Id") :
+                            pkColsInt + "DataSource_Id,Company_Id";
+                    // SK Column
+                    String skColumn = sourceTableNameParent + "_Key";
+                    //  PK constraint
+                    String pkConstraints = ilColumnName + "_" + constraints;
+
+                    String columnNamesOut = columnNames.toString();
+                    // String columnNames1Out = columnNames1.toString();
+                    // String constantColumnsOut = constantColumns.toString();
+                    String aIPKColumnsOut = aiPkColumns.toString();
+                    // String deleteAIPKOut = deleteAiPk.toString();
+                    String iLaIpKColumnsOut = ilAiPkColumns.toString();
+                    String PKColsIntOut = pkColsInt;
+                    // String PKColsOut = pkCols;
+                    String skColumnOut = skColumn;
+                    String PKConstarintsOut = pkConstraints;
+
+
+                    // Create or update the entry in the resultMap
+                    resultMap.computeIfAbsent(ilTableNameValue, key -> new HashMap<>());
+                    Map<String, Object> tableData = resultMap.get(ilTableNameValue);
+
+                    // Aggregate Columns (concatenate) and Symbol (assign last value)
+                    String existingColumnNames = (String) tableData.getOrDefault("Column_Names", "");
+                    tableData.put("Column_Names", existingColumnNames.isEmpty() ? columnNamesOut : existingColumnNames + ", " + columnNamesOut);
+                    String existingILColumnName = (String) tableData.getOrDefault("IL_Column_Name", "");
+                    tableData.put("IL_Column_Name", existingILColumnName.isEmpty() ? ilColumnName : existingILColumnName + ", " + ilColumnName);
+                    String existingPKConstarints = (String) tableData.getOrDefault("PK_Constarints", "");
+                    tableData.put("PK_Constarints", existingPKConstarints.isEmpty() ? PKConstarintsOut : existingPKConstarints + ", " + PKConstarintsOut);
+                    // String existingColumnNames1 = (String) tableData.getOrDefault("Column_Names1", "");
+                    // tableData.put("Column_Names1", existingColumnNames1.isEmpty() ? columnNames1Out : existingColumnNames1 + ", " + columnNames1Out);
+
+                    
+                    // Last
+                    tableData.put("Connection_Id", connectionIdValue);   
+                    tableData.put("Table_Schema", tableSchema);   
+                    tableData.put("Dimension_Transaction", dimensionTransactionValue);   
+
+                    tableData.put("IL_Table_Name", ilTableNameValue);   
+                    tableData.put("AI_PK_Columns", aIPKColumnsOut);
+                    // tableData.put("Delete_AI_PK", deleteAIPKOut);
+                    tableData.put("IL_AI_PK_Columns", iLaIpKColumnsOut);
+                    tableData.put("PK_Cols_int", PKColsIntOut);
+                    tableData.put("SK_Column", skColumnOut);
+                    tableData.put("Source_Table_Name", sourceTableNameParent); // Note the input value
+
+                    resultMap.put(ilTableNameValue, tableData);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return resultMap;
+    }
+
         // DB Create Script Trans main flow
         public Map<String, Map<String, Object>> fetchILSourceMappingInfo(
                 Connection connection,
