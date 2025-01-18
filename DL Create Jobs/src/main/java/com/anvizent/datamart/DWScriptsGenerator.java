@@ -1,3 +1,4 @@
+//package com.anvizent.elt.ui.jobopearations;
 package com.anvizent.datamart;
 
 import java.io.File;
@@ -20,16 +21,6 @@ import java.util.Map;
 import java.util.StringJoiner;
 
 import org.json.JSONObject;
-
-import com.anvizent.datamart.DWScriptsGenerator.DWConfigScriptsGenerator;
-import com.anvizent.datamart.DWScriptsGenerator.DWSourceInfoScriptsGenerator;
-import com.anvizent.datamart.DWScriptsGenerator.DWTableInfoScriptsGenerator;
-import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator;
-import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator.ConstantField;
-import com.anvizent.datamart.DWScriptsGenerator.DWValueScriptsGenerator.PKColumnsData;
-import com.anvizent.datamart.DataMartStructureScriptGenerator.Status;
-import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SinkAggregationData;
-import com.anvizent.datamart.DataMartStructureScriptGenerator.DataMartValueScriptGenerator.SourceFilterByAggregationData;
 
 public class DWScriptsGenerator {
 
@@ -55,13 +46,8 @@ public class DWScriptsGenerator {
     private static final String CONFIG_FILE_STRING = "_Config_File_"; 
 
     private long clientId;
-    private DataSourceType dataSourceType;
-    private long dlId;
-    private long jobId;
-    private String dlName;
     private String filePath;
     private String dbDetails;
-    private String tmpTableName;    
     private LocalDateTime startTime;
     private String startTimeString;
 
@@ -79,15 +65,6 @@ public class DWScriptsGenerator {
 
     SQLQueries sqlQueries;
     Connection conn;
-    
-    public DWScriptsGenerator(long clientId, DataSourceType type, long dlId, long jobId, String dlName) {
-        this.clientId = clientId;
-        this.dataSourceType = type;
-        this.dlId = dlId;
-        this.jobId = jobId;
-        this.dlName = dlName;
-        init();
-    }
 
     public DWScriptsGenerator(String clientId,
             String schemaName,
@@ -97,8 +74,8 @@ public class DWScriptsGenerator {
             String multiILConfigFile,
             String historicalDataFlag,
             String selectTables,
-            String dbDetails) {
-        this.startTime = LocalDateTime.now();
+            String dbDetails,
+            String filePath) {
         this.dbDetails = dbDetails;
         this.clientId = Long.parseLong(clientId);
         this.schemaName = schemaName;
@@ -108,45 +85,24 @@ public class DWScriptsGenerator {
         this.multiIlConfigFile = multiILConfigFile;
         this.historicalDataFlag = historicalDataFlag;
         this.selectTables = selectTables;
+        this.filePath = filePath;
 
         init();
     }
 
     private void init() {
-        // TODO test data 
-        connectionId =  "41"; // '41', '2' AbcAnalysis_Mysql8
-        // TODO use multiple selectTables
-        selectTables =  "'Finished_Goods_BOM', 'AbcAnalysis_Mysql8', 'Monthly_Forecasted_Qty_FQ'"; // AbcAnalysis_Mysql8
-
-        // Set 2 for Dimension Transaction 'T'
-        connectionId =  "2"; // '109', '3', '2' AbcAnalysis_Mysql8
-        // TODO use multiple selectTables
-        // '2', 'SorDetail_Mysql8', 'SorDetail'             dbo
-        // '3', 'AdmFormData_RedshiftSync'                dbo
-        // '109', ACTB_HISTORY, STTM_CUSTOMER           TECUFEBTRI
-        selectTables =  "'SorDetail_Mysql8', 'SorDetail'"; // AbcAnalysis_Mysql8
-
-        // connectionId =  "114"; // AbcAnalysis_Mysql8
-        // selectTables =  "'SorMaster_Spark3'"; // AbcAnalysis_Mysql8
-        schemaName = "dbo";
-
-        multiIlConfigFile = "Y";  // Set one of below
-        multiIlConfigFile = "N";
-
-
-        tmpTableName = dlName + dlId + jobId;
         startTime = LocalDateTime.now();
         startTimeString = getCurrentDateFormatted(startTime);
         sqlQueries = new SQLQueries();
         try {
             // App DB connection
-            conn = DBHelper.getConnection(dataSourceType);
+            conn = DBHelper.getConnection(DataSourceType.MYSQL, dbDetails);
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        // TODO - integration
-        // JSONObject jsonDbDetails = new JSONObject(dbDetails);
-        // userName = jsonDbDetails.getString("appdb_username");
+
+        JSONObject jsonDbDetails = new JSONObject(dbDetails);
+        userName = jsonDbDetails.getString("appdb_username");
 
         // The Below function shall create two Schema Conditions which are used
         // throughout the application
@@ -177,7 +133,7 @@ public class DWScriptsGenerator {
 
         // Determine prefix if table alias is provided
         String prefix = (tableAlias != null && !tableAlias.isEmpty()) ? tableAlias + "." : "";
-// TODO: only one condition required
+
         if (schemaName != null && !schemaName.equalsIgnoreCase("NULL") && !schemaName.isEmpty()) {
             querySchemaCondition = " AND " + prefix + "TABLE_SCHEMA = '" + schemaName + "'";
             querySchemaCondition1 = " AND " + prefix + "Schema_Name = '" + schemaName + "'";
@@ -190,13 +146,12 @@ public class DWScriptsGenerator {
   
     private String getConfigFileName(String ilTableName, String configFileString) {
         String suffix = getTimeStamp();
-        // TODO clientId is also  required
-        String configFileName = filePath + ilTableName + configFileString + suffix + ".config.properties"; // filePath is the directory name
+        String configFileName = filePath + ilTableName + configFileString + clientId + suffix + ".config.properties"; // filePath is the directory name
         return configFileName;
     }
 
     // ELT_Generate_parent
-    private void generateScripts() {
+    public void generateScripts() {
         // The DB scripts generator
         if (new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
@@ -204,7 +159,7 @@ public class DWScriptsGenerator {
         }
 
         // The configs script generator
-        if (false && new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
+        if (new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
@@ -216,13 +171,13 @@ public class DWScriptsGenerator {
         }
 
         // The Source Info script generator
-        if (false && new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
+        if (new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
 
         // The Table Info script generator
-        if (false && new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
+        if (new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
@@ -392,7 +347,7 @@ public class DWScriptsGenerator {
             }
             return rowsAffected;
         }
-
+        // Not in use
         public int updateDataInDB(Connection connection, String tableName, List<Map<String, Object>> data, String whereClause, Object[] whereValues) throws SQLException {
             if (data == null || data.isEmpty()) {
                 throw new IllegalArgumentException("Data list cannot be null or empty");
@@ -503,7 +458,7 @@ public class DWScriptsGenerator {
             // try {
                 Status status = Status.FAILURE;
                 // Select
-                // status = generateSelectQuery();
+                status = generateSelectQuery();
 
                 // Create_Dim
 
@@ -511,7 +466,7 @@ public class DWScriptsGenerator {
 
                 // Create_Trans
 
-                // status = generateDBCreateScriptTransaction();
+                status = generateDBCreateScriptTransaction();
 
                 // stg_keys
 
@@ -2549,7 +2504,6 @@ public class DWScriptsGenerator {
 
                 }
             } catch (Exception e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
             
@@ -2643,16 +2597,14 @@ public class DWScriptsGenerator {
         // Method to generate the configuration script
         public Status generateConfigScript() {
             System.out.println("### Generating Config Scripts ...");
-
-
             String dimensionTransaction = "D";
             try {
 
             // Dim_SRC_STG
-            //dimSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            dimSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
             
             // Dim_STG_IL
-            //dimStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+            dimStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Trans_SRC_STG
             transSrcToStgConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
@@ -2664,14 +2616,14 @@ public class DWScriptsGenerator {
             transStgToIlConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Deletes_Dim
-
+            dimDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             // Deletes_Trans 
+            transDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
 
 
 
-            // // Only Delete Logic as of now
             // // TODO specific to DIM delete Values
             //     // TODO - testing purpose only
 
@@ -2685,14 +2637,15 @@ public class DWScriptsGenerator {
             //             conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunction);
             //     System.out.println("list of tableNames: " + tableNames);
 
-            //     dimDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // dimDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
                 
-            //     transDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // transDeleteConfigScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
             //     // dimensionTransaction = "D";
             //     // dimDeleteScriptComplete(conn, selectTables, connectionId,
             //     // querySchemaCondition);
 
-            //     // transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition);
+            // TODO - from Value scripts
+                // transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition);
 
             } catch (SQLException e) {
                 e.printStackTrace();
@@ -2716,11 +2669,8 @@ public class DWScriptsGenerator {
                 String tableSchema = map.get("Table_Schema");
                 String ilTableName = map.get("IL_Table_Name");
 
-                // String multiIlConfigFile = context.MultiIlConfigFile;
-                // TODO: integration fix above
-                String multiIlConfigFile = "Y";
                 String ilTable = "";
-                if (multiIlConfigFile.equals("Y")) {
+                if (multiIlConfigFile.equals("Y")) { // member variable
                     ilTable = ilTableName + "_Stg";
                 } else {
                     ilTable = "DIM_SRC_STG_All";
@@ -2848,9 +2798,6 @@ public class DWScriptsGenerator {
                 String tableSchema = map.get("Table_Schema");
                 String ilTableName = map.get("IL_Table_Name");
 
-                // String multiIlConfigFile = context.MultiIlConfigFile;
-                // TODO: integration fix above
-                String multiIlConfigFile = "Y";
                 String ilTable = "";
                 if (multiIlConfigFile.equals("Y")) {
                     ilTable = ilTableName + "_Stg";
@@ -2914,9 +2861,6 @@ public class DWScriptsGenerator {
                 String tableSchema = map.get("Table_Schema");
                 String ilTableName = map.get("IL_Table_Name");
 
-                // String multiIlConfigFile = context.MultiIlConfigFile;
-                // TODO: integration fix above
-                String multiIlConfigFile = "Y";
                 String ilTable = "";
                 if (multiIlConfigFile.equals("Y")) {
                     ilTable = ilTableName + "_Stg_Keys";
@@ -2981,9 +2925,6 @@ public class DWScriptsGenerator {
                 String tableSchema = map.get("Table_Schema");
                 String ilTableName = map.get("IL_Table_Name");
 
-                // String multiIlConfigFile = context.MultiIlConfigFile;
-                // TODO: integration fix above
-                String multiIlConfigFile = "Y";
                 String ilTable = "";
                 if (multiIlConfigFile.equals("Y")) {
                     ilTable = ilTableName;
@@ -3224,10 +3165,10 @@ public class DWScriptsGenerator {
 
             // Output aggregated data
             // TODO: removal required
-            aggregatedDataMap.forEach((key, data) -> {
-                System.out.println("Key: " + key);
-                System.out.println("Aggregated Script: " + data.getScript());
-            });
+            // aggregatedDataMap.forEach((key, data) -> {
+            //     System.out.println("Key: " + key);
+            //     System.out.println("Aggregated Script: " + data.getScript());
+            // });
 
             return aggregatedDataMap;
         }
@@ -3297,10 +3238,10 @@ public class DWScriptsGenerator {
 
             // Output aggregated data
             // TODO: removal required
-            aggregatedDataMap.forEach((k, data) -> {
-                System.out.println("Key: " + k);
-                System.out.println("Aggregated Script: " + data.getScript());
-            });
+            // aggregatedDataMap.forEach((k, data) -> {
+            //     System.out.println("Key: " + k);
+            //     System.out.println("Aggregated Script: " + data.getScript());
+            // });
 
             return aggregatedDataMap;
         }
@@ -3459,10 +3400,10 @@ public class DWScriptsGenerator {
 
             // Output aggregated data
             // TODO: removal required
-            aggregatedDataMap.forEach((key, data) -> {
-                System.out.println("Key: " + key);
-                System.out.println("Aggregated Script: " + data.getScript());
-            });
+            // aggregatedDataMap.forEach((key, data) -> {
+            //     System.out.println("Key: " + key);
+            //     System.out.println("Aggregated Script: " + data.getScript());
+            // });
 
             return aggregatedDataMap;
         }
@@ -3536,7 +3477,6 @@ public class DWScriptsGenerator {
             String dimensionTransaction = "D";
             try {
                 // TODO - testing purpose only
-                String limitFunct = "";
                 List<Map<String, String>> tableNames = getILTableNamesWithDimentionTransactionFilter(
                         conn, selectTables, dimensionTransaction, connectionId, querySchemaCondition, limitFunction);
                 System.out.println("list of tableNames: " + tableNames);
@@ -5114,10 +5054,22 @@ public class DWScriptsGenerator {
 
     static public class DBHelper {
         // Helper function to return a Connection object
-        public static Connection getConnection(DataSourceType dataSourceType) throws SQLException {
+        public static Connection getConnection(DataSourceType dataSourceType, String dbDetails) throws SQLException {
             Connection connection = null;
+
+            // JSONObject jsonDbDetails = new JSONObject(dbDetails);
+            // String serverIP = jsonDbDetails.getString("appdb_hostname");
+            // String serverPort = jsonDbDetails.getString("appdb_port");
+            // String serverIPAndPort = serverIP + ":" + serverPort;
+            // String schema = jsonDbDetails.getString("appdb_schema");
+            // String userName = jsonDbDetails.getString("appdb_username");
+            // String password = jsonDbDetails.getString("appdb_password");
+
             switch (dataSourceType) {
                 case MYSQL:
+
+                    // String mysqlUrl = "jdbc:mysql://" + serverIPAndPort + "/" + schema + "?noDatetimeStringSync=true";
+
                     // MySQL Connection Dummy
                     String mysqlUrl = "jdbc:mysql://172.25.25.124:4475/Mysql8_2_1009427_appdb?noDatetimeStringSync=true";
                     String mysqlUser = "root";
@@ -5142,15 +5094,41 @@ public class DWScriptsGenerator {
     }
     public static void main(String[] args) {
         // Input values
-        long clientId = 1009427;  // client ID
-        long tableId = 9;  //  table ID (DL_Id)
-        String dlName = "test_1";  // DataMart Name
-        long jobId = 11;  // job ID
+        String clientId = "1009427";  // client ID
+        // String connectionId =  "41"; // '41', '2' AbcAnalysis_Mysql8
+        // String selectTables =  "'Finished_Goods_BOM', 'AbcAnalysis_Mysql8', 'Monthly_Forecasted_Qty_FQ'"; // AbcAnalysis_Mysql8
+
+        // Set 2 for Dimension Transaction 'T'
+        String connectionId =  "2"; // '109', '3', '2' AbcAnalysis_Mysql8
+        // '2', 'SorDetail_Mysql8', 'SorDetail'             dbo
+        // '3', 'AdmFormData_RedshiftSync'                dbo
+        // '109', ACTB_HISTORY, STTM_CUSTOMER           TECUFEBTRI
+        String selectTables =  "'SorDetail_Mysql8', 'SorDetail'"; // AbcAnalysis_Mysql8
+        String filePath = "E:\\";
+        // connectionId =  "114"; // AbcAnalysis_Mysql8
+        // selectTables =  "'SorMaster_Spark3'"; // AbcAnalysis_Mysql8
+        String schemaName = "dbo";
+
+        String multiIlConfigFile = "Y";  // Set one of below
+        multiIlConfigFile = "N";
+        String dbDetails = "{ \"appdb_username\": \"localuser\" }";
+        String historicalDataFlag = "";
+        String loadType = "";
+        String dataSourceName = "";
+
 
         System.out.println("########################## Program Starts ####################");
         System.out.println("Inputs: clientId: " + clientId);
-        System.out.println("Inputs: dlId: " + tableId + ", JobId: " + jobId + ", dlName: " + dlName);
-        DWScriptsGenerator generator = new DWScriptsGenerator(clientId, DataSourceType.MYSQL, tableId, jobId, dlName);
+        DWScriptsGenerator generator = new DWScriptsGenerator(clientId,
+                schemaName,
+                connectionId,
+                dataSourceName,
+                loadType,
+                multiIlConfigFile,
+                historicalDataFlag,
+                selectTables,
+                dbDetails,
+                filePath);
         generator.generateScripts();
     }
         
