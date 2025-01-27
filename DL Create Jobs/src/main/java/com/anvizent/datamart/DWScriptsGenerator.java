@@ -173,13 +173,13 @@ public class DWScriptsGenerator {
 
         // The Source Info script generator
         if (false && new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
-            System.out.println("Value script generation failed. Stopping process.");
+            System.out.println("Source Info script generation failed. Stopping process.");
             return;
         }
 
         // The Table Info script generator
         if (false && new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
-            System.out.println("Value script generation failed. Stopping process.");
+            System.out.println("Table Info script generation failed. Stopping process.");
             return;
         }
     }
@@ -2943,7 +2943,7 @@ public class DWScriptsGenerator {
 
                 String tableName = "ELT_CONFIG_PROPERTIES";
                 if (finalResults != null && !finalResults.isEmpty()) {
-                    deleteConfigProperties(connection, ilTable + "_Deletes", connectionId);
+                    deleteConfigProperties(connection, ilTable, connectionId);
                     saveDataIntoDB(connection, tableName, finalResults);
                 }
             }
@@ -3054,7 +3054,7 @@ public class DWScriptsGenerator {
                 }
                 
                 // Delete ilTable + " _Stg_Keys" 
-                deleteConfigProperties(connection, ilTable + " _Stg_Keys", connectionId);
+                deleteConfigProperties(connection, ilTable + " _Stg_Keys", connectionId); // Note the space in the effective ilTableName
                 Boolean deleteFlag = getDeleteFlag(ilTableName);
                 if (deleteFlag != true) {
                     System.out.println("    Delete Flag is false for ilTable: " + ilTable + ". Hence, skipping.");
@@ -3098,7 +3098,7 @@ public class DWScriptsGenerator {
                 // insertIntoEltValuesProperties(conn, finalResults);
                 String tableName = "ELT_CONFIG_PROPERTIES";
                 if (finalResults != null && !finalResults.isEmpty()) {
-                    deleteConfigProperties(connection, ilTable, connectionId); // TODO check it
+                    deleteConfigProperties(connection, ilTable + "_Deletes", connectionId); // TODO check it
                     saveDataIntoDB(connection, tableName, finalResults);
                 }
 
@@ -3449,6 +3449,9 @@ public class DWScriptsGenerator {
 
                 // Trans_STG_Keys
 
+                transStagingToStagingKeysValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+
+
                 // Trans_STG_IL
 
                 // Deletes_Deletes
@@ -3711,7 +3714,7 @@ public class DWScriptsGenerator {
                 }
 
                 TimeZone timeZone = getTimeZone(connection, connectionId, query);
-                System.out.println("timeZone: " + timeZone.toString());
+//                System.out.println("timeZone: " + timeZone.toString());
 
                 String writeMode = getWriteMode(ilTableName);
                 String lhs = getAggregatedValueNames(connection, jobType, writeMode);
@@ -3734,16 +3737,234 @@ public class DWScriptsGenerator {
         }
 
         /* Transaction Stage keys Values script */
-        void transStageKeysValuesScript(Connection connection, String selectiveTables,
+        void transStagingToStagingKeysValuesScript(Connection connection, String selectiveTables,
                 String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
-            System.out.println("\n..Dimension Source To Staging Values..");
+            System.out.println("\n..Transaction Staging to Staging Keys Value..");
 
+            String dimensionTransaction = "T";
+            String jobType = "Transaction_stg_keys";
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+            dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            System.out.println("    list of data: " + data);
+            for (Map<String, String> map : data) {
+                String ilTableName = map.get("IL_Table_Name");
+                System.out.println("    iLTableName: " + ilTableName);
+
+                // filename _Stg_Keys_Value_File_
+                // String dateFormat = getSettingValue(connection, connectionId, schemaName, "Dateformat");
+                // if (dateFormat == null) {
+                //     dateFormat = "yyyy-MM-dd";
+                // }
+                // System.out.println("dateFormat: " + dateFormat);
+                long connectionType =  getIsWebService(connection, ilTableName, connectionId, schemaName);
+                System.out.println("connectionType: " + connectionType);
+                String query = "";
+                if (connectionType == 1) {
+                    query = "SELECT time_zone FROM minidwcs_database_connections WHERE Connection_Id = ?";
+                }
+                else if (connectionType == 0) {
+                    query = "SELECT time_zone FROM minidwcs_ws_connections_mst WHERE Id = ?";
+                }
+                else {
+                    System.out.println("connectionType: " + connectionType +  " is not supported. skipping the ilTableName: " + ilTableName);
+                    continue;
+                }
+
+                TimeZone timeZone = getTimeZone(connection, connectionId, query);
+
+                String writeMode = getWriteMode(ilTableName);
+                String lhs = getAggregatedValueNames(connection, jobType, writeMode);
+                System.out.println("    lhs: " + lhs);
+                List<Map<String, Object>> finalData = getStagingHashcolumnPick(conn, ilTableName, connectionId, querySchemaCond, writeMode, lhs);
+
+                // Update DB
+                if (finalData != null && !finalData.isEmpty()) {
+                    deleteValuesProperties(connection, ilTableName + "_Stg_Keys", connectionId);
+                    insertIntoEltValuesProperties(conn, finalData);
+                }
+
+            }
+
+        }
+
+        /**
+         * Fetches staging hash column pick details from the `stg_hashcolumn_pick` table.
+         *
+         * @param conn            The database connection object.
+         * @param tableName       The name of the table 
+         * @param connectionId    The connection ID
+         * @param querySchemaCond Additional schema condition
+         * @return A list of maps containing the query results, where each map represents a row.
+         */
+        public List<Map<String, Object>> getStagingHashcolumnPick(Connection conn, String tableName, String connectionId, String querySchemaCond, String writeMode, String lhs) {
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+            String query = "SELECT Table_Name, PK_Columns, Hash_Columns, " +
+                           "Tilt_PK_Columns, Tilt_Hash_Columns, " +
+                           "ROUND((LENGTH(PK_Columns) - LENGTH(REPLACE(PK_Columns, ',', ''))) / LENGTH(',')) AS Comma_Count, " +
+                           "Date_Formats, precisions, scales, Datatypes " +
+                           "FROM stg_hashcolumn_pick " +
+                           "WHERE Table_Name = ? AND Connection_Id = ? " + querySchemaCond;
+        
+            String addedUser = userName;
+            Timestamp addedDate = Timestamp.valueOf(startTime);
+            String updatedUser = userName;
+            Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setString(1, tableName + "_Stg");
+                pstmt.setString(2, connectionId);
+        
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String tableNameValue = rs.getString("Table_Name");
+                        String pkColumns = rs.getString("PK_Columns");
+                        String hashColumns = rs.getString("Hash_Columns");
+                        String tiltPKColumns = rs.getString("Tilt_PK_Columns");
+                        String tiltHashColumns = rs.getString("Tilt_Hash_Columns");
+                        String commaCount = rs.getString("Comma_Count");
+                        String dateFormats = rs.getString("Date_Formats");
+                        String precisions = rs.getString("precisions");
+                        String scales = rs.getString("scales");
+                        String datatypes = rs.getString("Datatypes");
+
+
+                        String var1 = (lhs).replaceAll("\\$\\{src\\.jdbc\\.url}", 
+                        "src.jdbc.url=jdbc:mysql://" + srcHost + ":" + srcPort + "/" + srcDbName);
+                        String var2 = var1.replaceAll("\\$\\{src\\.jdbc\\.driver}", 
+                        "src.jdbc.driver=com.mysql.jdbc.Driver");
+                        String var3 = var2.replaceAll("\\$\\{src\\.db\\.user}", 
+                        "src.db.user=" + srcUn);
+                        String srcPwd = (this.srcPwd).replaceAll("\\$", "\\\\\\$");
+                        String var4 = var3.replaceAll("\\$\\{src\\.db\\.password}", 
+                        "src.db.password=" + srcPwd);
+
+                        // Replacing parts of query using dynamic values
+                        String stgKeysTiltPkColumns = tiltPKColumns.replaceAll("\\$", "\\\\\\$");
+                        String stgKeysTiltHashColumns = tiltHashColumns.replaceAll("\\$", "\\\\\\$");
+                        String stgKeysTableName = tableNameValue.replaceAll("\\$", "\\\\\\$");
+                        String sourceQuery = "source.query=Select " + stgKeysTiltPkColumns + "," + stgKeysTiltHashColumns +
+                        " FROM `" + stgKeysTableName + "`";
+                        String var5 = var4.replaceAll("\\$\\{source\\.query}", sourceQuery);
+
+                        String var6 = var5.replaceAll("\\$\\{source\\.is\\.query}", "source.is.query=True");
+                        String var7 = var6.replaceAll("\\$\\{class\\.names}", 
+                        "class.names=java.lang.String,com.anvizent.elt.anvizent.util.ChecksumGenerator");
+                        String var8 = var7.replaceAll("\\$\\{method\\.names}", "method.names=join,generate");
+
+                        String stgKeysPkColumns = pkColumns.replaceAll("\\$", "\\\\\\$");
+                        String stgKeysHashColumns = hashColumns.replaceAll("\\$", "\\\\\\$");
+                        String methodArgumentFields = "method.argument.fields=\"underscore_field," + stgKeysPkColumns + "\",\"" + stgKeysHashColumns + "\"";
+                        String var9 = var8.replaceAll("\\$\\{method\\.argument\\.fields}", methodArgumentFields);
+
+                        String var10 = var9.replaceAll("\\$\\{return\\.fields}", "return.fields=PKValue,HashValue");
+                        String var11 = var10.replaceAll("\\$\\{source\\.coerce\\.fields}", 
+                        "source.coerce.fields=" + pkColumns);
+
+                        String varGenerateA = generateText("a", Integer.valueOf(commaCount) + 1);
+                        String replaceA = varGenerateA.replaceAll("a", "java.lang.String,");
+                        String trim = replaceA.substring(0, replaceA.length() - 1);
+                        String var12 = var11.replaceAll("\\$\\{source\\.coerce\\.to}", "source.coerce.to=" + trim);
+
+                        String var13 = var12.replaceAll("\\$\\{target\\.table}", 
+                        "target.table=" + tableNameValue + "_Keys".replaceAll("\\$", "\\\\\\$"));
+                        String var14 = var13.replaceAll("\\$\\{key\\.fields}", "key.fields=PKValue");
+                        String var15 = var14.replaceAll("\\$\\{key\\.columns}", "key.columns=PKValue");
+                        String var16 = var15.replaceAll("\\$\\{key\\.fields\\.case\\.sensitive}", "key.fields.case.sensitive=True");
+                        String var17 = var16.replaceAll("\\$\\{key\\.columns\\.case\\.sensitive}", "key.columns.case.sensitive=True");
+                        String var18 = var17.replaceAll("\\$\\{insert\\.constant\\.columns}", 
+                        "insert.constant.columns=Added_Date,Added_User,Updated_Date,Updated_User");
+                        String var19 = var18.replaceAll("\\$\\{insert\\.constant\\.store\\.values}", 
+                        "insert.constant.store.values=UTC_TIMESTAMP(),'ELT_Admin',UTC_TIMESTAMP(),'ELT_Admin'");
+                        String var20 = var19.replaceAll("\\$\\{insert\\.constant\\.store\\.types}", 
+                        "insert.constant.store.types=java.util.Date,java.lang.String,java.util.Date,java.lang.String");
+
+                        String var21 = var20.replaceAll("\\$\\{update\\.constant\\.columns}", 
+                        "update.constant.columns=Updated_Date,Updated_User");
+                        String var22 = var21.replaceAll("\\$\\{update\\.constant\\.store\\.values}", 
+                        "update.constant.store.values=UTC_TIMESTAMP(),'ELT_Admin'");
+                        String var23 = var22.replaceAll("\\$\\{update\\.constant\\.store\\.types}", 
+                        "update.constant.store.types=java.util.Date,java.lang.String");
+
+                        String var24 = var23.replaceAll("\\$\\{batch\\.type}", "batch.type=BATCH_BY_SIZE");
+                        String var25 = var24.replaceAll("\\$\\{batch\\.size}", "batch.size=25000");
+
+                        String var26 = var25.replaceAll("\\$\\{mapping\\.constants\\.fields}", 
+                        "mapping.constants.fields=underscore_field");
+                        String var27 = var26.replaceAll("\\$\\{mapping\\.constants\\.fields\\.types}", 
+                        "mapping.constants.fields.types=java.lang.String");
+                        String var28 = var27.replaceAll("\\$\\{mapping\\.constants\\.fields\\.values}", 
+                        "mapping.constants.fields.values=_");
+
+                        String var29 = var28.replaceAll("\\$\\{mapping\\.retain\\.emit}", 
+                        "mapping.retain.emit=underscore_field," + stgKeysPkColumns + "," + stgKeysHashColumns);
+
+                        String varGenerateA1 = generateText("a", Integer.valueOf(commaCount));
+                        String replaceA1 = varGenerateA1.replaceAll("a", ",");
+                        String trim1 = replaceA1; // No length manipulation here
+                        String var30 = var29.replaceAll("\\$\\{source\\.coerce\\.format}", 
+                        "source.coerce.format=" + dateFormats);
+
+                        String var31 = var30.replaceAll("\\$\\{checksum\\.fields}", "checksum.fields=HashValue");
+                        String var32 = var31.replaceAll("\\$\\{columns}", "columns=" + stgKeysTiltPkColumns + "," + stgKeysTiltHashColumns);
+                        String var33 = var32.replaceAll("\\$\\{table\\.name}", 
+                        "table.name=`" + stgKeysTableName + "`");
+                        String var34 = var33.replaceAll("\\$\\{empty\\.coerce\\.back}", "empty.coerce.back=" + datatypes);
+                        String var35 = var34.replaceAll("\\$\\{empty\\.mapping\\.coerce\\.decimal\\.precisions}", 
+                        "empty.mapping.coerce.decimal.precisions=" + precisions);
+                        String var36 = var35.replaceAll("\\$\\{empty\\.mapping\\.coerce\\.decimal\\.scales}", 
+                        "empty.mapping.coerce.decimal.scales=" + scales);
+                        String var37 = var36.replaceAll("\\$\\{empty\\.coerce\\.fields}", 
+                        "empty.coerce.fields=" + pkColumns);
+                        String var38 = var37.replaceAll("\\$\\{empty\\.coerce\\.format}", 
+                        "empty.coerce.format=" + dateFormats);
+
+                        String whereCondition = writeMode.equals("overwrite") ? 
+                        "where.condition=" : "where.condition=where Updated_Date>=${start.date}";
+                        String incrementalCondition = var38.replaceAll("\\$\\{where\\.condition}", 
+                        whereCondition.replaceAll("\\$", "\\\\\\$"));
+                
+                        // Final result
+                        String valueFile = incrementalCondition;
+                        String fileName = getValueFileName(tableNameValue, STG_KEYS_VALUE_FILE_STRING);
+                        writeToFile(valueFile, fileName);
+
+                        String ilTableNameUpdated = tableNameValue + "_Keys";  // Updated Value
+
+                        Map<String, Object> resultRow = new HashMap<>();
+                        resultRow.put("Connection_Id", connectionId); // Global
+                        resultRow.put("TABLE_SCHEMA", schemaName); // Global
+                        resultRow.put("IL_Table_Name", ilTableNameUpdated);
+                        resultRow.put("values_file_name", fileName);
+                        resultRow.put("Active_Flag", true);
+                        resultRow.put("Added_Date", addedDate);
+                        resultRow.put("Added_User", addedUser);
+                        resultRow.put("Updated_Date", updatedDate);
+                        resultRow.put("Updated_User", updatedUser);
+                        finalResults.add(resultRow);
+                        System.out.println("valueFile: \n" +  valueFile);
+
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            return finalResults;
+        }
+        // Helper function to generate repeated Text
+        String generateText(String str, int repeatCount) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < repeatCount; i++) {
+                sb.append(str);
+            }
+            String repeatedString = sb.toString();
+            return repeatedString;
         }
 
         /* Transaction Stage To DW Values */
         void transStageToDWValuesScript(Connection connection, String selectiveTables,
                 String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
-            System.out.println("\n..Dimension Source To Staging Values..");
+            System.out.println("\n..Transaction Staging to DW Value..");
         }
      
         /* Dimension Deletes Values */
@@ -3794,7 +4015,7 @@ public class DWScriptsGenerator {
                 List<Map<String, Object>> finalData = dimFinalDataMapping(mainDataMap, constantFieldsLookupMap, pkColumnsLookupMap, lhs);
                 System.out.println("    finalData: " + finalData.size());
                 // System.out.println("    finalData: " + finalData);
-
+                // TODO delete the properties beforehand
                 insertIntoEltValuesProperties(conn, finalData);
             }
         }
