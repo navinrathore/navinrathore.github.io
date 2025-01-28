@@ -3402,7 +3402,11 @@ public class DWScriptsGenerator {
         String srcUn;
         String srcPwd;
         String srcDbName;
+        String tgtHost;
+        String tgtPort;
+        String tgtUn;
         String tgtPwd;
+        String tgtDbName;
         String limitFunction;
         Map<String, Map<String, String>> datatypeConversionsGlobal;
         // Constructor
@@ -3420,8 +3424,12 @@ public class DWScriptsGenerator {
             srcPwd = srcPwd.replaceAll("\\$", "\\\\\\$");
             srcDbName = jsonDbDetails.getString("stagingdb_schema");
 
+            tgtHost = jsonDbDetails.getString("datadb_hostname");
+            tgtPort = jsonDbDetails.getString("datadb_port");
+            tgtUn = jsonDbDetails.getString("datadb_username");
             tgtPwd = jsonDbDetails.getString("datadb_password");
             tgtPwd = tgtPwd.replaceAll("\\$", "\\\\\\$");
+            tgtDbName = jsonDbDetails.getString("datadb_schema");
 
             // limitFunction is not applicable for Value scripts
             limitFunction = "";
@@ -3438,27 +3446,29 @@ public class DWScriptsGenerator {
                 // Total 7 sub parts
                 // Dim_SRC_STG
 
-                dimSourceToStagingValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // dimSourceToStagingValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
                 // Dim_STG_IL
 
+                dimStageToDWValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+
                 // Trans_SRC_STG
 
-                transSourceToStagingValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // transSourceToStagingValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
 
                 // Trans_STG_Keys
 
-                transStagingToStagingKeysValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // transStagingToStagingKeysValuesScript(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
 
                 // Trans_STG_IL
 
                 // Deletes_Deletes
-                dimDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // dimDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
                 // Trans_deletes
-                transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
+                // transDeleteScriptComplete(conn, selectTables, connectionId, querySchemaCondition, limitFunction);
 
             } catch (SQLException e) {
                 e.printStackTrace();
@@ -3775,7 +3785,7 @@ public class DWScriptsGenerator {
 
                 String writeMode = getWriteMode(ilTableName);
                 String lhs = getAggregatedValueNames(connection, jobType, writeMode);
-                System.out.println("    lhs: " + lhs);
+                // System.out.println("    lhs: " + lhs);
                 List<Map<String, Object>> finalData = getStagingHashcolumnPick(conn, ilTableName, connectionId, querySchemaCond, writeMode, lhs);
 
                 // Update DB
@@ -3926,7 +3936,7 @@ public class DWScriptsGenerator {
                 
                         // Final result
                         String valueFile = incrementalCondition;
-                        String fileName = getValueFileName(tableNameValue, STG_KEYS_VALUE_FILE_STRING);
+                        String fileName = getValueFileName(tableName, STG_KEYS_VALUE_FILE_STRING);
                         writeToFile(valueFile, fileName);
 
                         String ilTableNameUpdated = tableNameValue + "_Keys";  // Updated Value
@@ -3942,7 +3952,7 @@ public class DWScriptsGenerator {
                         resultRow.put("Updated_Date", updatedDate);
                         resultRow.put("Updated_User", updatedUser);
                         finalResults.add(resultRow);
-                        System.out.println("valueFile: \n" +  valueFile);
+                        // System.out.println("valueFile: \n" +  valueFile);
 
                     }
                 }
@@ -3961,12 +3971,477 @@ public class DWScriptsGenerator {
             return repeatedString;
         }
 
-        /* Transaction Stage To DW Values */
+        /* Transaction Staging To DW Values */
+        void dimStageToDWValuesScript(Connection connection, String selectiveTables,
+                String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
+            System.out.println("\n..Dimension Staging to DW Value..");
+            
+            String dimensionTransaction = "D";
+            String jobType = "Dimension_stg_il";
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+            dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            System.out.println("    list of data: " + data);
+
+
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                System.out.println("    iLTableName: " + ilTableName);
+                String fileName = getValueFileName(ilTableName, VALUE_FILE_STRING);
+
+                String dateFormat = getSettingValue(connection, connectionId, schemaName, "Dateformat");
+                if (dateFormat == null) {
+                    dateFormat = "yyyy-MM-dd";
+                }
+
+                long connectionType =  getIsWebService(connection, ilTableName, connectionId, schemaName);
+                System.out.println("connectionType: " + connectionType);
+                String query = "";
+                if (connectionType == 1) {
+                    query = "SELECT time_zone FROM minidwcs_database_connections WHERE Connection_Id = ?";
+                }
+                else if (connectionType == 0) {
+                    query = "SELECT time_zone FROM minidwcs_ws_connections_mst WHERE Id = ?";
+                }
+                else {
+                    System.out.println("connectionType: " + connectionType +  " is not supported. skipping the ilTableName: " + ilTableName);
+                    continue;
+                }
+
+                TimeZone timeZone = getTimeZone(connection, connectionId, query);
+                // System.out.println("timeZone: " + timeZone.toString());
+                String writeMode = getWriteMode(ilTableName);
+                String lhs = getAggregatedValueNames(connection, jobType, writeMode);
+                // System.out.println("    lhs: " + lhs);
+
+                Map<String, DimSourceValues> mainData = getDimStageToDwSourceMappingInfo(connection, dimensionTransaction, querySchemaCond, connectionId, ilTableName);
+                System.out.println("mainData: " + mainData.size());
+
+                Map<String, SourceMapValues> constrainedData = getConstrainedFieldsAndValues(connection, dimensionTransaction, ilTableName, connectionId, querySchemaCondition);
+                System.out.println("constrainedData: " + constrainedData);
+                Map<String, SourceMapValues> nonConstrainedData = getNonConstrainedFieldsAndValues(connection, dimensionTransaction, ilTableName, connectionId, querySchemaCondition);
+                System.out.println("c Non onstrainedData: " + constrainedData);
+
+                Map<String, SourceMapValues> joinedData = joinConstrainedNonCnstrainedData(constrainedData, nonConstrainedData);
+                List<Map<String, Object>> finalData = dimStageToDWValuesScriptFinalProcess( mainData, joinedData, lhs, writeMode);
+                // Update DB
+                if (finalData != null && !finalData.isEmpty()) {
+                    deleteValuesProperties(connection, ilTableName, connectionId);
+                    insertIntoEltValuesProperties(conn, finalData);
+                }
+            }
+
+        }
+
+        private Map<String, DimSourceValues> getDimStageToDwSourceMappingInfo(Connection conn,
+                String dimensionTransaction, String querySchemaCond,
+                String connectionId, String ilTableName) throws SQLException {
+
+            Map<String, DimSourceValues> aggregatedSourceValues = new HashMap<>();
+
+            String dateFormatValue = getSettingValue(conn, connectionId, schemaName, "Dateformat");
+            if (dateFormatValue == null) {
+                dateFormatValue = "yyyy-MM-dd";
+            }
+
+            System.out.println("datatypeConversionsGlobal: " + datatypeConversionsGlobal.size());
+            ResultSet rs = null;
+
+            String query = "SELECT Connection_Id, TABLE_SCHEMA, IL_Table_Name, IL_Column_Name, "
+             + "IL_Data_Type, Constraints, Source_Table_Name, Source_Column_Name, "
+             + "LOWER(Source_Data_Type) AS Source_Data_Type_Lower, PK_Constraint, "
+             + "PK_Column_Name, FK_Constraint, FK_Column_Name, Dimension_Transaction, "
+             + "Dimension_Key, Dimension_Name, Dimension_Join_Condition, Active_Flag, "
+             + "LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS DataType "
+             + "FROM ELT_IL_Source_Mapping_Info_Saved "
+             + "WHERE Dimension_Transaction = ? AND IL_Table_Name = ? "
+             + "AND Connection_Id = ? " + querySchemaCond;
+
+            try {
+                PreparedStatement pstmt = conn.prepareStatement(query);
+
+                pstmt.setString(1, dimensionTransaction);
+                pstmt.setString(2, ilTableName);
+                pstmt.setString(3, connectionId);
+
+                rs = pstmt.executeQuery();
+
+                String cdcFlag = "";
+                while (rs.next()) {
+                    String connectionIdValue = rs.getString("Connection_Id");
+                    String tableSchema = rs.getString("TABLE_SCHEMA");
+                    String ilTableNameValue = rs.getString("IL_Table_Name");
+                    String ilColumnName = rs.getString("IL_Column_Name");
+                    String ilDataType = rs.getString("IL_Data_Type");
+                    String constraints = rs.getString("Constraints");
+                    String sourceTableName = rs.getString("Source_Table_Name");
+                    String sourceColumnName = rs.getString("Source_Column_Name");
+                    String sourceDataType = rs.getString("Source_Data_Type_Lower"); // alias used
+                    String pkConstraint = rs.getString("PK_Constraint");
+                    String pkColumnName = rs.getString("PK_Column_Name");
+                    String fkConstraint = rs.getString("FK_Constraint");
+                    String fkColumnName = rs.getString("FK_Column_Name");
+                    String dimensionTransactionValue = rs.getString("Dimension_Transaction");
+                    String dimensionKey = rs.getString("Dimension_Key");
+                    String dimensionName = rs.getString("Dimension_Name");
+                    String dimensionJoinCondition = rs.getString("Dimension_Join_Condition");
+                    boolean activeFlag = rs.getBoolean("Active_Flag");
+                    // String cdcFlag = rs.getString("CDC_Flag");
+                    String dataType = rs.getString("Datatype");
+
+                    String var1 = "`" + ilColumnName + "`"; // Not used
+                    if (constraints == null) {
+                        constraints = "";
+                    }
+                    // the left join with datatypeConversions
+                    Map<String, String> conversionDetails = datatypeConversionsGlobal.getOrDefault(dataType, new HashMap<>());
+                    String javaDataTypeConversion = (String) conversionDetails.get("javaDataType");
+                    String cleansingValueConversion = (String) conversionDetails.get("cleansingValue");
+
+                    // Transformation
+                    String allCols = null;
+                    String allColsTilt = null;
+                    String allExceptPk = null;
+                    String allPk = null;
+                    String allCleansingValue = null;
+                    String pkDateformats = null;
+                    String cleansingValidations = null;
+                    String allJavaDataTypes = null;
+                    String allDateFormats = null;
+                    String stgTableName = null;
+                    String skColumn = null;
+                    String allPkSk = null;
+                    String dateFormat = dateFormatValue;
+
+                    allCols = allCols == null ? ilColumnName : (allCols + "," + ilColumnName);
+                    String ilColumnNameFormatted = "`" + ilColumnName + "`";
+                    allColsTilt = allColsTilt == null ? ilColumnNameFormatted : (allColsTilt + "," + ilColumnNameFormatted);
+
+                    allExceptPk = allExceptPk == null 
+                        ? (constraints.equals("PK") ? null : ilColumnNameFormatted) 
+                        : (constraints.equals("PK") ? allExceptPk : (allExceptPk + "," + ilColumnNameFormatted));
+
+                    allPk = allPk == null 
+                        ? (constraints.equals("PK") ? ilColumnNameFormatted : null) 
+                        : (constraints.equals("PK") ? (allPk + "," + ilColumnNameFormatted) : allPk);
+
+                    allJavaDataTypes = allJavaDataTypes == null ? javaDataTypeConversion : (allJavaDataTypes + "," + javaDataTypeConversion);
+
+                    allDateFormats = allDateFormats == null 
+                        ? (ilDataType.toLowerCase().contains("date") ? dateFormat : "") 
+                        : (allDateFormats + "," + (ilDataType.toLowerCase().contains("date") ? dateFormat : ""));
+
+                    stgTableName = ilTableName + "_Stg";
+
+                    skColumn = skColumn == null 
+                        ? (constraints.equals("SK") ? ilColumnNameFormatted : "") 
+                        : (skColumn + (constraints.equals("SK") ? ilColumnNameFormatted : ""));
+
+                    allPkSk = allPk + "," + skColumn;
+
+                    allCleansingValue = allCleansingValue == null 
+                        ? cleansingValueConversion 
+                        : (allCleansingValue + "," + cleansingValueConversion);
+
+                    String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
+
+                    // Aggregation
+                    DimSourceValues data = aggregatedSourceValues.computeIfAbsent(key,
+                    k -> new DimSourceValues(connectionIdValue, tableSchema, ilTableNameValue, ilColumnName));
+                    // Last
+                    data.setAllCols(allCols);
+                    data.setAllExceptPk(allExceptPk);
+                    data.setAllPk(allPk);
+                    data.setAllJavaDataTypes(allJavaDataTypes);
+                    data.setAllDateformats(allDateFormats);
+                    data.setStgTableName(stgTableName);
+                    data.setSkColumn(skColumn);
+                    data.setAllPkSk(allPkSk);
+                    data.setAllCleansingValue(allCleansingValue);
+                    data.setAllColsTilt(allColsTilt);
+
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+
+            return aggregatedSourceValues;
+        }
+
+        public Map<String, SourceMapValues> getConstrainedFieldsAndValues(Connection connection, String dimensionTransaction, String ilTableName, String connectionId, String querySchemaCondition) throws SQLException {
+            String query = "SELECT " +
+                    "Connection_Id, TABLE_SCHEMA, IL_Table_Name, IL_Column_Name, IL_Data_Type, Constraints, " +
+                    "Source_Table_Name, Source_Column_Name, LOWER(Source_Data_Type), PK_Constraint, PK_Column_Name, " +
+                    "FK_Constraint, FK_Column_Name, Dimension_Transaction, Dimension_Key, Dimension_Name, " +
+                    "Dimension_Join_Condition, Active_Flag, LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) as Datatype " +
+                    "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                    "WHERE Dimension_Transaction = ? AND Constraints IN ('SK', 'PK') " +
+                    "AND IL_Table_Name = ? AND Connection_Id = ? " + querySchemaCondition;
+
+            Map<String, SourceMapValues> aggregatedSourceMapValues = new HashMap<>();
+
+                    // TODO make it global
+            String dateFormatValue = getSettingValue(conn, connectionId, schemaName, "Dateformat");
+            if (dateFormatValue == null) {
+                dateFormatValue = "yyyy-MM-dd";
+            }
+
+            System.out.println("datatypeConversionsGlobal: " + datatypeConversionsGlobal.size());
+            ResultSet rs = null;
+
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, dimensionTransaction);
+            preparedStatement.setString(2, ilTableName);
+            preparedStatement.setString(3, connectionId);
+    
+            rs = preparedStatement.executeQuery();
+
+            while (rs.next()) {
+                String connectionIdValue = rs.getString("Connection_Id");
+                String tableSchema = rs.getString("TABLE_SCHEMA");
+                String ilTableNameValue = rs.getString("IL_Table_Name");
+                String ilColumnName = rs.getString("IL_Column_Name");
+                String ilDataType = rs.getString("IL_Data_Type");
+                String constraints = rs.getString("Constraints");
+                String dataType = rs.getString("Datatype");
+
+                String allDateFormats = null;
+                allDateFormats = allDateFormats == null 
+                ? (ilDataType.toLowerCase().contains("date") ? dateFormatValue : "") 
+                : allDateFormats + "," + (ilDataType.toLowerCase().contains("date") ? dateFormatValue : "");
+
+                // the left join with datatypeConversions
+                System.out.println("dataType: " + dataType);
+
+                Map<String, String> conversionDetails = datatypeConversionsGlobal.getOrDefault(dataType, new HashMap<>());
+                String pkCleansinghValueConversion = (String) conversionDetails.get("pkCleansingValue");
+
+                // Output
+                String fields = ilColumnName;
+                String values = pkCleansinghValueConversion;
+                String dateFormats = allDateFormats;
+
+                // Aggregation
+                String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
+                SourceMapValues data = aggregatedSourceMapValues.computeIfAbsent(key,
+                k -> new SourceMapValues(connectionIdValue, tableSchema, ilTableNameValue));
+                // Last
+                data.setDateformats(dateFormats);
+                // List
+                data.appendToFields(fields);
+                data.appendToValues(values);
+            }
+
+            return aggregatedSourceMapValues;
+        }
+
+        public Map<String, SourceMapValues> getNonConstrainedFieldsAndValues(Connection connection, String dimensionTransaction, String ilTableName, String connectionId, String querySchemaCondition) throws SQLException {
+
+            String query =  "SELECT Connection_Id, TABLE_SCHEMA, IL_Table_Name, IL_Column_Name, IL_Data_Type, Constraints, Source_Table_Name, " +
+                "Source_Column_Name, LOWER(Source_Data_Type), PK_Constraint, PK_Column_Name, FK_Constraint, FK_Column_Name, " +
+                "Dimension_Transaction, Dimension_Key, Dimension_Name, Dimension_Join_Condition, Active_Flag, " +
+                "LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS Datatype " +
+                "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                "WHERE Dimension_Transaction = ? AND Constraints NOT IN ('SK', 'PK') AND IL_Table_Name = ? " +
+                "AND Connection_Id = ? " + querySchemaCondition;
+
+            Map<String, SourceMapValues> aggregatedSourceMapValues = new HashMap<>();
+
+            // TODO make it global
+            String dateFormatValue = getSettingValue(conn, connectionId, schemaName, "Dateformat");
+            if (dateFormatValue == null) {
+                dateFormatValue = "yyyy-MM-dd";
+            }
+
+            System.out.println("datatypeConversionsGlobal: " + datatypeConversionsGlobal.size());
+            ResultSet rs = null;
+
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, dimensionTransaction);
+            preparedStatement.setString(2, ilTableName);
+            preparedStatement.setString(3, connectionId);
+    
+            rs = preparedStatement.executeQuery();
+
+            while (rs.next()) {
+                String connectionIdValue = rs.getString("Connection_Id");
+                String tableSchema = rs.getString("TABLE_SCHEMA");
+                String ilTableNameValue = rs.getString("IL_Table_Name");
+                String ilColumnName = rs.getString("IL_Column_Name");
+                String ilDataType = rs.getString("IL_Data_Type");
+                String constraints = rs.getString("Constraints");
+                String dataType = rs.getString("Datatype");
+
+                String allDateFormats = null;
+                allDateFormats = allDateFormats == null 
+                ? (ilDataType.toLowerCase().contains("date") ? dateFormatValue : "") 
+                : allDateFormats + "," + (ilDataType.toLowerCase().contains("date") ? dateFormatValue : "");
+
+                // the Inner join with datatypeConversions
+                System.out.println("dataType: " + dataType);
+
+                Map<String, String> conversionDetails = datatypeConversionsGlobal.get(dataType);
+                if (conversionDetails == null) // if key not found, skip the iteration
+                    continue;
+
+                String cleansingValueConversion = (String) conversionDetails.get("cleansingValue");
+                System.out.println("cleansingValue: " + cleansingValueConversion);
+                // Output
+                String fields = ilColumnName;
+                String values = cleansingValueConversion;
+                String dateFormats = allDateFormats;
+
+                // Aggregation
+                String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
+                SourceMapValues data = aggregatedSourceMapValues.computeIfAbsent(key,
+                k -> new SourceMapValues(connectionIdValue, tableSchema, ilTableNameValue));
+                // Last
+                data.setDateformats(dateFormats);
+                // List
+                data.appendToFields(fields);
+                data.appendToValues(values);
+            }
+
+            return aggregatedSourceMapValues;
+        }
+
+        private Map<String, SourceMapValues> joinConstrainedNonCnstrainedData(Map<String, SourceMapValues> constrainedData, Map<String, SourceMapValues> nonConstrainedData) {
+
+            Map<String, SourceMapValues> joinedDataMap = new HashMap<>();
+
+            for (Map.Entry<String, SourceMapValues> entry : constrainedData.entrySet()) {
+                String key = entry.getKey();
+                SourceMapValues constrainedValue = entry.getValue();
+                // Left Outer Join
+                SourceMapValues nonConstrainedValue = nonConstrainedData.getOrDefault(key, null);
+
+                // merge data
+                String fields = (nonConstrainedValue.getFields() == null) ? constrainedValue.getFields() : constrainedValue.getFields() + "," + nonConstrainedValue.getFields();
+                String values = (nonConstrainedValue.getValues() == null) ? constrainedValue.getValues() : constrainedValue.getValues() + "," + nonConstrainedValue.getValues();
+                String dateformats = (nonConstrainedValue.getDateformats() == null) ? constrainedValue.getDateformats() : constrainedValue.getDateformats() + "," + nonConstrainedValue.getDateformats();
+
+                String connectionId = nonConstrainedValue.getConnectionId();
+                String ilTableName = nonConstrainedValue.getIlTableName();
+                String tableSchema = nonConstrainedValue.getTableSchema();
+
+                SourceMapValues joinedValue = new SourceMapValues(connectionId, tableSchema, ilTableName);
+                joinedValue.setFields(tableSchema);
+                joinedValue.setValues(values);
+                joinedValue.setDateformats(dateformats);
+                joinedDataMap.put(key, joinedValue);
+            }
+            return joinedDataMap;
+        }
+
+        private List<Map<String, Object>> dimStageToDWValuesScriptFinalProcess(Map<String, DimSourceValues> mainData, Map<String, SourceMapValues> joinedData, String lhs, String writeMode) {
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+
+            String addedUser = userName;
+            Timestamp addedDate = Timestamp.valueOf(startTime);
+            String updatedUser = userName;
+            Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+            for (Map.Entry<String, DimSourceValues> entry : mainData.entrySet()) {
+                String mainKey = entry.getKey();
+                DimSourceValues mainValue = entry.getValue();
+                String connectionId = mainValue.getConnectionId();
+                String ilTableName = mainValue.getIlTableName();
+                String tableSchema = mainValue.getTableSchema();
+                // Left Outer Join
+                SourceMapValues joinedValue = joinedData.getOrDefault(mainKey, new SourceMapValues(connectionId, tableSchema, ilTableName));
+
+                // Transformations
+                String var1 = lhs.replaceAll("\\$\\{src.jdbc.url}", "src.jdbc.url=jdbc:mysql://" + srcHost + ":" + srcPort + "/" + srcDbName);
+                String var2 = var1.replaceAll("\\$\\{src.jdbc.driver}", "src.jdbc.driver=com.mysql.jdbc.Driver");
+                String var3 = var2.replaceAll("\\$\\{src.db.user}", "src.db.user=" + srcUn);
+                String srcPwdEscaped = srcPwd.replaceAll("\\$", "\\$");
+                String tgtPwdEscaped = tgtPwd.replaceAll("\\$", "\\$");
+                String var4 = var3.replaceAll("\\$\\{src.db.password}", "src.db.password=" + srcPwdEscaped);
+                String var5 = var4.replaceAll("\\$\\{source.query}", "source.query=SELECT " + mainValue.getAllColsTilt().replaceAll("\\$", "\\\\\\$") + " FROM " + mainValue.getStgTableName().replaceAll("\\$", "\\\\\\$"));
+                String var6 = var5.replaceAll("\\$\\{source.is.query}", "source.is.query=True");
+                String var7 = var6.replaceAll("\\$\\{cleansing.fields}", "cleansing.fields=" + joinedValue.getFields().replaceAll("\\$", "\\\\\\$"));
+                String generateA = generateText("a", joinedValue.getFields().split(",").length + 1);
+                String varAReplace = generateA.replaceAll("a", "EMPTY,");
+                String varEmpty = varAReplace.substring(0, varAReplace.length() - 1);
+                String var8 = var7.replaceAll("\\$\\{cleansing.validation}", "cleansing.validation=" + varEmpty);
+                String var9 = var8.replaceAll("\\$\\{cleansing.values}", "cleansing.values=" + joinedValue.getValues());
+                String var10 = var9.replaceAll("\\$\\{date.formats}", "date.formats=" + joinedValue.getDateformats());
+                String var11 = var10.replaceAll("\\$\\{tgt.jdbc.url}", "tgt.jdbc.url=jdbc:mysql://" + tgtHost + ":" + tgtPort + "/" + tgtDbName);
+                String var12 = var11.replaceAll("\\$\\{tgt.jdbc.driver}", "tgt.jdbc.driver=com.mysql.jdbc.Driver");
+                String var13 = var12.replaceAll("\\$\\{tgt.db.user}", "tgt.db.user=" + tgtUn);
+                String var14 = var13.replaceAll("\\$\\{tgt.db.password}", "tgt.db.password=" + tgtPwdEscaped);
+                String var15 = var14.replaceAll("\\$\\{target.table}", "target.table=" + mainValue.getIlTableName().replaceAll("\\$", "\\\\\\$"));
+                String var16 = var15.replaceAll("\\$\\{key.fields}", "key.fields=" + mainValue.getAllPkSk().replaceAll("\\$", "\\\\\\$"));
+                String var17 = var16.replaceAll("\\$\\{key.columns}", "key.columns=" + mainValue.getAllPkSk().replaceAll("\\$", "\\\\\\$"));
+                String var18 = var17.replaceAll("\\$\\{key.fields.case.sensitive}", "key.fields.case.sensitive=True");
+                String var19 = var18.replaceAll("\\$\\{insert.constant.columns}", "insert.constant.columns=Added_Date,Added_User,Updated_Date,Updated_User");
+                String var20 = var19.replaceAll("\\$\\{insert.constant.store.values}", "insert.constant.store.values=UTC_TIMESTAMP(),'ELT_Admin',UTC_TIMESTAMP(),'ELT_Admin'");
+                String var21 = var20.replaceAll("\\$\\{insert.constant.store.types}", "insert.constant.store.types=java.util.Date,java.lang.String,java.util.Date,java.lang.String");
+                String var22 = var21.replaceAll("\\$\\{update.constant.columns}", "update.constant.columns=Updated_Date,Updated_User");
+                String var23 = var22.replaceAll("\\$\\{update.constant.store.values}", "update.constant.store.values=UTC_TIMESTAMP(),'ELT_Admin'");
+                String var24 = var23.replaceAll("\\$\\{update.constant.store.types}", "update.constant.store.types=java.util.Date,java.lang.String");
+                String var25 = var24.replaceAll("\\$\\{batch.type}", "batch.type=BATCH_BY_SIZE");
+                String var26 = var25.replaceAll("\\$\\{batch.size}", "batch.size=10000");
+                String partitionSize = var26.replaceAll("\\$\\{partition.size}", "partition.size=");
+                String partitionColumns = partitionSize.replaceAll("\\$\\{columns}", "columns=" + mainValue.getAllColsTilt().replaceAll("\\$", "\\\\\\$"));
+                String partitionTableName = partitionColumns.replaceAll("\\$\\{table.name}", "table.name=`" + mainValue.getIlTableName().replaceAll("\\$", "\\\\\\$") + "_Stg`");
+                String partitionUpperBound = partitionTableName.replaceAll("\\$\\{partition.upper.bound}", "partition.upper.bound=");
+                String numberOfPartitions = partitionUpperBound.replaceAll("\\$\\{number.of.partitions}", "number.of.partitions=");
+                String resultFetcherClassNames = numberOfPartitions.replaceAll("\\$\\{resultfetcher.class.names}", "resultfetcher.class.names=com.anvizent.elt.anvizent.util.ChecksumGenerator");
+                String resultFetcherMethodNames = resultFetcherClassNames.replaceAll("\\$\\{resultfetcher.method.names}", "resultfetcher.method.names=generate");
+                String resultFetcherMethodArgumentFields = resultFetcherMethodNames.replaceAll("\\$\\{resultfetcher.method.argument.fields}", "resultfetcher.method.argument.fields=\"" + mainValue.getAllCols().replaceAll("\\$", "\\\\\\$") + "\"");
+                String resultFetcherResultFields = resultFetcherMethodArgumentFields.replaceAll("\\$\\{resultfetcher.return.fields}", "resultfetcher.return.fields=Source_Hash_Value");
+                String whereCondition = writeMode.equals("overwrite") ? "where.condition=" : "where.condition=where Updated_Date>=${start.date}";
+                String incremental = resultFetcherResultFields.replaceAll("\\$\\{where.condition}", whereCondition.replaceAll("\\$", "\\\\\\$"));
+
+
+                // Output
+                String valueFile = incremental;
+                String fileName = getValueFileName(ilTableName, VALUE_FILE_STRING);
+
+                writeToFile(valueFile, fileName);
+                
+                Map<String, Object> resultRow = new HashMap<>();
+                resultRow.put("Connection_Id", connectionId); // Global
+                resultRow.put("TABLE_SCHEMA", schemaName); // Global
+                resultRow.put("IL_Table_Name", ilTableName);
+                resultRow.put("values_file_name", fileName);
+                resultRow.put("Active_Flag", true);
+                resultRow.put("Added_Date", addedDate);
+                resultRow.put("Added_User", addedUser);
+                resultRow.put("Updated_Date", updatedDate);
+                resultRow.put("Updated_User", updatedUser);
+                finalResults.add(resultRow);
+
+            }
+            return finalResults;
+        }
+        /* Transaction Staging To DW Values */
         void transStageToDWValuesScript(Connection connection, String selectiveTables,
                 String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
             System.out.println("\n..Transaction Staging to DW Value..");
+
+            String dimensionTransaction = "T";
+            String jobType = "";
+
+            List<Map<String, String>> data = getILTableNamesWithDimentionTransactionFilter(connection, selectiveTables,
+            dimensionTransaction, connectionId, querySchemaCond, limitFunct);
+            System.out.println("    list of data: " + data);
+
+
+            for (Map<String, String> map : data) {
+                String tableSchema = map.get("Table_Schema");
+                String ilTableName = map.get("IL_Table_Name");
+
+                System.out.println("    iLTableName: " + ilTableName);
+
+            }
+
         }
      
+        
         /* Dimension Deletes Values */
         void dimDeleteScriptComplete(Connection connection, String selectiveTables, 
                 String connectionId, String querySchemaCond, String limitFunct) throws SQLException {
@@ -4423,7 +4898,7 @@ public class DWScriptsGenerator {
                         // TODO here value could be null, handle this value in downstream
                         String javaDataType = null;
                         if (conversionDetails != null) {
-                            javaDataType = (String) conversionDetails.get("javaDataType");
+                            javaDataType = (String) conversionDetails.get("javaDataType"); // TODO set value
                         }
 
                         // Aggregation key
@@ -4748,6 +5223,84 @@ public class DWScriptsGenerator {
             }
         }
 
+        public class SourceMapValues {
+            // Key fields
+            private final String connectionIdValue;
+            private final String tableSchema;
+            private final String ilTableNameValue;
+        
+            public String getConnectionId() {
+                return connectionIdValue;
+            }
+
+            public String getTableSchema() {
+                return tableSchema;
+            }
+
+            public String getIlTableName() {
+                return ilTableNameValue;
+            }
+
+            public SourceMapValues(String connectionIdValue, String tableSchema, String ilTableNameValue) {
+                this.connectionIdValue = connectionIdValue;
+                this.tableSchema = tableSchema;
+                this.ilTableNameValue = ilTableNameValue;
+                // Initialize to "", having null doesn't mean anything
+                fields = ""; values = ""; dateformats = "";
+
+            }
+
+            String fields;
+            String values;
+            String dateformats;
+
+            public String getFields() {
+                return fields;
+            }
+
+            public void setFields(String fields) {
+                this.fields = fields;
+            }
+
+            public String getValues() {
+                return values;
+            }
+
+            public void setValues(String values) {
+                this.values = values;
+            }
+
+            public String getDateformats() {
+                return dateformats;
+            }
+
+            public void setDateformats(String dateformats) {
+                this.dateformats = dateformats;
+            }
+
+            // Method to append values to aggregated - fields
+            public void appendToFields(String value) {
+                if (value != null && !value.isEmpty()) {
+                    if (this.fields == null || this.fields.isEmpty()) {
+                        this.fields = value;
+                    } else {
+                        this.fields += "," + value;
+                    }
+                }
+            }
+
+            // Methods to append values to aggregated - values
+            public void appendToValues(String value) {
+                if (value != null && !value.isEmpty()) {
+                    if (this.values == null || this.values.isEmpty()) {
+                        this.values = value;
+                    } else {
+                        this.values += "," + value;
+                    }
+                }
+            }
+        }
+
         public class DimSourceValues {
             // Key fields
             private final String connectionIdValue;
@@ -4784,6 +5337,8 @@ public class DWScriptsGenerator {
             private String stgTableName;
             private String skColumn;
             private String allPkSk;
+            private String allCleansingValue;
+            private String allColsTilt;
         
             public DimSourceValues(String connectionIdValue, String tableSchema, String ilTableNameValue, String ilColumnName) {
                 this.connectionIdValue = connectionIdValue;
@@ -4793,7 +5348,8 @@ public class DWScriptsGenerator {
                 // Initialize to "", having null doesn't mean anything
                 dateformat = ""; allCols = ""; allExceptPk = ""; allPk = "";
                 cleansingValues = ""; pkDateformats = ""; cleansingValidations = ""; allJavaDataTypes = "";
-                allDateformats = ""; stgTableName = ""; skColumn = ""; allPkSk = "";
+                allDateformats = ""; stgTableName = ""; skColumn = ""; allPkSk = ""; allCleansingValue = "";
+                allColsTilt = "";
             }
         
             public String getDateformat() {
@@ -4891,7 +5447,23 @@ public class DWScriptsGenerator {
             public void setAllPkSk(String allPkSk) {
                 this.allPkSk = allPkSk;
             }
+
+            public String getAllCleansingValue() {
+                return allCleansingValue;
+            }
         
+            public void setAllCleansingValue(String allCleansingValue) {
+                this.allCleansingValue = allCleansingValue;
+            }
+        
+            public String getAllColsTilt() {
+                return allColsTilt;
+            }
+        
+            public void setAllColsTilt(String allColsTilt) {
+                this.allColsTilt = allColsTilt;
+            }
+
             // Methods to append values to aggregated fields
             public void appendToPkDateformats(String value) {
                 if (value != null && !value.isEmpty()) {
@@ -4996,8 +5568,8 @@ public class DWScriptsGenerator {
                     String javaDataTypeConversion = null;
                     String pkCleansinghValueConversion = null;
                     if (conversionDetails != null) {
-                        javaDataTypeConversion = (String) conversionDetails.get("Java_Data_Type");
-                        pkCleansinghValueConversion = (String) conversionDetails.get("PK_Cleansing_Value");
+                        javaDataTypeConversion = (String) conversionDetails.get("javaDataType");
+                        pkCleansinghValueConversion = (String) conversionDetails.get("pkCleansingValue");
                     }
                     
                     String javaDataType = javaDataTypeConversion;
@@ -5140,7 +5712,7 @@ public class DWScriptsGenerator {
                     Map<String, String> conversionDetails = datatypeConversionsGlobal.get(dataType);
                     String javaDataTypeConversion = null;
                     if (conversionDetails != null) {
-                        javaDataTypeConversion = (String) conversionDetails.get("Java_Data_Type");
+                        javaDataTypeConversion = (String) conversionDetails.get("javaDataType");
                     }
                     
                     String javaDataType = javaDataTypeConversion;
@@ -5319,7 +5891,7 @@ public class DWScriptsGenerator {
 
                         // the left join with datatypeConversions
                         Map<String, String> conversionDetails = datatypeConversionsGlobal.get(ilDataType);
-                        String javaDataTypeConversion = conversionDetails.getOrDefault("Java_Data_Type", new String());
+                        String javaDataTypeConversion = conversionDetails.getOrDefault("javaDataType", new String());
 
                         // Output
                         String constantFields = ilColumnName;
@@ -6409,6 +6981,10 @@ public class DWScriptsGenerator {
                 "    \"stagingdb_username\": \"staginguser\", \n" +
                 "    \"stagingdb_password\": \"stagingpassword\", \n" +
                 "    \"stagingdb_schema\": \"stagingdb\", \n" +
+                "    \"datadb_hostname\": \"localhost\", \n" +
+                "    \"datadb_port\": \"3306\", \n" +
+                "    \"datadb_username\": \"datauser\", \n" +
+                "    \"datadb_schema\": \"datadb\", \n" +
                 "    \"datadb_password\": \"datapassword\" \n" +
                 "}";
         String historicalDataFlag = "";
