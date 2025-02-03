@@ -64,6 +64,7 @@ public class DWScriptsGenerator {
     private String selectTables;
     private String querySchemaCondition = ""; // based on TABLE_SCHEMA
     private String querySchemaCondition1 = ""; // based on Schema_Name
+    Map<String, Map<String, String>> datatypeConversionsGlobal;
 
     SQLQueries sqlQueries;
     Connection conn;
@@ -111,6 +112,9 @@ public class DWScriptsGenerator {
         Map<String, String> conditions = createQueryConditions(null, schemaName);
         this.querySchemaCondition = conditions.get("query_schema_cond");
         this.querySchemaCondition1 = conditions.get("query_schema_cond1");
+
+        datatypeConversionsGlobal = getDatatypeConversions(conn);
+
     }
 
     public String getTimeStamp() {
@@ -152,22 +156,70 @@ public class DWScriptsGenerator {
         return configFileName;
     }
 
+    // row7, datatype_conversion
+    // Global moved from Value Script
+    private Map<String, Map<String, String>> getDatatypeConversions(Connection connection) {
+        String query = "SELECT " +
+                        "  Id, " +
+                        "  LOWER(Source_Data_Type) AS sourceDataType, " +
+                        "  LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS ilDataType, " +
+                        "  Java_Data_Type AS javaDataType, " +
+                        "  Cleansing_Value AS cleansingValue, " +
+                        "  PK_Cleansing_Value AS pkCleansingValue " +
+                        "FROM ELT_Datatype_Conversions";
+    
+        Map<String, Map<String, String>> datatypeConversionsMap = new HashMap<>();
+        // TODO make it global
+        String dateFormat = getSettingValue(connection, connectionId, schemaName, "Dateformat");
+        if (dateFormat == null) {
+            dateFormat = "yyyy-MM-dd";
+        }
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query);
+                ResultSet resultSet = preparedStatement.executeQuery()) {
+
+            while (resultSet.next()) {
+                String ilDataType = resultSet.getString("ilDataType");
+
+                Map<String, String> details = new HashMap<>();
+                details.put("id", String.valueOf(resultSet.getInt("Id")));
+                details.put("sourceDataType", resultSet.getString("sourceDataType"));
+                details.put("javaDataType", resultSet.getString("javaDataType"));
+                details.put("cleansingValue", resultSet.getString("cleansingValue"));
+                details.put("pkCleansingValue", resultSet.getString("pkCleansingValue"));
+
+                datatypeConversionsMap.put(ilDataType, details);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return datatypeConversionsMap;
+    }
+
+    public void printDatatypeConversionsGlobal(Map<String, Map<String, String>> datatypeConversionsGlobal) {
+        for (Map.Entry<String, Map<String, String>> entry : datatypeConversionsGlobal.entrySet()) {
+            System.out.println("Key: " + entry.getKey());
+            for (Map.Entry<String, String> innerEntry : entry.getValue().entrySet()) {
+                System.out.println("  " + innerEntry.getKey() + ": " + innerEntry.getValue());
+            }
+        }
+    }
+
     // ELT_Generate_parent
     public void generateScripts() {
         // The DB scripts generator
-        if (false &&  new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
+        if (new DWDBScriptsGenerator().generateDBScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
 
         // The configs script generator
-        if (new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
+        if (false && new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
 
         // The values script generator
-        if (new DWValueScriptsGenerator().generateValueScript() != Status.SUCCESS) {
+        if (false && new DWValueScriptsGenerator().generateValueScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
@@ -441,6 +493,38 @@ public class DWScriptsGenerator {
         return writeMode;
     }
 
+    
+        /**
+         * Retrieves the Setting_Value for given Settings_Category
+         *
+         * @param Settings_Category  Settings_Category eg Dateformat
+         * @param schemaName   The Schema_Name value.
+         * @return The Setting_Value, or null if not found.
+         */
+        private  String getSettingValue(Connection connection, String connectionId, String schemaName, String settingsCategory) {
+            String settingValue = null;
+        
+            String query = "SELECT `ELT_IL_Settings_Info`.`Setting_Value` " +
+                           "FROM `ELT_IL_Settings_Info` " +
+                           "WHERE Connection_Id = ? AND Schema_Name = ? " +
+                           "AND Settings_Category = ? AND Active_Flag = 1";
+        
+            try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+                pstmt.setString(1, connectionId);
+                pstmt.setString(2, schemaName);
+                pstmt.setString(3, settingsCategory);
+        
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        settingValue = rs.getString("Setting_Value");
+                    }
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        
+            return settingValue;
+        }
     public class DWDBScriptsGenerator {
 
         private static final String CONDITIONAL_DATE = "Conditional_Date";
@@ -460,18 +544,19 @@ public class DWScriptsGenerator {
             // try {
                 Status status = Status.FAILURE;
                 // Select
-                status = generateSelectQuery();
+                // status = generateSelectQuery();
 
                 // Create_Dim
 
-                status = generateDBCreateScriptDimension();
+                // status = generateDBCreateScriptDimension();
 
                 // Create_Trans
 
-                status = generateDBCreateScriptTransaction();
+                // status = generateDBCreateScriptTransaction();
 
                 // stg_keys
 
+                status = getStageKeysUpdate();
 
                 // Alert_Script
 
@@ -2280,7 +2365,7 @@ public class DWScriptsGenerator {
         }
     }
     
-    // Select script delete 
+    // Create script delete 
     public void deleteCreateScripts(Connection connection, String ilTableName, String connectionId, String querySchemaCond) {
         String query = "DELETE FROM ELT_Create_Script WHERE IL_Table_Name = '" + ilTableName + "' "
                         + "AND Connection_Id = '" + connectionId + "' "
@@ -2362,6 +2447,314 @@ public class DWScriptsGenerator {
         }
 
         return resultList;
+    }
+
+    /* Stage Keys Update */
+    public Status getStageKeysUpdate() {
+        try {
+            String dimensionTransaction = "T";
+            Map<String, Map<String, String>> mainData = getStageKeysMainData(conn, connectionId, querySchemaCondition, dimensionTransaction);
+            Map<String, Map<String, String>> lookupData = getStageKeysLookupData(conn, connectionId, querySchemaCondition, dimensionTransaction);
+            Map<String, Map<String, String>> updatedLookupData = updateKeys(lookupData);
+
+            String addedUser = userName;
+            Timestamp addedDate = Timestamp.valueOf(startTime);
+            String updatedUser = userName;
+            Timestamp updatedDate = Timestamp.valueOf(startTime);
+            
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+            for (Map.Entry<String, Map<String, String>> entry : mainData.entrySet()) {
+                String outerKey = entry.getKey();        // Get the key from the outer map
+                Map<String, String> innerMap = entry.getValue();   // Get the inner map
+
+                String connectionIdValue = innerMap.get("Connection_Id");
+                String tableSchemaValue = innerMap.get("Table_Schema");
+                String ilTableNameValue = innerMap.get("IL_Table_Name");
+
+                String ilColumnName = innerMap.get("IL_Column_Name");
+                String ilDataType = innerMap.get("IL_Data_Type");
+                String constraints = innerMap.get("Constraints");
+                String tablename = innerMap.get("IL_Table_Name") + "_Stg";
+
+                String key = connectionIdValue + "-" + tableSchemaValue + "-" + ilTableNameValue;
+                Map<String, String> data = updatedLookupData.getOrDefault(key, new HashMap<>());
+
+                Map<String, Object> resultRow = new HashMap<>();
+                resultRow.put("Connection_Id", connectionIdValue); // Global
+                resultRow.put("TABLE_SCHEMA", tableSchemaValue); // Global
+                resultRow.put("Table_Name", tablename);
+                
+                resultRow.put("PK_Columns", innerMap.get("IL_Column_Name"));
+                resultRow.put("Hash_Columns", data.get("ilColumnName"));
+
+                resultRow.put("Tilt_PK_Columns", innerMap.get("Tilt_IL_Column_Name"));
+                resultRow.put("Tilt_Hash_Columns", data.get("Tilt_IL_Column_Name"));
+
+                resultRow.put("Date_Formats", innerMap.get("DateFormats"));
+                resultRow.put("precisions", innerMap.get("precisions"));            
+                resultRow.put("scales", innerMap.get("scales"));
+                resultRow.put("Datatypes", innerMap.get("Java_Data_Type"));
+
+                resultRow.put("Added_Date", addedDate);
+                resultRow.put("Added_User", addedUser);
+                resultRow.put("Updated_Date", updatedDate);
+                resultRow.put("Updated_User", updatedUser);
+                finalResults.add(resultRow);
+                System.out.println("connectionIdValue:" + connectionIdValue);
+            }
+
+            String tableName = "stg_hashcolumn_pick";
+            if (finalResults != null && !finalResults.isEmpty()) {
+                deleteEntryFromStageHashColumnPick(conn, connectionId, querySchemaCondition);
+                saveDataIntoDB(conn, tableName, finalResults);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return Status.FAILURE;
+        }
+
+        return Status.SUCCESS;
+    }
+            /* Stage Keys Update */
+    public Map<String, Map<String, String>> getStageKeysMainData(Connection conn, String connectionId, String querySchemaCondition, String dimensionTransaction) {
+        String query = "SELECT Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, " +
+                       "Constraints, Incremental_Column, IL_Data_Type, Source_Table_Name, " +
+                       "Source_Data_Type, LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS Data_Type " +
+                       "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                       "WHERE Constraints = 'PK' AND Dimension_Transaction = ? " +
+                       "AND Connection_Id = ? " + querySchemaCondition +
+                       " ORDER BY IL_Table_Name, Constraints DESC";
+        
+        //String dimensionTransaction = "T";
+
+        Map<String, Map<String, String>> lookupMapData = fetchMappingInfo(conn, dimensionTransaction, connectionId, querySchemaCondition);
+        // Map<String, Map<String, String>> dataTypeConversions = getDatatypeConversions(connection);
+        // printDatatypeConversionsGlobal(datatypeConversionsGlobal);
+
+        String dateFormat = getSettingValue(conn, connectionId, schemaName, "Dateformat");
+        if (dateFormat == null) {
+            dateFormat = "yyyy-MM-dd";
+        }
+        Map<String, Map<String, String>> aggregateData = new HashMap<>();
+        try (PreparedStatement preparedStatement = conn.prepareStatement(query)) {
+            preparedStatement.setString(1, dimensionTransaction);
+            preparedStatement.setString(2, connectionId);
+            
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                while (resultSet.next()) {
+                    String dataType = resultSet.getString("Data_Type");
+                    String connectionIdValue = resultSet.getString("Connection_Id");
+                    String tableSchema = resultSet.getString("Table_Schema");
+                    String ilTableNameValue = resultSet.getString("IL_Table_Name"); // Key
+                    String ilColumnName = resultSet.getString("IL_Column_Name");
+                    String ilDataType = resultSet.getString("IL_Data_Type");
+                    String constraints = resultSet.getString("Constraints");
+
+                    String key = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue + "-" + ilColumnName;
+
+                    // Left Outer join
+                    Map<String, String> ValueMap = lookupMapData.getOrDefault(key, new HashMap<>());
+                    String numericPrecisionVal = ValueMap.get("Precision_Val");
+                    String numericScaleVal = ValueMap.get("Scale_Val");
+
+                    // Left Outer join
+                    Map<String, String> conversionDetails = datatypeConversionsGlobal.getOrDefault(dataType, new HashMap<>());
+                    String javaDataType = conversionDetails.get("javaDataType");
+
+                    String dateformat = dateFormat;
+
+                    String ilDataTypeLower = ilDataType.toLowerCase();
+                    boolean isDecimalOrFloatOrDouble = ilDataTypeLower.contains("decimal")
+                            || ilDataTypeLower.contains("float") || ilDataTypeLower.contains("double");
+
+                    String precisions = constraints.equals("PK")
+                            ? (isDecimalOrFloatOrDouble ? numericPrecisionVal : "")
+                            : null;
+
+                    String scales = constraints.equals("PK") ? (isDecimalOrFloatOrDouble ? numericScaleVal : "")
+                            : null;
+
+                    String incrementalColumn = resultSet.getString("Incremental_Column");
+                    String tiltILColumnName = "`" + ilColumnName + "`" ;
+                    String dateformats = ilDataType.equals("datetime") ? dateformat : "";
+
+                    Map<String, String> data = aggregateData.getOrDefault(ilTableNameValue, new HashMap<>());
+                    // Last 
+                    data.put("Connection_Id", connectionId);
+                    data.put("Table_Schema", tableSchema);
+                    data.put("IL_Table_Name", ilTableNameValue);
+                    data.put("Incremental_Column", incrementalColumn);
+                    // List
+                    
+                    if (data.get("IL_Column_Name") != null && !data.get("IL_Column_Name").isEmpty()) {
+                        data.put("IL_Column_Name", data.get("IL_Column_Name") + "," + ilColumnName);
+                    } else {
+                        data.put("IL_Column_Name", ilColumnName);
+                    }
+                    
+                    if (data.get("Tilt_IL_Column_Name") != null && !data.get("Tilt_IL_Column_Name").isEmpty()) {
+                        data.put("Tilt_IL_Column_Name", data.get("Tilt_IL_Column_Name") + "," + tiltILColumnName);
+                    } else {
+                        data.put("Tilt_IL_Column_Name", tiltILColumnName);
+                    }
+                    
+                    if (data.get("Constraints")  != null && !data.get("Constraints").isEmpty()) {
+                        data.put("Constraints", data.get("Constraints") + "," + constraints);
+                    } else {
+                        data.put("Constraints", constraints);
+                    }
+                    
+                    if (data.get("DateFormats")  != null && !data.get("DateFormats").isEmpty()) {
+                        data.put("DateFormats", data.get("DateFormats") + "," + dateformats);
+                    } else {
+                        data.put("DateFormats", dateformats);
+                    }
+                    
+                    if (data.get("precisions")  != null && !data.get("precisions").isEmpty()) {
+                        data.put("precisions", data.get("precisions") + "," + precisions);
+                    } else {
+                        data.put("precisions", precisions);
+                    }
+                    
+                    if (data.get("scales")  != null && !data.get("scales").isEmpty()) {
+                        data.put("scales", data.get("scales") + "," + scales);
+                    } else {
+                        data.put("scales", scales);
+                    }
+                    
+                    if (data.get("Java_Data_Type") != null && !data.get("Java_Data_Type").isEmpty()) {
+                        data.put("Java_Data_Type", data.get("Java_Data_Type") + "," + javaDataType);
+                    } else {
+                        data.put("Java_Data_Type", javaDataType);
+                    }
+                    // Update the map
+                    aggregateData.put(ilTableNameValue, data);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return aggregateData;
+    }
+    
+    public Map<String, Map<String, String>> fetchMappingInfo(Connection connection, String dimensionTransaction, String connectionId, String querySchemaCond) {
+        String query = "SELECT Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, " +
+                       "IL_Data_Type, SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(IL_Data_Type,'(',-1),')',1),',',1) AS Precision_Val, " +
+                       "SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(IL_Data_Type,'(',-1),')',1),',',-1) AS Scale_Val " +
+                       "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                       "WHERE Constraints = 'PK' AND Dimension_Transaction = ? " +
+                       "AND Connection_Id = ? " + querySchemaCond +
+                       " ORDER BY IL_Table_Name, Constraints DESC";
+        
+        Map<String, Map<String, String>> resultData = new HashMap<>();
+        try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+            preparedStatement.setString(1, dimensionTransaction);
+            preparedStatement.setString(2, connectionId);
+            
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                while (resultSet.next()) {
+                    String key = resultSet.getString("Connection_Id") + "-" + resultSet.getString("Table_Schema") + "-" +
+                                 resultSet.getString("IL_Table_Name") + "-" + resultSet.getString("IL_Column_Name");
+                    
+                    Map<String, String> valueMap = new HashMap<>();
+                    valueMap.put("IL_Data_Type", resultSet.getString("IL_Data_Type"));
+                    valueMap.put("Precision_Val", resultSet.getString("Precision_Val"));
+                    valueMap.put("Scale_Val", resultSet.getString("Scale_Val"));
+                    
+                    resultData.put(key, valueMap);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        
+        return resultData;
+    }
+
+    public Map<String, Map<String, String>> getStageKeysLookupData(Connection dbConnection, 
+                                            String connectionId, 
+                                            String querySchemaCondition, 
+                                            String dimensionTransaction) throws SQLException {
+        String sql = "SELECT `Connection_Id`, `Table_Schema`, `IL_Table_Name`, " +
+                     "`IL_Column_Name`, `Constraints`, `Incremental_Column` " +
+                     "FROM `ELT_IL_Source_Mapping_Info_Saved` " +
+                     "WHERE `Incremental_Column` = 'Y' AND `Constraints` NOT IN ('PK', 'SK') " +
+                     "AND `Dimension_Transaction` = ? AND `Connection_Id` = ? " + querySchemaCondition;
+
+        Map<String, Map<String, String>> aggregateData = new HashMap<>();
+        try (PreparedStatement stmt = dbConnection.prepareStatement(sql)) {
+            stmt.setString(1, dimensionTransaction);
+            stmt.setString(2, connectionId);
+            try (ResultSet resultSet = stmt.executeQuery()) {
+                while (resultSet.next()) {
+                    String connectionIdValue = resultSet.getString("Connection_Id");
+                    String tableSchema = resultSet.getString("Table_Schema");
+                    String ilTableNameValue = resultSet.getString("IL_Table_Name"); // Key
+                    String ilColumnName = resultSet.getString("IL_Column_Name");
+                    String constraints = resultSet.getString("Constraints");
+                    String tiltILColumnName = "`" + ilColumnName + "`";
+                    String incrementalColumn = resultSet.getString("Incremental_Column");
+
+                    Map<String, String> data = aggregateData.getOrDefault(ilTableNameValue, new HashMap<>());
+                    // last values
+                    data.put("Connection_Id", connectionIdValue);
+                    data.put("Table_Schema", tableSchema);
+                    data.put("Incremental_Column", incrementalColumn);
+                    // List
+                    if (data.containsKey("ilColumnName") && !data.get("ilColumnName").isEmpty()) {
+                        data.put("ilColumnName", data.get("ilColumnName") + "," + ilColumnName);
+                    } else {
+                        data.put("ilColumnName", ilColumnName);
+                    }
+                    if (data.containsKey("Constraints") && !data.get("Constraints").isEmpty()) {
+                        data.put("Constraints", data.get("Constraints") + "," + constraints);
+                    } else {
+                        data.put("Constraints", constraints);
+                    }
+                    if (data.containsKey("Tilt_IL_Column_Name") && !data.get("Tilt_IL_Column_Name").isEmpty()) {
+                        data.put("Tilt_IL_Column_Name", data.get("Tilt_IL_Column_Name") + "," + tiltILColumnName);
+                    } else {
+                        data.put("Tilt_IL_Column_Name", tiltILColumnName);
+                    }
+                    // Update the map
+                    aggregateData.put(ilTableNameValue, data);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return aggregateData;
+    }
+
+    public Map<String, Map<String, String>> updateKeys(Map<String, Map<String, String>> lookupData) {
+        Map<String, Map<String, String>> updatedData = new HashMap<>();
+
+        for (Map.Entry<String, Map<String, String>> entry : lookupData.entrySet()) {
+            String oldKey = entry.getKey();
+            Map<String, String> innerMap = entry.getValue();
+
+            String connectionIdValue = innerMap.get("Connection_Id");
+            String tableSchema = innerMap.get("Table_Schema");
+            String ilTableNameValue = innerMap.get("IL_Table_Name");
+            // old key is made of only IL_Table_Name
+            String newKey = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue + "-";
+            updatedData.put(newKey, innerMap);
+        }
+        return updatedData;
+    }
+
+    public void deleteEntryFromStageHashColumnPick(Connection connection, String connectionId, String querySchemaCond) throws SQLException {
+        String sql = "DELETE FROM stg_hashcolumn_pick WHERE Connection_Id = ? " + querySchemaCond;
+
+        try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+            preparedStatement.setString(1, connectionId);
+
+            int rowsAffected = preparedStatement.executeUpdate();
+            System.out.println(rowsAffected + " rows deleted from 'stg_hashcolumn_pick'.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            throw new SQLException("Error executing delete operation", e);
+        }
     }
 
     //#####################################################
@@ -5530,40 +5923,6 @@ public class DWScriptsGenerator {
 
             return finalResults;
         }
-
-        // row7, datatype_conversion
-        private Map<String, Map<String, String>> getDatatypeConversions(Connection connection) {
-            String query = "SELECT " +
-                           "  Id, " +
-                           "  LOWER(Source_Data_Type) AS sourceDataType, " +
-                           "  LOWER(SUBSTRING_INDEX(IL_Data_Type, '(', 1)) AS ilDataType, " +
-                           "  Java_Data_Type AS javaDataType, " +
-                           "  Cleansing_Value AS cleansingValue, " +
-                           "  PK_Cleansing_Value AS pkCleansingValue " +
-                           "FROM ELT_Datatype_Conversions";
-        
-            Map<String, Map<String, String>> datatypeConversionsMap = new HashMap<>();
-        
-            try (PreparedStatement preparedStatement = connection.prepareStatement(query);
-                    ResultSet resultSet = preparedStatement.executeQuery()) {
-
-                while (resultSet.next()) {
-                    String ilDataType = resultSet.getString("ilDataType");
-
-                    Map<String, String> details = new HashMap<>();
-                    details.put("id", String.valueOf(resultSet.getInt("Id")));
-                    details.put("sourceDataType", resultSet.getString("sourceDataType"));
-                    details.put("javaDataType", resultSet.getString("javaDataType"));
-                    details.put("cleansingValue", resultSet.getString("cleansingValue"));
-                    details.put("pkCleansingValue", resultSet.getString("pkCleansingValue"));
-
-                    datatypeConversionsMap.put(ilDataType, details);
-                }
-            } catch (SQLException e) {
-                e.printStackTrace();
-            }
-            return datatypeConversionsMap;
-        }
         
         // constantfields lookup
         private Map<String, ConstantField> getConstantFieldsMappingInfo(Connection connection, String ilTableName,
@@ -6765,38 +7124,6 @@ public class DWScriptsGenerator {
             String suffix = getTimeStamp();
             String valueFileName = filePath + ilTableName + valueFileString + clientId + suffix + ".values.properties";
             return valueFileName;
-        }
-
-        /**
-         * Retrieves the Setting_Value for given Settings_Category
-         *
-         * @param Settings_Category  Settings_Category eg Dateformat
-         * @param schemaName   The Schema_Name value.
-         * @return The Setting_Value, or null if not found.
-         */
-        private  String getSettingValue(Connection connection, String connectionId, String schemaName, String settingsCategory) {
-            String settingValue = null;
-        
-            String query = "SELECT `ELT_IL_Settings_Info`.`Setting_Value` " +
-                           "FROM `ELT_IL_Settings_Info` " +
-                           "WHERE Connection_Id = ? AND Schema_Name = ? " +
-                           "AND Settings_Category = ? AND Active_Flag = 1";
-        
-            try (PreparedStatement pstmt = connection.prepareStatement(query)) {
-                pstmt.setString(1, connectionId);
-                pstmt.setString(2, schemaName);
-                pstmt.setString(3, settingsCategory);
-        
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        settingValue = rs.getString("Setting_Value");
-                    }
-                }
-            } catch (SQLException e) {
-                e.printStackTrace();
-            }
-        
-            return settingValue;
         }
 
         /**
