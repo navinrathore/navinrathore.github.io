@@ -213,25 +213,25 @@ public class DWScriptsGenerator {
         }
 
         // The configs script generator
-        if (false && new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
+        if (new DWConfigScriptsGenerator().generateConfigScript() != Status.SUCCESS) {
             System.out.println("Create script generation failed. Stopping process.");
             return;
         }
 
         // The values script generator
-        if (false && new DWValueScriptsGenerator().generateValueScript() != Status.SUCCESS) {
+        if (new DWValueScriptsGenerator().generateValueScript() != Status.SUCCESS) {
             System.out.println("Value script generation failed. Stopping process.");
             return;
         }
 
         // The Source Info script generator
-        if (false && new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
+        if (new DWSourceInfoScriptsGenerator().generateSourceInfoScript() != Status.SUCCESS) {
             System.out.println("Source Info script generation failed. Stopping process.");
             return;
         }
 
         // The Table Info script generator
-        if (false && new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
+        if (new DWTableInfoScriptsGenerator().generateTableInfoScript() != Status.SUCCESS) {
             System.out.println("Table Info script generation failed. Stopping process.");
             return;
         }
@@ -535,24 +535,30 @@ public class DWScriptsGenerator {
         private static final String INCREMENTAL_ID = "Incremental_Id";
         private static final String CONDITIONAL_FILTER = "Conditional_Filter";
 
+        String tgtDbName;
         // Constructor
         public DWDBScriptsGenerator() {
+            init();
         }
     
+        private void init() {
+            JSONObject jsonDbDetails = new JSONObject(dbDetails);
+            tgtDbName = jsonDbDetails.getString("datadb_schema");
+        }
         // Method to generate the DB script
         public Status generateDBScript() {
-            // try {
-                Status status = Status.FAILURE;
+            Status status = Status.FAILURE;
+            try {
                 // Select
-                // status = generateSelectQuery();
+                status = generateSelectQuery();
 
                 // Create_Dim
 
-                // status = generateDBCreateScriptDimension();
+                status = generateDBCreateScriptDimension();
 
                 // Create_Trans
 
-                // status = generateDBCreateScriptTransaction();
+                status = generateDBCreateScriptTransaction();
 
                 // stg_keys
 
@@ -560,11 +566,12 @@ public class DWScriptsGenerator {
 
                 // Alert_Script
 
+                status = generateDBAlterScript();
 
                 // Ends Here
-            // } catch (SQLException e) {
-            //     e.printStackTrace();
-            // }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
 
             return status;
         }
@@ -2737,7 +2744,7 @@ public class DWScriptsGenerator {
             String tableSchema = innerMap.get("Table_Schema");
             String ilTableNameValue = innerMap.get("IL_Table_Name");
             // old key is made of only IL_Table_Name
-            String newKey = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue + "-";
+            String newKey = connectionIdValue + "-" + tableSchema + "-" + ilTableNameValue;
             updatedData.put(newKey, innerMap);
         }
         return updatedData;
@@ -2758,11 +2765,63 @@ public class DWScriptsGenerator {
     }
 
     //#####################################################
+
+    private Status generateDBAlterScript() throws SQLException  {
+
+        updateActiveFlagInAlterScriptInfo(conn, selectTables, connectionId, querySchemaCondition);
+        Timestamp maxUpdatedDate =  getMaxUpdatedDate(conn, selectTables, connectionId, querySchemaCondition) ;
+        System.out.println("maxUpdatedDate: " + maxUpdatedDate);
+
+        // Flow 1
+        List<Map<String, String>> mapInfo = processAlterDelete(conn, selectTables, connectionId, querySchemaCondition);
+
+        // Flow 2
+        processAlterTable(conn, selectTables, connectionId, querySchemaCondition, maxUpdatedDate.toString());
+
+
+        return Status.SUCCESS;
+    }
         // Alter JOb
+
+        /**
+         * Updates the Active_flag to 0 for specific IL_Table_Names and Connection_Id.
+         *
+         * @param connection     The active database connection.
+         * @param selectiveTables Comma-separated IL_Table_Names for the WHERE clause.
+         * @param connectionId   The connection ID to filter the records.
+         * @param querySchemaCond Additional schema condition (e.g., AND conditions).
+         * @throws SQLException If an SQL error occurs during execution.
+         */
+        private void updateActiveFlagInAlterScriptInfo(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws SQLException {
+            String sql = "UPDATE ELT_Alter_Script_Info SET Active_flag = 0 " +
+                        "WHERE IL_Table_Name IN (" + selectiveTables + ") " +
+                        "AND Connection_Id = ? " + querySchemaCond;
+
+            try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+                preparedStatement.setString(1, connectionId);
+                int rowsAffected = preparedStatement.executeUpdate();
+                System.out.println(rowsAffected + " rows updated.");
+            } catch (SQLException e) {
+                System.err.println("Error executing UPDATE query: " + e.getMessage());
+                throw e;
+            }
+        }
+        
+
+        private void deactivateAlterScriptInfo(Connection conn, String tableName) throws SQLException {
+            String query = "UPDATE ELT_Alter_Script_Info SET Active_flag = 0 WHERE IL_Table_Name = ?";
+    
+            try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                stmt.setString(1, tableName);
+                int rowsAffected = stmt.executeUpdate();
+                System.out.println(rowsAffected + " rows updated for Active_flag = 0.");
+            }
+        }
+
         // Note String return type
         // Simple timestamp may also work
         // global variable set as "max_updated_date"
-        private String getMaxUpdatedDate(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws Exception {
+        private Timestamp getMaxUpdatedDate(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws SQLException {
             String query = "SELECT MAX(Updated_Date) FROM ELT_IL_Source_Mapping_Info WHERE IL_Table_Name IN (" + selectiveTables + ") AND Connection_Id = ? " + querySchemaCond;
             try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
                 preparedStatement.setString(1, connectionId);
@@ -2772,43 +2831,348 @@ public class DWScriptsGenerator {
                         if (maxUpdatedDate == null) {
                             return null;
                         } else {
-                            return "'" + maxUpdatedDate + "'"; // Transformation: Format as a string with single quotes
+                            // return "'" + maxUpdatedDate + "'"; // Transformation: Format as a string with single quotes
+                            return maxUpdatedDate; // Transformation: Format as a string with single quotes
                         }
                     }
                 }
-            } catch (Exception e) {
-                throw new Exception("Error while executing getMaxUpdatedDate query.", e);
+            } catch (SQLException e) {
+                throw new SQLException("Error while executing getMaxUpdatedDate query.", e);
             }
             // Returning null if no row is found
             return null;
         }
         /* row1 - to call alter_delete iterative job*/
-        private List<Map<String, String>> getDistinctMappingInfo(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws Exception {
+        private List<Map<String, String>> processAlterDelete(Connection connection, String selectiveTables, String connectionId, String querySchemaCond) throws SQLException {
+            String createTable = "NO"; // default Value
+            // Connection for this function only
+            Connection targetDBConnection = DBHelper.getTargetDBConnection(DataSourceType.MYSQL, dbDetails);
+            String databaseName = tgtDbName;
             String query = "SELECT DISTINCT `ELT_IL_Source_Mapping_Info_Saved`.`Connection_Id`, `ELT_IL_Source_Mapping_Info_Saved`.`Table_Schema`, `ELT_IL_Source_Mapping_Info_Saved`.`IL_Table_Name` " +
                            "FROM `ELT_IL_Source_Mapping_Info_Saved` WHERE IL_Table_Name IN (" + selectiveTables + ") AND Connection_Id = ? " + querySchemaCond;
     
             List<Map<String, String>> result = new ArrayList<>();
+            List<Map<String, Object>> finalResults = new ArrayList<>(); // Return object 
             try (PreparedStatement preparedStatement = connection.prepareStatement(query)) {
                 preparedStatement.setString(1, connectionId);
                 try (ResultSet resultSet = preparedStatement.executeQuery()) {
                     while (resultSet.next()) {
-                        Map<String, String> row = new HashMap<>();
-                        row.put("Connection_Id", resultSet.getString("Connection_Id"));
-                        row.put("Table_Schema", resultSet.getString("Table_Schema"));
-                        row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
-                        result.add(row);
+                        // Map<String, String> row = new HashMap<>();
+                        // row.put("Connection_Id", resultSet.getString("Connection_Id"));
+                        // row.put("Table_Schema", resultSet.getString("Table_Schema"));
+                        // row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
+                        String connectionIdvalue = resultSet.getString("Connection_Id");
+                        String tableSchema = resultSet.getString("Table_Schema");
+                        String ilTableName = resultSet.getString("IL_Table_Name");
+
+                        boolean exists = doesTableExistInTargetDB(targetDBConnection, ilTableName, databaseName);
+                        System.out.println("Does table exist: " + ilTableName + " - " + exists);
+                        if (exists) {
+                            createTable = "N";
+                        }
+                        if (createTable.equals("N")) {
+                            System.out.println("Table Exists. Executing Alter Statement");
+                            Map<String, Map<String, Object>> data = alterDeleteScriptComplete(ilTableName);
+                            prepareAlterDeleteScriptData(data, tableSchema, ilTableName, connectionIdvalue);
+                        } else {
+                            System.out.println("Table Doesn't Exists. Proceeding with Create Statement");
+                            continue;
+                        }
                     }
                 }
-            } catch (Exception e) {
-                throw new Exception("Error while executing getDistinctMappingInfo query.", e);
+            } catch (SQLException e) {
+                throw new SQLException("Error while executing getDistinctMappingInfo query.", e);
             }
-    
+            // Close the connection
+            DBHelper.closeDBConnection(targetDBConnection);
             return result;
         }
+
+        private void processAlterTable(Connection connection, String selectiveTables, String connectionId, String querySchemaCond, String maxUpdatedDate) throws SQLException {
+            String sql = "SELECT DISTINCT Connection_Id, Table_Schema, IL_Table_Name " +
+                         "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                         "WHERE IL_Table_Name IN (" + selectiveTables + ") AND Connection_Id = ? " +
+                         querySchemaCond + " AND Updated_Date > ?";
+            
+            String createTable = "NO"; // default Value
+            Connection targetDBConnection = DBHelper.getTargetDBConnection(DataSourceType.MYSQL, dbDetails);
+            String databaseName = tgtDbName;
+            try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+                stmt.setString(1, connectionId);
+                stmt.setString(2, maxUpdatedDate);
+        
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        String connectionIdValue = rs.getString("Connection_Id");
+                        String tableSchema = rs.getString("Table_Schema");
+                        String ilTableName = rs.getString("IL_Table_Name");
+
+                        Map<String, String> out = getChangeFlagAndPKColumns(conn, ilTableName);
+                        String pkColumns = out.get("PKColumns");
+                        String changeFlag = out.get("Change_Flag");
+                        String finalStatement = getFinalStatement(conn, ilTableName);
+                        String nonNullFinalStatement = getNonNullFinalStatement(conn, ilTableName);
+
+                        boolean exists = doesTableExistInTargetDB(targetDBConnection, ilTableName, databaseName);
+                        System.out.println("Does table exist: " + ilTableName + " - " + exists);
+                        if (exists) {
+                            createTable = "N";
+                            deactivateAlterScriptInfo(conn, ilTableName);
+                        }
+                        if (createTable.equals("N")) {
+                            System.out.println("Table Exists. Executing Alter Statement");
+                            String deleteAlterScript = getFinalDropColumn(conn, ilTableName,connectionId, querySchemaCondition);
+                            // maxUpdatedDate globally
+                            Map<String, Map<String, Object>> data = alterScriptComplete(conn, ilTableName, maxUpdatedDate, nonNullFinalStatement, finalStatement, deleteAlterScript, changeFlag, pkColumns);
+                            prepareAlterScriptData(data, tableSchema, ilTableName, connectionIdValue);
+                        } else {
+                            System.out.println("Table Doesn't Exists. Proceeding with Create Statement");
+                            continue;
+                        }
+
+                        System.out.println("pkColumns: " + pkColumns);
+                        System.out.println("changeFlag: " + changeFlag);
+                        System.out.println("finalStatement: " + finalStatement);
+                        System.out.println("nonNullFinalStatement: " + nonNullFinalStatement);
+                        System.out.println(rs.getString("Connection_Id") + ", " +
+                                           rs.getString("Table_Schema") + ", " +
+                                           rs.getString("IL_Table_Name"));
+                    }
+                }
+            }
+        }
+
+        private String getFinalDropColumn(Connection conn, String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
+            String query = "SELECT Connection_Id, Table_Schema, IL_Table_Name, IL_Column_Name, IL_Data_Type, " +
+                           "Source_Table_Name, Source_Column_Name, Source_Data_Type " +
+                           "FROM ELT_IL_Source_Mapping_Info " +
+                           "WHERE IL_Table_Name = ? AND Column_Type <> 'Anvizent' AND Connection_Id = ? " + querySchemaCond;
+            Map<String, Map<String, Object>> lookupData = getSourceMappingInfo(ilTableName, connectionId, querySchemaCond);
+            Map<String, Map<String, String>> aggregateData = new HashMap<>();
+            try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                stmt.setString(1, ilTableName);
+                stmt.setString(2, connectionId);
+    
+                ResultSet rs = stmt.executeQuery();
+                String finalDropColumn = null;
+
+                while (rs.next()) {
+                    String key = rs.getString("Connection_Id") + "-" + rs.getString("Table_Schema") + "-" +
+                                 rs.getString("Source_Table_Name") + "-" + rs.getString("Source_Column_Name");
+                    String connectionIdValue = rs.getString("Connection_Id");
+                    String tableSchemaValue = rs.getString("Table_Schema");
+                    String ilColumnNameValue = rs.getString("Source_Table_Name");
+                    String ilTableNameValue = rs.getString("IL_Table_Name");
+
+                    // Anti Join
+                    String ilColumnName = "";
+                    if (!lookupData.containsKey(key)) {
+                        ilColumnName = "Drop Column `" + ilColumnNameValue + "`";
+                    }
+                    System.out.println("Processing key: " + key);
+
+                    String dropColumn = ilColumnName;
+                    finalDropColumn = (finalDropColumn == null) ? dropColumn : finalDropColumn + "," + dropColumn;
+                    String script = "ALTER TABLE `" + ilTableNameValue + "` DROP COLUMN " + finalDropColumn;
+                    String ilAlterScript = script.substring(0, script.length() - 1) + ";"; // out
+                    String stgScript = "ALTER TABLE `" + ilTableNameValue + "_Stg` DROP COLUMN " + finalDropColumn;
+                    String stgAlterScript = stgScript.substring(0, stgScript.length() - 1) + ";"; // out
+
+                    String aggregationKey = connectionIdValue + tableSchemaValue + ilTableNameValue;
+                    Map<String, String> data = aggregateData.getOrDefault(aggregationKey, new HashMap<>());
+                    data.put("IL_Alter_Script", ilAlterScript);
+                    data.put("Stg_Alter_Script", stgAlterScript);
+                    data.put("Final_Drop_Column", finalDropColumn);
+                    
+                    aggregateData.put(aggregationKey, data);
+                }
+            }
+            // only one key value pair likely
+            System.out.println("aggregateData size:  " + aggregateData.size());
+            String finalDropColumnOut = "";
+            for (Map<String, String> innerMap : aggregateData.values()) {
+                if (innerMap.containsKey("Final_Drop_Column")) {
+                    finalDropColumnOut = innerMap.get("Final_Drop_Column");
+                    break; // Exit the loop once the value is found
+                }
+            }
+            return finalDropColumnOut;
+        }
+
+        public Map<String, Map<String, Object>> getSourceMappingInfo(String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
+            String query = "SELECT `Connection_Id`, `Table_Schema`, `IL_Table_Name`, `IL_Column_Name`, `IL_Data_Type`, "
+                         + "`Source_Table_Name`, `Source_Column_Name`, `Source_Data_Type` "
+                         + "FROM `ELT_IL_Source_Mapping_Info_Saved` WHERE IL_Table_Name = ? AND Connection_Id = ? "
+                         + querySchemaCond;
+        
+            Map<String, Map<String, Object>> result = new HashMap<>();
+            try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                stmt.setString(1, ilTableName);
+                stmt.setString(2, connectionId);
+    
+                ResultSet rs = stmt.executeQuery();
+                while (rs.next()) {
+                    String key = rs.getString("Connection_Id") + "-" + rs.getString("Table_Schema") + "-"
+                            + rs.getString("Source_Table_Name") + "-" + rs.getString("Source_Column_Name");
+
+                    Map<String, Object> value = new HashMap<>();
+                    value.put("IL_Table_Name", rs.getString("IL_Table_Name"));
+                    value.put("IL_Column_Name", rs.getString("IL_Column_Name"));
+                    value.put("IL_Data_Type", rs.getString("IL_Data_Type"));
+                    value.put("Source_Data_Type", rs.getString("Source_Data_Type"));
+                    result.put(key, value);
+                }
+            }
+            return result;
+        }
+        // Alter script main component
+        public Map<String, Map<String, Object>> alterScriptComplete(Connection conn, String ilTableName, String maxUpdatedDate,
+                                String notNullFinalStatement, String finalStatement, String deleteAlterScriptIn, String changeFlag, String pkColumns ) {
+            String query = "SELECT "
+                         + "esms.`IL_Table_Name`, "
+                         + "esms.`IL_Column_Name`, "
+                         + "esms.`Constraints`, "
+                         + "esms.`IL_Data_Type`, "
+                         + "esms.`Dimension_Transaction`, "
+                         + "esmi.IL_Column_Name AS IL_Column_Name_Lookup, "
+                         + "esmi.IL_Data_Type AS IL_Data_Type_Lookup "
+                         + "FROM `ELT_IL_Source_Mapping_Info_Saved` AS esms "
+                         + "LEFT OUTER JOIN `ELT_IL_Source_Mapping_Info` AS esmi "
+                         + "ON esms.IL_Table_Name = esmi.IL_Table_Name "
+                         + "AND esms.IL_Column_Name = esmi.IL_Column_Name "
+                         + "WHERE esms.IL_Table_Name = ? "
+                         + "AND esms.Updated_Date > ?";
+        
+            Map<String, Map<String, Object>> result = new HashMap<>();
+            
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, ilTableName);
+                ps.setString(2, maxUpdatedDate);
+                ResultSet rs = ps.executeQuery();
+        
+                String finalAddingColumn = null;
+                while (rs.next()) {
+                    // String key = rs.getString("IL_Table_Name") + "-" + rs.getString("IL_Column_Name");
+                    Map<String, Object> value = new HashMap<>();
+                    String ilTableNameValue = rs.getString("IL_Table_Name");
+                    String ilColumnNameValue = rs.getString("IL_Column_Name");
+                    String ConstraintsValue = rs.getString("Constraints");
+                    String ilDataTypeValue = rs.getString("IL_Data_Type");
+                    String dimensionTransactionValue = rs.getString("Dimension_Transaction");
+
+                    String ilColumnNameLookup = rs.getString("IL_Column_Name_Lookup");
+                    String ilDataTypeLookup = rs.getString("IL_Data_Type_Lookup");;
+
+                    String notnullQuery = notNullFinalStatement;
+                    String notnullCheck = (notnullQuery == null || notnullQuery.isEmpty() || "NULL".equals(notnullQuery)) ? "" : notnullQuery + ",";
+                    String nullQuery = finalStatement;
+                    String notnullFlag = (nullQuery == null || nullQuery.isEmpty() || "NULL".equals(nullQuery)) ? notnullCheck : notnullCheck + nullQuery + ",";
+
+                    String DLDataTypes = ilDataTypeValue.toLowerCase().contains("bit") ? "tinyint(1)" : ilDataTypeValue;
+
+                    String addingColumn = (ilColumnNameLookup == null) ?
+                            "ADD COLUMN `" + ilColumnNameValue + "` " + DLDataTypes :
+                            (ilColumnNameLookup == null ? "" :
+                                    ((!ilColumnNameValue.equals(ilColumnNameLookup) || !ilDataTypeValue.equals(ilDataTypeLookup)) && "PK".equals(ConstraintsValue)) ?
+                                            "CHANGE `" + ilColumnNameLookup + "` `" + ilColumnNameValue + "` " + DLDataTypes + " NOT NULL " :
+                                            (!ilColumnNameValue.equals(ilColumnNameLookup) || !ilDataTypeValue.equals(ilDataTypeLookup)) ?
+                                                    "CHANGE `" + ilColumnNameLookup + "` `" + ilColumnNameValue + "` " + DLDataTypes : ""
+                            );
+
+                    finalAddingColumn = (addingColumn == null || addingColumn.isEmpty()) ? finalAddingColumn :
+                            (finalAddingColumn == null ? addingColumn : finalAddingColumn + "," + addingColumn);
+
+                    String dropColumns = (deleteAlterScriptIn == null || deleteAlterScriptIn.isEmpty()) ? "" : deleteAlterScriptIn;
+
+                    String dropFlag = (dropColumns == null || dropColumns.isEmpty()) ? "N" : "Y";
+
+                    String scripts = ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("N")) ? "" :
+                            ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("Y")) ?
+                                    "ALTER TABLE `" + ilTableNameValue + "` " + dropColumns :
+                                    (dropFlag.equals("N")) ?
+                                            "ALTER TABLE `" + ilTableNameValue + "` " + "\n " + notnullFlag + " " + finalAddingColumn :
+                                            "ALTER TABLE `" + ilTableNameValue + "` " + "\n " + notnullFlag + " " + dropColumns + ", " + finalAddingColumn;
+
+                    String ilScript = (scripts == null || scripts.isEmpty()) && "N".equals(changeFlag) ? "" :
+                            (scripts == null || scripts.isEmpty()) && "Y".equals(changeFlag) ?
+                                    "Alter table `" + ilTableNameValue + "`\n " + notnullFlag + "\n DROP PRIMARY KEY, \n ADD PRIMARY KEY ( " + pkColumns + ");" :
+                                    (scripts != null && !scripts.isEmpty() && "Y".equals(changeFlag)) ?
+                                            scripts.substring(0, scripts.length()) + ",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY ( " +
+                                                    pkColumns + ");" :
+                                            scripts.substring(0, scripts.length()) + ";";
+
+                    String dScripts = ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("N")) ? "" :
+                            ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("Y")) ?
+                                    "ALTER TABLE `" + ilTableNameValue + "_Stg` " + dropColumns :
+                                    (dropFlag.equals("N")) ?
+                                            "ALTER TABLE `" + ilTableNameValue + "_Stg` " + "\n " + notnullFlag + " " + finalAddingColumn :
+                                            "ALTER TABLE `" + ilTableNameValue + "_Stg` " + "\n " + notnullFlag + " " + dropColumns + ", " + finalAddingColumn;
+
+                    String dimStgScript = (dScripts == null || dScripts.isEmpty()) && "N".equals(changeFlag) ? "" :
+                            (dScripts == null || dScripts.isEmpty()) && "Y".equals(changeFlag) ?
+                                    "Alter table `" + ilTableNameValue + "_Stg`\n " + notnullFlag + "\n DROP PRIMARY KEY, \n ADD PRIMARY KEY ( " + pkColumns + ");" :
+                                    (dScripts != null && !dScripts.isEmpty() && "Y".equals(changeFlag)) ?
+                                            dScripts.substring(0, dScripts.length()) + ",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY ( " +
+                                                    pkColumns + ");" :
+                                            dScripts.substring(0, dScripts.length()) + ";";
+
+                    String tranStgScript = ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("N")) ? "" :
+                            ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("Y")) ?
+                                    "ALTER TABLE `" + ilTableNameValue + "_Stg` " + dropColumns :
+                                    (dropFlag.equals("N")) ?
+                                            "ALTER TABLE `" + ilTableNameValue + "_Stg` " + finalAddingColumn :
+                                            "ALTER TABLE `" + ilTableNameValue + "_Stg` " + dropColumns + ", " + finalAddingColumn;
+
+                    String tranStgAlterScript = (tranStgScript == null || tranStgScript.isEmpty()) ? "" : tranStgScript.substring(0, tranStgScript.length()) + ";";
+
+                    String deleteScript = ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("N")) ? "" :
+                            ((finalAddingColumn == null || finalAddingColumn.isEmpty()) && dropFlag.equals("Y")) ?
+                                    "ALTER TABLE `" + ilTableNameValue + "_Deletes` " + dropColumns :
+                                    (dropFlag.equals("N")) ?
+                                            "ALTER TABLE `" + ilTableNameValue + "_Deletes` " + "\n " + notnullFlag + " " + finalAddingColumn :
+                                            "ALTER TABLE `" + ilTableNameValue + "_Deletes` " + "\n " + notnullFlag + " " + dropColumns + ", " + finalAddingColumn;
+
+                    String deleteAlterScript = (deleteScript == null || deleteScript.isEmpty()) && "N".equals(changeFlag) ? "" :
+                            (deleteScript == null || deleteScript.isEmpty()) && "Y".equals(changeFlag) ?
+                                    "Alter table `" + ilTableNameValue + "_Deletes`\n " + notnullFlag + "\n DROP PRIMARY KEY, \n ADD PRIMARY KEY ( " + pkColumns + ");" :
+                                    (deleteScript != null && !deleteScript.isEmpty() && "Y".equals(changeFlag)) ?
+                                            deleteScript.substring(0, deleteScript.length()) + ",\n DROP PRIMARY KEY, \n ADD PRIMARY KEY ( " +
+                                                    pkColumns + ");" :
+                                            deleteScript.substring(0, deleteScript.length()) + ";";
+
+                    String ilChecking = (ilScript == null || "NULL".equals(ilScript) || ilScript.isEmpty()) ? "N" : ilScript;
+                    String deletesChecking = (deleteAlterScript == null || "NULL".equals(deleteAlterScript) || deleteAlterScript.isEmpty()) ? "N" : deleteAlterScript;
+                    String tranChecking = (tranStgAlterScript == null || "NULL".equals(tranStgAlterScript) || tranStgAlterScript.isEmpty()) ? "" : tranStgAlterScript;
+                    String dimChecking = (dimStgScript == null || "NULL".equals(dimStgScript) || dimStgScript.isEmpty()) ? "N" : dimStgScript;
+
+                    // conditional
+                    String key =  connectionId + "-" + schemaName + "-" + ilTableNameValue;
+                    if (!ilChecking.equals("N")) {
+                        Map<String, Object> data = result.getOrDefault(key, new HashMap<>());
+                        data.put("Connection_Id", connectionId);
+                        data.put("Table_Schema", schemaName);
+                        data.put("IL_Table_Name", ilTableNameValue);
+                        data.put("Dimension_Transaction", dimensionTransactionValue);
+                        data.put("IL_Alter_Script", ilChecking);
+                        data.put("Dim_Stg_Script", dimChecking);
+                        data.put("Tran_Stg_Alter_Script", tranChecking);
+                        data.put("Delete_Alter_Script", deletesChecking);
+
+                        result.put(key, data);
+                    }
+
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        
+            return result;
+        }
+        
         /* to check if table exists but check it in target DB */
         // Do we need dtabase name here 
         // Function to check if a table exists in the target database, excluding views
-        public boolean doesTableExist(Connection targetConnection, String tableName, String databaseName) {
+        public boolean doesTableExistInTargetDB(Connection targetConnection, String tableName, String databaseName) throws SQLException  {
             String checkQuery = "SELECT COUNT(*) FROM information_schema.tables " +
                                 "WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'";
             try (PreparedStatement stmt = targetConnection.prepareStatement(checkQuery)) {
@@ -2827,7 +3191,7 @@ public class DWScriptsGenerator {
         }
         /* Alter delete job main 2 queries */
         // Check if throw exception can be changed to SQL Exception
-        private List<Map<String, String>> executeAntiJoinQuery(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws Exception {
+        private List<Map<String, String>> executeAntiJoinQuery(Connection connection, String ilTableName, String connectionId, String querySchemaCond) throws SQLException {
             // anti join
             String query = "SELECT A.Connection_Id, A.Table_Schema, A.IL_Table_Name, A.IL_Column_Name " +
                            "FROM (" +
@@ -2859,12 +3223,12 @@ public class DWScriptsGenerator {
                         row.put("Connection_Id", resultSet.getString("Connection_Id"));
                         row.put("Table_Schema", resultSet.getString("Table_Schema"));
                         row.put("IL_Table_Name", resultSet.getString("IL_Table_Name"));
-                        row.put("IL_Column_Name", "Drop Column `" + resultSet.getString("IL_Column_Name") + "`"); // Transformation
+                        row.put("IL_Column_Name", " Drop Column `" + resultSet.getString("IL_Column_Name") + "`"); // Transformation
                         result.add(row);
                     }
                 }
-            } catch (Exception e) {
-                throw new Exception("Error while executing anti-join query.", e);
+            } catch (SQLException e) {
+                throw new SQLException("Error while executing anti-join query.", e);
             }
         
             return result;
@@ -2881,18 +3245,16 @@ public class DWScriptsGenerator {
                     
                     System.out.println("IL_Column_Name: " + ilColumnName);
 
-                    // Initialize variables
-                    String dropColumn = ilColumnName; // Corresponds to copyOfResult.IL_Column_Name
+                    String dropColumn = ilColumnName;
                     // TODO check below original conversion is valid? As we are doing aggregation later. It is same effect.
                     // String finalDropColumn = (finalDropColumn == null) ? dropColumn + "," : finalDropColumn + dropColumn + ",";
                     finalDropColumn = (finalDropColumn == null) ? dropColumn + "," : finalDropColumn + dropColumn + ",";
 
+                    // the main Alter table script
+                    String script = "ALTER TABLE `" + ilTableName + "` " + finalDropColumn;
+                    String ilAlterScript = script.substring(0, script.length() - 1) + ";";
 
-                    // Construct the main script
-                    String script = "ALTER TABLE `" + ilTableName + "` " + finalDropColumn; // Corresponds to copyOfResult.IL_Table_Name
-                    String ilAlterScript = script.substring(0, script.length() - 1) + ";"; // Remove the last comma and append a semicolon
-
-                    // Construct the staging script
+                    // the staging script
                     String stgScript = "ALTER TABLE `" + ilTableName + "_Stg` " + finalDropColumn;
                     String stgAlterScript = stgScript.substring(0, stgScript.length() - 1) + ";"; // Remove the last comma and append a semicolon
 
@@ -2903,10 +3265,10 @@ public class DWScriptsGenerator {
             
         }
         // With all the aggregation
-        void alterDeleteScriptComplete(String ilTableName) throws Exception {
+        Map<String, Map<String, Object>> alterDeleteScriptComplete(String ilTableName) throws SQLException {
 
             List<Map<String, String>> data = executeAntiJoinQuery(conn, ilTableName, connectionId, querySchemaCondition);
-            Map<String, Map<String, String>> groupedScripts = new HashMap<>();
+            Map<String, Map<String, Object>> groupedScripts = new HashMap<>();
         
             for (Map<String, String> map : data) {
                 String connectionId = map.get("Connection_Id");
@@ -2916,43 +3278,359 @@ public class DWScriptsGenerator {
         
                 System.out.println("IL_Column_Name: " + ilColumnName);
         
-                // Construct group key
+                // group key
                 String groupKey = connectionId + "-" + tableSchema + "-" + tableName;
         
                 // Retrieve or initialize the group entry
-                Map<String, String> group = groupedScripts.getOrDefault(groupKey, new HashMap<>());
+                Map<String, Object> group = groupedScripts.getOrDefault(groupKey, new HashMap<>());
         
                 // Initialize or append drop columns
                 String finalDropColumn = group.getOrDefault("Final_Drop_Column", "") + ilColumnName + ",";
         
-                // Construct the main and staging scripts
-                String ilAlterScript = "ALTER TABLE `" + tableName + "` " + finalDropColumn;
+                // the main and staging scripts
+                String ilAlterScript = "ALTER TABLE `" + tableName + "`" + finalDropColumn;
                 ilAlterScript = ilAlterScript.substring(0, ilAlterScript.length() - 1) + ";"; // Remove the last comma and append a semicolon
         
-                String stgAlterScript = "ALTER TABLE `" + tableName + "_Stg` " + finalDropColumn;
+                String stgAlterScript = "ALTER TABLE `" + tableName + "_Stg`" + finalDropColumn;
                 stgAlterScript = stgAlterScript.substring(0, stgAlterScript.length() - 1) + ";"; // Remove the last comma and append a semicolon
         
                 // Update the group entry
                 group.put("Final_Drop_Column", finalDropColumn);
-                group.put("IL_Alter_Script", group.getOrDefault("IL_Alter_Script", "") + ilAlterScript + "\n");
-                group.put("Stg_Alter_Script", group.getOrDefault("Stg_Alter_Script", "") + stgAlterScript + "\n");
-        
+                // group.put("IL_Alter_Script", group.getOrDefault("IL_Alter_Script", "") + ilAlterScript + "\n");  // TODO just assignmentis sufficient
+                // group.put("Stg_Alter_Script", group.getOrDefault("Stg_Alter_Script", "") + stgAlterScript + "\n"); // TODO
+                group.put("IL_Alter_Script", ilAlterScript );  // TODO just assignmentis sufficient
+                group.put("Stg_Alter_Script", stgAlterScript); // TODO
+
                 // Store back the group entry
                 groupedScripts.put(groupKey, group);
             }
-        
+
             // Print aggregated results
-            for (Map.Entry<String, Map<String, String>> entry : groupedScripts.entrySet()) {
+            for (Map.Entry<String, Map<String, Object>> entry : groupedScripts.entrySet()) {
                 String groupKey = entry.getKey();
-                Map<String, String> group = entry.getValue();
+                Map<String, Object> group = entry.getValue();
         
                 System.out.println("Group: " + groupKey);
                 System.out.println("IL_Alter_Script:\n" + group.get("IL_Alter_Script"));
                 System.out.println("Stg_Alter_Script:\n" + group.get("Stg_Alter_Script"));
             }
+            return groupedScripts;
+        }
+
+        void prepareAlterDeleteScriptData(Map<String, Map<String, Object>> data, String tableSchema, String ilTableName, String connectionIdvalue) throws SQLException {
+
+            String addedUser = userName;
+            Timestamp addedDate = Timestamp.valueOf(startTime);
+            String updatedUser = userName;
+            Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+            for (Map.Entry<String, Map<String, Object>> entry : data.entrySet()) {
+                String key = entry.getKey();
+                Map<String, Object> value = entry.getValue();
+
+                Map<String, Object> resultRow = new HashMap<>();
+                resultRow.put("Connection_Id", connectionIdvalue);
+                resultRow.put("TABLE_SCHEMA", tableSchema);
+                resultRow.put("IL_Table_Name", ilTableName);
+                resultRow.put("IL_Alter_Script", value.get("IL_Alter_Script"));
+                resultRow.put("Stg_Alter_Script", value.get("Stg_Alter_Script"));
+                resultRow.put("Active_Flag", true);
+                resultRow.put("Added_Date", addedDate);
+                resultRow.put("Added_User", addedUser);
+                resultRow.put("Updated_Date", updatedDate);
+                resultRow.put("Updated_User", updatedUser);
+                finalResults.add(resultRow);
+            }
+
+            String tableName = "ELT_Alter_Script_Info";
+            if (finalResults != null && !finalResults.isEmpty()) {
+                // TODO delete query to be added
+                // deleteSelectScripts(conn, ilTableName, connectionId, querySchemaCondition);
+                saveDataIntoDB(conn, tableName, finalResults);
+            }
+        }
+        /* Alter Script main*/
+        void prepareAlterScriptData(Map<String, Map<String, Object>> data, String tableSchema, String ilTableName, String connectionIdvalue) throws SQLException {
+
+            String addedUser = userName;
+            Timestamp addedDate = Timestamp.valueOf(startTime);
+            String updatedUser = userName;
+            Timestamp updatedDate = Timestamp.valueOf(startTime);
+
+            List<Map<String, Object>> finalResults = new ArrayList<>();
+            for (Map.Entry<String, Map<String, Object>> entry : data.entrySet()) {
+                String key = entry.getKey();
+                Map<String, Object> value = entry.getValue();
+
+                Map<String, Object> resultRow = new HashMap<>();
+                resultRow.put("Connection_Id", connectionIdvalue);
+                resultRow.put("TABLE_SCHEMA", tableSchema);
+                resultRow.put("IL_Table_Name", ilTableName);
+                resultRow.put("IL_Alter_Script", value.get("IL_Alter_Script"));
+
+                String stageAlterScript = "";
+                if (value.get("Dimension_Transaction").equals("D")) {
+                    stageAlterScript = (String)  value.get("Dim_Stg_Script"); // Dim_Stg_Script
+                } else {
+                    stageAlterScript = (String) value.get("Tran_Stg_Alter_Script"); // Tran_Stg_Alter_Script
+                }
+                resultRow.put("Stg_Alter_Script", stageAlterScript);
+
+                resultRow.put("Active_Flag", true);
+                resultRow.put("Added_Date", addedDate);
+                resultRow.put("Added_User", addedUser);
+                resultRow.put("Updated_Date", updatedDate);
+                resultRow.put("Updated_User", updatedUser);
+                finalResults.add(resultRow);
+            }
+
+            String tableName = "ELT_Alter_Script_Info";
+            if (finalResults != null && !finalResults.isEmpty()) {
+                // TODO delete query to be added
+                // deleteSelectScripts(conn, ilTableName, connectionId, querySchemaCondition);
+                saveDataIntoDB(conn, tableName, finalResults);
+            }
+        }
+
+        private String getNonNullFinalStatement(Connection conn, String tableName)  throws SQLException {
+                String query = "SELECT main.IL_Table_Name, main.IL_Column_Name, " +
+                               "main.tilt_columns, main.IL_Data_Type, " +
+                               "COALESCE(main.Constraints, '') AS Constraints_main, " +
+                               "COALESCE(lookup.Constraints, '') AS Constraints_lookup " +
+                               "FROM (SELECT IL_Table_Name, IL_Column_Name, " +
+                               "CONCAT('`', IL_Column_Name, '`') AS tilt_columns, " +
+                               "IL_Data_Type, Constraints " +
+                               "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                               "WHERE IL_Table_Name = ? AND Constraints = 'PK') AS main " +
+                               "LEFT JOIN (SELECT IL_Table_Name, IL_Column_Name, " +
+                               "CONCAT('`', IL_Column_Name, '`') AS tilt_columns, " +
+                               "IL_Data_Type, Constraints " +
+                               "FROM ELT_IL_Source_Mapping_Info " +
+                               "WHERE IL_Table_Name = ?) AS lookup " +
+                               "ON main.IL_Column_Name = lookup.IL_Column_Name " +
+                               "ORDER BY main.IL_Column_Name";
+            
+            String finalStatement = new String();
+
+            try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                stmt.setString(1, tableName);  // For both main and lookup queries
+                stmt.setString(2, tableName);  // For both main and lookup queries
+
+                ResultSet rs = stmt.executeQuery();
+
+                while (rs.next()) {
+                    String tiltColumns = rs.getString("tilt_columns");
+                    String ilDataType = rs.getString("IL_Data_Type");
+                    String mainConstraints = rs.getString("Constraints_main");
+
+                    // Lookup values
+                    String lookupConstraints = rs.getString("Constraints_lookup");
+
+
+                    String condition = (ilDataType == null) ? null
+                            : (mainConstraints != null && mainConstraints.toLowerCase().equalsIgnoreCase("pk") && lookupConstraints.isEmpty()
+                                    ? "Change column " + tiltColumns + " " + tiltColumns + " " + ilDataType
+                                            + " not NULL"
+                                    : null);
+
+                    // String finalStatement = null;
+                    finalStatement = (finalStatement == null) ? condition
+                            : (condition == null ? finalStatement : finalStatement + "," + condition);
+
+
+                    // String condition = (lookupIlDataType == null) ? null :
+                    //     (constraints.toLowerCase().contains("pk") && lookupConstraints.equals("")) ?
+                    //     "Change column " + tiltColumns + " " + tiltColumns + " " + ilDataType + " not NULL " : null;
+
+                    // finalStatement = (finalStatement == null) ? condition :
+                    //     (condition == null ? finalStatement : finalStatement + "," + condition);
+                    // String ilTableName = tableName;
+
+                    // Process the data as needed
+                    // System.out.println("IL Column Name: " + ilColumnName);
+                    // System.out.println("Tilt Columns: " + tiltColumns);
+                    // System.out.println("IL Data Type: " + ilDataType);
+                    // System.out.println("Constraints: " + constraints);
+                    // System.out.println("Lookup IL Column Name: " + lookupIlColumnName);
+                    // System.out.println("Lookup Tilt Columns: " + lookupTiltColumns);
+                    // System.out.println("Lookup IL Data Type: " + lookupIlDataType);
+                    // System.out.println("Lookup Constraints: " + lookupConstraints);
+
+                    System.out.println("condition: " + condition);
+                    System.out.println("final_statements: " + finalStatement);
+
+                }
+
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return finalStatement;
+        }
+
+        private String getFinalStatement(Connection conn, String tableName) {
+            // Main query
+            String mainQuery = "SELECT " + "`IL_Column_Name`, " +
+                    "CONCAT('`', `IL_Column_Name`, '`') AS tilt_columns, " +
+                    "IL_Data_Type, " + "IFNULL(Constraints, '') AS Constraints " +
+                    "FROM `ELT_IL_Source_Mapping_Info` " +
+                    "WHERE IL_Table_Name = ? AND Constraints = 'PK' " +
+                    "ORDER BY IL_Column_Name";
+
+            // Lookup query
+            String lookupQuery = "SELECT " + "`IL_Column_Name`, " +
+                                "CONCAT('`', `IL_Column_Name`, '`') AS tilt_columns, " +
+                                "IL_Data_Type, " + "IFNULL(Constraints, '') AS Constraints " +
+                                "FROM `ELT_IL_Source_Mapping_Info_Saved` " +
+                                "WHERE IL_Table_Name = ? " + "ORDER BY IL_Column_Name";
+
+            // Left Outer Join query
+            String joinQuery = "SELECT " + "a.`IL_Column_Name`, " + "a.tilt_columns, " +
+                            "a.IL_Data_Type, " + "a.Constraints, " +
+                            "b.`IL_Column_Name` AS lookup_IL_Column_Name, " +
+                            "b.tilt_columns AS lookup_tilt_columns, " +
+                            "b.IL_Data_Type AS lookup_IL_Data_Type, " +
+                            "b.Constraints AS lookup_Constraints " +
+                            "FROM (" + mainQuery + ") a " +
+                            "LEFT JOIN (" + lookupQuery + ") b " +
+                            "ON a.`IL_Column_Name` = b.`IL_Column_Name` " +
+                            "AND a.IL_Data_Type = b.IL_Data_Type";
+            
+            String finalStatement = new String();
+
+            try (PreparedStatement stmt = conn.prepareStatement(joinQuery)) {
+                stmt.setString(1, tableName);  // For both main and lookup queries
+                stmt.setString(2, tableName);  // For both main and lookup queries
+
+                ResultSet rs = stmt.executeQuery();
+
+                while (rs.next()) {
+                    String ilColumnName = rs.getString("IL_Column_Name");
+                    String tiltColumns = rs.getString("tilt_columns");
+                    String ilDataType = rs.getString("IL_Data_Type");
+                    String constraints = rs.getString("Constraints");
+
+                    // Lookup values
+                    String lookupIlColumnName = rs.getString("lookup_IL_Column_Name");
+                    String lookupTiltColumns = rs.getString("lookup_tilt_columns");
+                    String lookupIlDataType = rs.getString("lookup_IL_Data_Type");
+                    String lookupConstraints = rs.getString("lookup_Constraints");
+
+
+                    String condition = (lookupIlDataType == null) ? null :
+                        (constraints.toLowerCase().contains("pk") && lookupConstraints.equals("")) ?
+                        "Change column " + tiltColumns + " " + tiltColumns + " " + ilDataType + "  NULL " : null;
+
+                    finalStatement = (finalStatement == null) ? condition :
+                        (condition == null ? finalStatement : finalStatement + "," + condition);
+                    String ilTableName = tableName;
+
+
+                    // Process the data as needed
+                    // System.out.println("IL Column Name: " + ilColumnName);
+                    // System.out.println("Tilt Columns: " + tiltColumns);
+                    // System.out.println("IL Data Type: " + ilDataType);
+                    // System.out.println("Constraints: " + constraints);
+                    // System.out.println("Lookup IL Column Name: " + lookupIlColumnName);
+                    // System.out.println("Lookup Tilt Columns: " + lookupTiltColumns);
+                    // System.out.println("Lookup IL Data Type: " + lookupIlDataType);
+                    // System.out.println("Lookup Constraints: " + lookupConstraints);
+
+                    System.out.println("condition: " + condition);
+                    System.out.println("final_statements: " + finalStatement);
+
+                }
+
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            return finalStatement;
+        }
+
+        private Map<String, Map<String, String>> getAggregatedColumns(Connection conn, String tableName) throws SQLException {
+            String query = "SELECT IL_Table_Name, IL_Column_Name, " +
+                           "CONCAT('`', IL_Column_Name, '`') AS tilt_column_names " +
+                           "FROM ELT_IL_Source_Mapping_Info_Saved " +
+                           "WHERE IL_Table_Name = ? AND Constraints = 'PK' " +
+                           "ORDER BY IL_Column_Name";
+    
+            PreparedStatement stmt = conn.prepareStatement(query);
+            stmt.setString(1, tableName);
+    
+            ResultSet rs = stmt.executeQuery();
+            StringBuilder ilColumnNames = new StringBuilder();
+            StringBuilder tiltColumnNames = new StringBuilder();
+    
+            while (rs.next()) {
+                if (ilColumnNames.length() > 0) {
+                    ilColumnNames.append(",");
+                    tiltColumnNames.append(",");
+                }
+                ilColumnNames.append(rs.getString("IL_Column_Name"));
+                tiltColumnNames.append(rs.getString("tilt_column_names"));
+            }
+
+            Map<String, String> data = new HashMap<>();
+            data.put("IL_Column_Names", ilColumnNames.toString());
+            data.put("Tilt_Column_Names", tiltColumnNames.toString());
+            // Return as key, value. There is only one entry
+            Map<String, Map<String, String>> dataMap = new HashMap<>();
+
+            String key = tableName + "-" + ilColumnNames.toString();
+
+            dataMap.put(key, data);
+            System.out.println("IL_Column_Names: " + ilColumnNames.toString() + ", Tilt_Column_Names: " + tiltColumnNames.toString());
+            return dataMap;
         }
         
-        
+        private Map<String, String> getChangeFlagAndPKColumns(Connection conn, String tableName) throws SQLException {
+
+            Map<String, String> returnData = new HashMap<>();
+            Map<String, String> lookupData = getAggregatedILColumnNames(conn, tableName);
+            Map<String, Map<String, String>> mainData = getAggregatedColumns(conn, tableName);
+            
+            for (Map.Entry<String, Map<String, String>> outerEntry : mainData.entrySet()) {
+                String key = outerEntry.getKey();
+                Map<String, String> values = outerEntry.getValue();
+
+                String tiltColumnNames = values.get("Tilt_Column_Names");
+                String ilColumnName = lookupData.getOrDefault(key, new String());
+
+                String pkColumns = tiltColumnNames;
+                String changeFlag = (ilColumnName == null) ? "Y" : "N"; 
+                returnData.put("PKColumns", pkColumns);
+                returnData.put("Change_Flag", changeFlag);
+            }
+            return returnData;
+        }
+        private Map<String, String> getAggregatedILColumnNames(Connection conn, String tableName) throws SQLException {
+            String query = "SELECT IL_Table_Name, IL_Column_Name " +
+                           "FROM ELT_IL_Source_Mapping_Info " +
+                           "WHERE IL_Table_Name = ? AND Constraints = 'PK' " +
+                           "ORDER BY IL_Column_Name";
+    
+            PreparedStatement stmt = conn.prepareStatement(query);
+            stmt.setString(1, tableName);
+    
+            ResultSet rs = stmt.executeQuery();
+            StringBuilder ilColumnNames = new StringBuilder();
+    
+            while (rs.next()) {
+                if (ilColumnNames.length() > 0) {
+                    ilColumnNames.append(",");
+                }
+                ilColumnNames.append(rs.getString("IL_Column_Name"));
+            }
+    
+            // Return as key, value. There is only one entry
+            Map<String, String> updatedData = new HashMap<>();
+
+            String key = tableName + "-" + ilColumnNames.toString();
+            updatedData.put(key, ilColumnNames.toString());
+            System.out.println("IL_Column_Names: " + ilColumnNames.toString());
+
+            return updatedData;
+        }
  //   }
     
 /*
@@ -4242,7 +4920,7 @@ public class DWScriptsGenerator {
 
                         // Replacing parts of query using dynamic values
                         String stgKeysTiltPkColumns = tiltPKColumns.replaceAll("\\$", "\\\\\\$");
-                        String stgKeysTiltHashColumns = tiltHashColumns.replaceAll("\\$", "\\\\\\$");
+                        String stgKeysTiltHashColumns = tiltHashColumns != null ? tiltHashColumns.replaceAll("\\$", "\\\\\\$") : null ;
                         String stgKeysTableName = tableNameValue.replaceAll("\\$", "\\\\\\$");
                         String sourceQuery = "source.query=Select " + stgKeysTiltPkColumns + "," + stgKeysTiltHashColumns +
                         " FROM `" + stgKeysTableName + "`";
@@ -4253,8 +4931,8 @@ public class DWScriptsGenerator {
                         "class.names=java.lang.String,com.anvizent.elt.anvizent.util.ChecksumGenerator");
                         String var8 = var7.replaceAll("\\$\\{method\\.names}", "method.names=join,generate");
 
-                        String stgKeysPkColumns = pkColumns.replaceAll("\\$", "\\\\\\$");
-                        String stgKeysHashColumns = hashColumns.replaceAll("\\$", "\\\\\\$");
+                        String stgKeysPkColumns = pkColumns != null ? pkColumns.replaceAll("\\$", "\\\\\\$") : null;
+                        String stgKeysHashColumns = hashColumns != null ? hashColumns.replaceAll("\\$", "\\\\\\$") : null;
                         String methodArgumentFields = "method.argument.fields=\"underscore_field," + stgKeysPkColumns + "\",\"" + stgKeysHashColumns + "\"";
                         String var9 = var8.replaceAll("\\$\\{method\\.argument\\.fields}", methodArgumentFields);
 
@@ -8050,6 +8728,59 @@ public class DWScriptsGenerator {
 
             return connection;
         }
+
+
+        // Helper function to return a Target DB Connection object
+        public static Connection getTargetDBConnection(DataSourceType dataSourceType, String dbDetails) throws SQLException {
+            Connection connection = null;
+
+            // JSONObject jsonDbDetails = new JSONObject(dbDetails);
+            // String serverIP = jsonDbDetails.getString("datadb_hostname");
+            // String serverPort = jsonDbDetails.getString("datadb_port");
+            // String serverIPAndPort = serverIP + ":" + serverPort;
+            // String schema = jsonDbDetails.getString("datadb_schema");
+            // String userName = jsonDbDetails.getString("datadb_username");
+            // String password = jsonDbDetails.getString("datadb_password");
+
+            switch (dataSourceType) {
+                case MYSQL:
+
+                    // String mysqlUrl = "jdbc:mysql://" + serverIPAndPort + "/" + schema + "?noDatetimeStringSync=true&allowMultiQueries=true"; // Note the additional params
+
+                    // MySQL Connection
+                    String mysqlUrl = "jdbc:mysql://172.25.25.124:4475/Mysql8_2_1009427?noDatetimeStringSync=true&allowMultiQueries=true"; // Note the additional params
+                    String mysqlUser = "root";
+                    String mysqlPassword = "Explore@09";
+                    connection = DriverManager.getConnection(mysqlUrl, mysqlUser, mysqlPassword);
+                                    
+                    // auto-commit
+                    connection.setAutoCommit(true);
+                    if (connection != null) {
+                        System.out.println("DB Connection established");
+                    }
+                    break;
+                case SNOWFLAKE:
+                case SQLSERVER:
+                    throw new IllegalArgumentException(dataSourceType + " is not supported yet.");
+                default:
+                    throw new IllegalArgumentException("Unsupported DataSourceType: " + dataSourceType);
+            }
+
+            return connection;
+        }
+
+        public static void closeDBConnection(Connection connection) {
+            if (connection != null) {
+                try {
+                    if (!connection.isClosed()) {
+                        connection.close();
+                        System.out.println("DB Connection closed - " + connection.toString());
+                    }
+                } catch (SQLException e) {
+                    System.err.println("Error while closing the connection: " + e.getMessage());
+                }
+            }
+        }
     }
     public static void main(String[] args) {
         // Input values
@@ -8081,7 +8812,7 @@ public class DWScriptsGenerator {
                 "    \"datadb_hostname\": \"localhost\", \n" +
                 "    \"datadb_port\": \"3306\", \n" +
                 "    \"datadb_username\": \"datauser\", \n" +
-                "    \"datadb_schema\": \"datadb\", \n" +
+                "    \"datadb_schema\": \"Mysql8_2_1009427\", \n" +
                 "    \"datadb_password\": \"datapassword\" \n" +
                 "}";
         String historicalDataFlag = "";
